@@ -114,6 +114,7 @@ final class SpssAdapterTest extends TestCase
         $fixture = $engineRoot . '/examples/data.sav';
         self::assertFileExists($fixture);
 
+        $original = (new PhpSpssEngine())->read($fixture);
         $pdo = new PDO('sqlite::memory:');
         $adapter = new SpssAdapter($pdo);
         $adapter->import($fixture, 'php-spss fixture');
@@ -126,6 +127,18 @@ final class SpssAdapterTest extends TestCase
             [],
             self::rows($pdo, 'SELECT * FROM "dataset_php_spss_fixture" ORDER BY "__case_ordinal"'),
         );
+
+        $target = sys_get_temp_dir() . '/openstatspec-readback-' . uniqid('', true) . '.sav';
+        try {
+            $adapter->export('php-spss fixture', $target);
+            $readBack = (new PhpSpssEngine())->read($target);
+            self::assertNotSame([], $readBack['variables']);
+            self::assertNotSame([], $readBack['data']);
+            self::assertSame(count($original['data']), count($readBack['data']));
+            self::assertSame(array_keys($original['data'][0]), array_keys($readBack['data'][0]));
+        } finally {
+            @unlink($target);
+        }
     }
 
     public function testImportRejectsZsavBeforeReadingOrChangingTheDatabase(): void
