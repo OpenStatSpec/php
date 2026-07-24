@@ -59,3 +59,11 @@ The framework-neutral core accepts PDO and has no Yii2 or Laravel dependency. A 
 The fastest integration path is framework-neutral PDO: pass the existing application PDO connection directly to `SpssAdapter`. The first vertical slice will create the strict wide data table and metadata catalog, run preflight capability checks, and return explicit diagnostics before SAV/ZSAV parsing and export are completed.
 
 This allows an existing Yii2 application to use its own database connection without adding Yii2 to this package. Framework-specific adapters remain deferred.
+
+## SPSS engine
+
+The selected external SAV engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss). It is intentionally not a Composer dependency of this package yet, because its published Composer identity remains `tiamo/spss` and OpenStatSpec must not add a VCS-only public dependency.
+
+`PhpSpssEngine` detects whether a compatible reader is available at runtime. If it is missing, import stops before any database change with the `external_engine_unavailable` diagnostic. The adapter also reports source semantics the engine cannot expose; it never silently discards them.
+
+The initial local integration path is to install the selected engine in the consuming application's development environment, then pass that application's PDO instance to `SpssAdapter`.

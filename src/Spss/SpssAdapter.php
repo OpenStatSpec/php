@@ -12,10 +12,12 @@ use PDO;
 final readonly class SpssAdapter
 {
     private Connection $connection;
+    private PhpSpssEngine $engine;
 
-    public function __construct(PDO $pdo)
+    public function __construct(PDO $pdo, ?PhpSpssEngine $engine = null)
     {
         $this->connection = new Connection($pdo);
+        $this->engine = $engine ?? new PhpSpssEngine();
     }
 
     public function pdo(): PDO
@@ -25,9 +27,10 @@ final readonly class SpssAdapter
 
     public function import(string $sourcePath, string $datasetName): void
     {
+        $this->engine->read($sourcePath);
         throw new UnsupportedOperation(
             DiagnosticCode::UnsupportedOperation,
-            'SAV/ZSAV import is not implemented yet; no data was changed.',
+            'SAV/ZSAV parsing succeeded, but SQL import is not implemented yet; no data was changed.',
         );
     }
 
