@@ -61,9 +61,9 @@ final readonly class SqliteWideTableExporter
             $isString = $variable['storage_kind'] === 'string';
             $writerVariables[] = [
                 'name' => $variable['source_name'],
-                'format' => $isString ? 1 : 5,
-                'width' => $isString ? $this->stringWidth($values) : 8,
-                'decimals' => 0,
+                'format' => $variable['format_family'],
+                'width' => $isString ? $variable['source_width'] : $variable['format_width'],
+                'decimals' => $variable['format_decimals'],
                 'label' => $variable['label'],
                 'data' => $values,
                 'values' => $dictionary['values'],
@@ -84,27 +84,12 @@ final readonly class SqliteWideTableExporter
     }
 
     /**
-     * @param list<mixed> $values
-     */
-    private function stringWidth(array $values): int
-    {
-        $width = 1;
-        foreach ($values as $value) {
-            if (is_string($value)) {
-                $width = max($width, strlen($value));
-            }
-        }
-
-        return $width;
-    }
-
-    /**
-     * @return list<array{ordinal: int, source_name: string, column_name: string, storage_kind: string, label: ?string}>
+     * @return list<array{ordinal: int, source_name: string, column_name: string, storage_kind: string, source_width: int, format_family: int, format_width: int, format_decimals: int, label: ?string}>
      */
     private function variables(string $datasetName): array
     {
         $statement = $this->statement(
-            'SELECT ordinal, source_name, column_name, storage_kind, label FROM variables WHERE dataset_name = ? ORDER BY ordinal',
+            'SELECT ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals, label FROM variables WHERE dataset_name = ? ORDER BY ordinal',
         );
         $statement->execute([$datasetName]);
         $variables = $statement->fetchAll(PDO::FETCH_ASSOC);
@@ -118,8 +103,12 @@ final readonly class SqliteWideTableExporter
                 $sourceName = $variable['source_name'] ?? null;
                 $columnName = $variable['column_name'] ?? null;
                 $storageKind = $variable['storage_kind'] ?? null;
+                $sourceWidth = $variable['source_width'] ?? null;
+                $formatFamily = $variable['format_family'] ?? null;
+                $formatWidth = $variable['format_width'] ?? null;
+                $formatDecimals = $variable['format_decimals'] ?? null;
                 $label = $variable['label'] ?? null;
-                if (!is_int($ordinal) || !is_string($sourceName) || !is_string($columnName) || !is_string($storageKind)) {
+                if (!is_int($ordinal) || !is_string($sourceName) || !is_string($columnName) || !is_string($storageKind) || !is_int($sourceWidth) || !is_int($formatFamily) || !is_int($formatWidth) || !is_int($formatDecimals)) {
                     throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The SQLite variable catalogue is malformed.');
                 }
 
@@ -128,6 +117,10 @@ final readonly class SqliteWideTableExporter
                     'source_name' => $sourceName,
                     'column_name' => $columnName,
                     'storage_kind' => $storageKind,
+                    'source_width' => $sourceWidth,
+                    'format_family' => $formatFamily,
+                    'format_width' => $formatWidth,
+                    'format_decimals' => $formatDecimals,
                     'label' => is_string($label) ? $label : null,
                 ];
             },

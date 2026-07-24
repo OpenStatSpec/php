@@ -82,7 +82,7 @@ final class SpssAdapterTest extends TestCase
         self::assertSame(
             [
                 ['name' => 'Respondent ID', 'format' => 5, 'width' => 8, 'decimals' => 0, 'label' => 'Respondent identifier', 'data' => [7.0, 8.0], 'values' => ['7' => 'Seven'], 'missing' => [1.0, 3.0]],
-                ['name' => 'Favourite colour', 'format' => 1, 'width' => 5, 'decimals' => 0, 'label' => 'Favourite colour', 'data' => ['blue', 'green'], 'values' => [], 'missing' => []],
+                ['name' => 'Favourite colour', 'format' => 1, 'width' => 12, 'decimals' => 0, 'label' => 'Favourite colour', 'data' => ['blue', 'green'], 'values' => [], 'missing' => []],
             ],
             $engine->lastWrite()['dataset']['variables'],
         );
