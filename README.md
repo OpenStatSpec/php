@@ -67,3 +67,7 @@ The selected external SAV engine is [TonisOrmisson/php-spss](https://github.com/
 `PhpSpssEngine` detects whether a compatible reader is available at runtime. If it is missing, import stops before any database change with the `external_engine_unavailable` diagnostic. The adapter also reports source semantics the engine cannot expose; it never silently discards them.
 
 The initial local integration path is to install the selected engine in the consuming application's development environment, then pass that application's PDO instance to `SpssAdapter`.
+
+## CI feedback loop
+
+Treat a failing CI run as a development task: diagnose the cause, make the focused fix, run `composer check` locally, then commit and push the correction. Do not merely report a failure.
