@@ -89,6 +89,43 @@ final class SpssAdapterTest extends TestCase
 
     }
 
+    public function testPhpSpssEngineImportsConfiguredFixture(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $engineRoot = getenv('OPENSTATSPEC_PHP_SPSS_PATH');
+        if (!is_string($engineRoot) || !is_file($engineRoot . '/src/Sav/Reader.php')) {
+            self::markTestSkipped('Set OPENSTATSPEC_PHP_SPSS_PATH to a compatible php-spss checkout to run this integration test.');
+        }
+
+        spl_autoload_register(static function (string $class) use ($engineRoot): void {
+            if (str_starts_with($class, 'SPSS\\')) {
+                $path = $engineRoot . '/src/' . str_replace('\\', '/', substr($class, 5)) . '.php';
+                if (is_file($path)) {
+                    require_once $path;
+                }
+            }
+        });
+
+        $fixture = $engineRoot . '/examples/data.sav';
+        self::assertFileExists($fixture);
+
+        $pdo = new PDO('sqlite::memory:');
+        $adapter = new SpssAdapter($pdo);
+        $adapter->import($fixture, 'php-spss fixture');
+
+        self::assertNotSame(
+            [],
+            self::rows($pdo, 'SELECT source_name, source_width, format_family, format_width, format_decimals FROM variables WHERE dataset_name = "php-spss fixture" ORDER BY ordinal'),
+        );
+        self::assertNotSame(
+            [],
+            self::rows($pdo, 'SELECT * FROM "dataset_php_spss_fixture" ORDER BY "__case_ordinal"'),
+        );
+    }
+
     public function testImportRejectsZsavBeforeReadingOrChangingTheDatabase(): void
     {
         if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
