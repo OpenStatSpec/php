@@ -39,7 +39,7 @@ final class SpssAdapterTest extends TestCase
         }
 
         $pdo = new PDO('sqlite::memory:');
-        $adapter = new SpssAdapter($pdo, new FakeSpssEngine([
+        $engine = new FakeSpssEngine([
             'header' => null,
             'variables' => [
                 ['name' => 'Respondent ID', 'type' => 'numeric', 'label' => 'Respondent identifier'],
@@ -52,7 +52,8 @@ final class SpssAdapterTest extends TestCase
                 ['Respondent ID' => 7, 'Favourite colour' => 'blue'],
                 ['Respondent ID' => 8, 'Favourite colour' => 'green'],
             ],
-        ]));
+        ]);
+        $adapter = new SpssAdapter($pdo, $engine);
 
         $adapter->import('fixture.sav', 'Customer survey');
 
@@ -70,6 +71,27 @@ final class SpssAdapterTest extends TestCase
             ],
             self::rows($pdo, 'SELECT ordinal, source_name, column_name, storage_kind FROM variables WHERE dataset_name = "Customer survey" ORDER BY ordinal'),
         );
+        $result = $adapter->export('Customer survey', 'roundtrip.sav');
+
+        self::assertSame('Customer survey', $result->datasetName);
+        self::assertSame('roundtrip.sav', $result->targetPath);
+        self::assertSame(2, $result->caseCount);
+        self::assertSame('metadata_not_preserved', $result->diagnostics[0]->code);
+        self::assertSame(
+            [
+                ['name' => 'Respondent ID', 'type' => 'numeric', 'label' => 'Respondent identifier'],
+                ['name' => 'Favourite colour', 'type' => 'string', 'label' => 'Favourite colour'],
+            ],
+            $engine->lastWrite()['dataset']['variables'],
+        );
+        self::assertSame(
+            [
+                ['Respondent ID' => 7.0, 'Favourite colour' => 'blue'],
+                ['Respondent ID' => 8.0, 'Favourite colour' => 'green'],
+            ],
+            $engine->lastWrite()['dataset']['data'],
+        );
+
     }
 
     public function testImportRejectsZsavBeforeReadingOrChangingTheDatabase(): void

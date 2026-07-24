@@ -7,6 +7,7 @@ namespace OpenStatSpec\Spss;
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\Connection;
+use OpenStatSpec\Sql\SqliteWideTableExporter;
 use OpenStatSpec\Sql\SqliteWideTableImporter;
 use PDO;
 
@@ -46,11 +47,27 @@ final readonly class SpssAdapter
         (new SqliteWideTableImporter($this->connection->pdo))->import($this->engine->read($sourcePath), $datasetName);
     }
 
-    public function export(string $datasetName, string $targetPath): void
+    public function export(string $datasetName, string $targetPath): SpssExportResult
     {
-        throw new UnsupportedOperation(
-            DiagnosticCode::UnsupportedOperation,
-            'SAV/ZSAV export is not implemented yet; no file was written.',
-        );
+        if (strtolower(pathinfo($targetPath, PATHINFO_EXTENSION)) === 'zsav') {
+            throw new UnsupportedOperation(
+                DiagnosticCode::UnsupportedSourceFormat,
+                'ZSAV export is not supported by this adapter profile yet; no file was written.',
+            );
+        }
+        if (strtolower(pathinfo($targetPath, PATHINFO_EXTENSION)) !== 'sav') {
+            throw new UnsupportedOperation(
+                DiagnosticCode::UnsupportedSourceFormat,
+                'This adapter profile exports unencrypted SAV files only.',
+            );
+        }
+        if ($this->connection->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
+            throw new UnsupportedOperation(DiagnosticCode::UnsupportedSqlDriver, 'This export slice currently supports SQLite only.');
+        }
+
+        $export = (new SqliteWideTableExporter($this->connection->pdo))->export($datasetName);
+        $this->engine->write($targetPath, $export['payload']);
+
+        return new SpssExportResult($datasetName, $targetPath, $export['caseCount'], $export['diagnostics']);
     }
 }
