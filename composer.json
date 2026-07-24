@@ -1,0 +1,43 @@
+{
+  "name": "openstatspec/php",
+  "description": "PHP reference adapter for the OpenStatSpec relational statistical-data specification.",
+  "type": "library",
+  "license": "MIT",
+  "require": {
+    "php": "^8.3"
+  },
+  "require-dev": {
+    "friendsofphp/php-cs-fixer": "^3.0",
+    "phpstan/phpstan": "^2.0",
+    "phpunit/phpunit": "^11.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "OpenStatSpec\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "OpenStatSpec\\Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "analyse": "phpstan analyse --no-progress",
+    "check": [
+      "composer validate --strict",
+      "@lint",
+      "@style",
+      "@analyse",
+      "@test"
+    ],
+    "fix": "php-cs-fixer fix --diff",
+    "lint": "find src tests -type f -name '*.php' -print0 | xargs -0 -n1 php -l",
+    "style": "php-cs-fixer fix --dry-run --diff",
+    "test": "phpunit"
+  },
+  "config": {
+    "sort-packages": true
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}
