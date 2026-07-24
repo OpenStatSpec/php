@@ -7,6 +7,7 @@ namespace OpenStatSpec\Spss;
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\Connection;
+use OpenStatSpec\Sql\SqliteWideTableImporter;
 use PDO;
 
 final readonly class SpssAdapter
@@ -27,11 +28,22 @@ final readonly class SpssAdapter
 
     public function import(string $sourcePath, string $datasetName): void
     {
-        $this->engine->read($sourcePath);
-        throw new UnsupportedOperation(
-            DiagnosticCode::UnsupportedOperation,
-            'SAV/ZSAV parsing succeeded, but SQL import is not implemented yet; no data was changed.',
-        );
+        if (strtolower(pathinfo($sourcePath, PATHINFO_EXTENSION)) === 'zsav') {
+            throw new UnsupportedOperation(
+                DiagnosticCode::UnsupportedSourceFormat,
+                'ZSAV import is not supported by this adapter profile yet; no data was changed.',
+            );
+        }
+        if (strtolower(pathinfo($sourcePath, PATHINFO_EXTENSION)) !== 'sav') {
+            throw new UnsupportedOperation(
+                DiagnosticCode::UnsupportedSourceFormat,
+                'Only unencrypted SAV files are supported by this adapter profile.',
+            );
+        }
+        if ($this->connection->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
+            throw new UnsupportedOperation(DiagnosticCode::UnsupportedSqlDriver, 'This import slice currently supports SQLite only.');
+        }
+        (new SqliteWideTableImporter($this->connection->pdo))->import($this->engine->read($sourcePath), $datasetName);
     }
 
     public function export(string $datasetName, string $targetPath): void
