@@ -59,6 +59,9 @@ final readonly class SqliteWideTableExporter
             }
 
             $isString = $variable['storage_kind'] === 'string';
+            if ($isString && ($variable['source_width'] > 255 || array_filter($values, static fn(mixed $value): bool => is_string($value) && strlen($value) > 255) !== [])) {
+                throw new UnsupportedOperation(DiagnosticCode::TargetCapabilityExceeded, 'The selected php-spss writer cannot preserve string variables wider than 255 bytes; no SAV file was written.');
+            }
             $writerVariables[] = [
                 'name' => $variable['source_name'],
                 'format' => $variable['format_family'],
