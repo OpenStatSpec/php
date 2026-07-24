@@ -12,12 +12,18 @@ use Throwable;
 /** SQLite profile for one SPSS dataset as one native wide SQL table. */
 final readonly class SqliteWideTableImporter
 {
-    public function __construct(private PDO $pdo) {}
+    private SqliteProfile $profile;
+
+    public function __construct(private PDO $pdo)
+    {
+        $this->profile = new SqliteProfile();
+    }
 
     /** @param array{variables: array<int, mixed>, data: array<int, mixed>} $source */
     public function import(array $source, string $datasetName): void
     {
         $variables = $this->variables($source['variables']);
+        $this->profile->assertCanRepresent(count($variables));
         $tableName = 'dataset_' . $this->identifier($datasetName);
 
         $this->pdo->beginTransaction();
@@ -48,9 +54,9 @@ final readonly class SqliteWideTableImporter
     /** @param list<array{ordinal: int, source: string, column: string, kind: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, label: ?string}> $variables */
     private function createDataTable(string $tableName, array $variables): void
     {
-        $columns = ['"__case_ordinal" INTEGER NOT NULL PRIMARY KEY'];
+        $columns = [$this->profile->quoteIdentifier('__case_ordinal') . ' INTEGER NOT NULL PRIMARY KEY'];
         foreach ($variables as $variable) {
-            $columns[] = $this->quote($variable['column']) . ($variable['kind'] === 'string' ? ' TEXT NOT NULL' : ' REAL NULL');
+            $columns[] = $this->quote($variable['column']) . ($variable['kind'] === 'string' ? ' ' . $this->profile->textType() . ' NOT NULL' : ' ' . $this->profile->numericType() . ' NULL');
         }
         $this->pdo->exec('CREATE TABLE ' . $this->quote($tableName) . ' (' . implode(', ', $columns) . ')');
     }
@@ -123,6 +129,6 @@ final readonly class SqliteWideTableImporter
 
     private function quote(string $identifier): string
     {
-        return '"' . str_replace('"', '""', $identifier) . '"';
+        return $this->profile->quoteIdentifier($identifier);
     }
 }
