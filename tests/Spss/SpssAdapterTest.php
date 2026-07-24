@@ -141,6 +141,40 @@ final class SpssAdapterTest extends TestCase
         }
     }
 
+    public function testPhpSpssEngineLimitsLongStringWidthTo255(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+        $engineRoot = getenv('OPENSTATSPEC_PHP_SPSS_PATH');
+        if (!is_string($engineRoot) || !is_file($engineRoot . '/src/Sav/Reader.php')) {
+            self::markTestSkipped('Set OPENSTATSPEC_PHP_SPSS_PATH to a compatible php-spss checkout.');
+        }
+        spl_autoload_register(static function (string $class) use ($engineRoot): void {
+            if (str_starts_with($class, 'SPSS\\')) {
+                $path = $engineRoot . '/src/' . str_replace('\\', '/', substr($class, 5)) . '.php';
+                if (is_file($path)) {
+                    require_once $path;
+                }
+            }
+        });
+        $source = sys_get_temp_dir() . '/openstatspec-long-source-' . uniqid('', true) . '.sav';
+        $target = sys_get_temp_dir() . '/openstatspec-long-target-' . uniqid('', true) . '.sav';
+        $value = str_repeat('x', 300);
+        try {
+            $engine = new PhpSpssEngine();
+            $engine->write($source, ['header' => [], 'variables' => [['name' => 'Longtext', 'format' => 1, 'width' => 300, 'decimals' => 0, 'label' => 'Long text', 'data' => [$value]]], 'documents' => [], 'info' => []]);
+            $adapter = new SpssAdapter(new PDO('sqlite::memory:'));
+            $adapter->import($source, 'long string');
+            $adapter->export('long string', $target);
+            $readBack = $engine->read($target);
+            self::assertSame(255, $readBack['variables'][0]->width);
+            self::assertNull($readBack['data'][0]['Longtext'] ?? null);
+        } finally {
+            @unlink($source);
+            @unlink($target);
+        }
+    }
     public function testImportRejectsZsavBeforeReadingOrChangingTheDatabase(): void
     {
         if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
