@@ -25,9 +25,9 @@ final readonly class SqliteWideTableImporter
             $this->createCatalog();
             $this->createDataTable($tableName, $variables);
             $this->pdo->prepare('INSERT INTO datasets (dataset_name, table_name) VALUES (?, ?)')->execute([$datasetName, $tableName]);
-            $catalog = $this->pdo->prepare('INSERT INTO variables (dataset_name, ordinal, source_name, column_name, storage_kind, label) VALUES (?, ?, ?, ?, ?, ?)');
+            $catalog = $this->pdo->prepare('INSERT INTO variables (dataset_name, ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals, label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             foreach ($variables as $variable) {
-                $catalog->execute([$datasetName, $variable['ordinal'], $variable['source'], $variable['column'], $variable['kind'], $variable['label']]);
+                $catalog->execute([$datasetName, $variable['ordinal'], $variable['source'], $variable['column'], $variable['kind'], $variable['width'], $variable['formatFamily'], $variable['formatWidth'], $variable['formatDecimals'], $variable['label']]);
             }
             $this->insertCases($tableName, $variables, $source['data']);
             $this->pdo->commit();
@@ -42,10 +42,10 @@ final readonly class SqliteWideTableImporter
     private function createCatalog(): void
     {
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS datasets (dataset_name TEXT NOT NULL PRIMARY KEY, table_name TEXT NOT NULL UNIQUE)');
-        $this->pdo->exec('CREATE TABLE IF NOT EXISTS variables (dataset_name TEXT NOT NULL, ordinal INTEGER NOT NULL, source_name TEXT NOT NULL, column_name TEXT NOT NULL, storage_kind TEXT NOT NULL, label TEXT NULL, PRIMARY KEY (dataset_name, ordinal), UNIQUE (dataset_name, column_name))');
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS variables (dataset_name TEXT NOT NULL, ordinal INTEGER NOT NULL, source_name TEXT NOT NULL, column_name TEXT NOT NULL, storage_kind TEXT NOT NULL, source_width INTEGER NOT NULL, format_family INTEGER NOT NULL, format_width INTEGER NOT NULL, format_decimals INTEGER NOT NULL, label TEXT NULL, PRIMARY KEY (dataset_name, ordinal), UNIQUE (dataset_name, column_name))');
     }
 
-    /** @param list<array{ordinal: int, source: string, column: string, kind: string, label: ?string}> $variables */
+    /** @param list<array{ordinal: int, source: string, column: string, kind: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, label: ?string}> $variables */
     private function createDataTable(string $tableName, array $variables): void
     {
         $columns = ['"__case_ordinal" INTEGER NOT NULL PRIMARY KEY'];
@@ -55,7 +55,7 @@ final readonly class SqliteWideTableImporter
         $this->pdo->exec('CREATE TABLE ' . $this->quote($tableName) . ' (' . implode(', ', $columns) . ')');
     }
 
-    /** @param list<array{ordinal: int, source: string, column: string, kind: string, label: ?string}> $variables
+    /** @param list<array{ordinal: int, source: string, column: string, kind: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, label: ?string}> $variables
      * @param array<int, mixed> $rows
      */
     private function insertCases(string $tableName, array $variables, array $rows): void
@@ -78,7 +78,7 @@ final readonly class SqliteWideTableImporter
     }
 
     /** @param array<int, mixed> $sourceVariables
-     * @return list<array{ordinal: int, source: string, column: string, kind: string, label: ?string}>
+     * @return list<array{ordinal: int, source: string, column: string, kind: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, label: ?string}>
      */
     private function variables(array $sourceVariables): array
     {
@@ -105,6 +105,10 @@ final readonly class SqliteWideTableImporter
                 'source' => $source,
                 'column' => $column,
                 'kind' => is_string($type) && str_contains(strtolower($type), 'string') ? 'string' : 'numeric',
+                'width' => is_int($variable['width'] ?? null) ? $variable['width'] : 0,
+                'formatFamily' => is_int($variable['formatFamily'] ?? null) ? $variable['formatFamily'] : 5,
+                'formatWidth' => is_int($variable['formatWidth'] ?? null) ? $variable['formatWidth'] : 8,
+                'formatDecimals' => is_int($variable['formatDecimals'] ?? null) ? $variable['formatDecimals'] : 0,
                 'label' => is_string($label) ? $label : null,
             ];
         }

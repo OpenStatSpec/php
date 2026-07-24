@@ -42,8 +42,8 @@ final class SpssAdapterTest extends TestCase
         $engine = new FakeSpssEngine([
             'header' => null,
             'variables' => [
-                ['name' => 'Respondent ID', 'type' => 'numeric', 'label' => 'Respondent identifier'],
-                ['name' => 'Favourite colour', 'type' => 'string', 'label' => 'Favourite colour'],
+                (object) ['name' => 'Respondent ID', 'width' => 0, 'print' => [0, 5, 8, 0], 'label' => 'Respondent identifier'],
+                (object) ['name' => 'Favourite colour', 'width' => 12, 'print' => [0, 1, 12, 0], 'label' => 'Favourite colour'],
             ],
             'valueLabels' => [],
             'documents' => [],
@@ -66,10 +66,10 @@ final class SpssAdapterTest extends TestCase
         );
         self::assertSame(
             [
-                ['ordinal' => 1, 'source_name' => 'Respondent ID', 'column_name' => 'respondent_id', 'storage_kind' => 'numeric'],
-                ['ordinal' => 2, 'source_name' => 'Favourite colour', 'column_name' => 'favourite_colour', 'storage_kind' => 'string'],
+                ['ordinal' => 1, 'source_name' => 'Respondent ID', 'column_name' => 'respondent_id', 'storage_kind' => 'numeric', 'source_width' => 0, 'format_family' => 5, 'format_width' => 8, 'format_decimals' => 0],
+                ['ordinal' => 2, 'source_name' => 'Favourite colour', 'column_name' => 'favourite_colour', 'storage_kind' => 'string', 'source_width' => 12, 'format_family' => 1, 'format_width' => 12, 'format_decimals' => 0],
             ],
-            self::rows($pdo, 'SELECT ordinal, source_name, column_name, storage_kind FROM variables WHERE dataset_name = "Customer survey" ORDER BY ordinal'),
+            self::rows($pdo, 'SELECT ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals FROM variables WHERE dataset_name = "Customer survey" ORDER BY ordinal'),
         );
         $result = $adapter->export('Customer survey', 'roundtrip.sav');
 

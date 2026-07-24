@@ -44,7 +44,8 @@ final readonly class SpssAdapter
         if ($this->connection->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
             throw new UnsupportedOperation(DiagnosticCode::UnsupportedSqlDriver, 'This import slice currently supports SQLite only.');
         }
-        (new SqliteWideTableImporter($this->connection->pdo))->import($this->engine->read($sourcePath), $datasetName);
+        $source = SpssSourceNormalizer::normalize($this->engine->read($sourcePath));
+        (new SqliteWideTableImporter($this->connection->pdo))->import($source, $datasetName);
     }
 
     public function export(string $datasetName, string $targetPath): SpssExportResult
