@@ -23,7 +23,7 @@ final class PhpSpssEngine
     }
 
     /**
-     * @return array{header: mixed, variables: array, valueLabels: array, documents: array, info: array, data: array}
+     * @return array{header: mixed, variables: array<int, mixed>, valueLabels: array<int, mixed>, documents: array<int, mixed>, info: array<int, mixed>, data: array<int, mixed>}
      */
     public function read(string $sourcePath): array
     {
