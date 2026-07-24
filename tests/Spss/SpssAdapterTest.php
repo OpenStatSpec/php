@@ -79,18 +79,13 @@ final class SpssAdapterTest extends TestCase
         self::assertSame('metadata_not_preserved', $result->diagnostics[0]->code);
         self::assertSame(
             [
-                ['name' => 'Respondent ID', 'type' => 'numeric', 'label' => 'Respondent identifier'],
-                ['name' => 'Favourite colour', 'type' => 'string', 'label' => 'Favourite colour'],
+                ['name' => 'Respondent ID', 'format' => 5, 'width' => 8, 'decimals' => 0, 'label' => 'Respondent identifier', 'data' => [7.0, 8.0]],
+                ['name' => 'Favourite colour', 'format' => 1, 'width' => 5, 'decimals' => 0, 'label' => 'Favourite colour', 'data' => ['blue', 'green']],
             ],
             $engine->lastWrite()['dataset']['variables'],
         );
-        self::assertSame(
-            [
-                ['Respondent ID' => 7.0, 'Favourite colour' => 'blue'],
-                ['Respondent ID' => 8.0, 'Favourite colour' => 'green'],
-            ],
-            $engine->lastWrite()['dataset']['data'],
-        );
+        self::assertSame([], $engine->lastWrite()['dataset']['header']);
+        self::assertArrayNotHasKey('data', $engine->lastWrite()['dataset']);
 
     }
 

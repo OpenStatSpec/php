@@ -58,7 +58,8 @@ final class PhpSpssEngine implements SpssEngine
         }
 
         $writerClass = self::WRITER_CLASS;
-        $writerClass::createInFile($targetPath, $dataset);
+        $writer = $writerClass::createInFile($targetPath, $dataset);
+        $writer->close();
     }
 
 }

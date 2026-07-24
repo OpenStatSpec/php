@@ -17,7 +17,7 @@ final readonly class SqliteWideTableExporter
 
     /**
      * @return array{
-     *     payload: array{header: null, variables: list<array{name: string, type: string, label: ?string}>, valueLabels: list<mixed>, documents: list<mixed>, info: array{}, data: list<array<string, mixed>>},
+     *     payload: array{header: array{}, variables: list<array{name: string, format: int, width: int, decimals: int, label: ?string, data: list<mixed>}>, documents: list<mixed>, info: array{}},
      *     caseCount: int,
      *     diagnostics: list<FidelityDiagnostic>
      * }
@@ -38,39 +38,59 @@ final readonly class SqliteWideTableExporter
         );
         $caseStatement->execute();
 
-        $data = [];
+        $rows = [];
         while (($row = $caseStatement->fetch(PDO::FETCH_ASSOC)) !== false) {
-            $case = [];
-            foreach ($variables as $variable) {
-                $case[$variable['source_name']] = $row[$variable['column_name']] ?? null;
+            $rows[] = $row;
+        }
+
+        $writerVariables = [];
+        foreach ($variables as $variable) {
+            $values = [];
+            foreach ($rows as $row) {
+                $values[] = $row[$variable['column_name']] ?? null;
             }
-            $data[] = $case;
+
+            $isString = $variable['storage_kind'] === 'string';
+            $writerVariables[] = [
+                'name' => $variable['source_name'],
+                'format' => $isString ? 1 : 5,
+                'width' => $isString ? $this->stringWidth($values) : 8,
+                'decimals' => 0,
+                'label' => $variable['label'],
+                'data' => $values,
+            ];
         }
 
         return [
             'payload' => [
-                'header' => null,
-                'variables' => array_map(
-                    static fn(array $variable): array => [
-                        'name' => $variable['source_name'],
-                        'type' => $variable['storage_kind'],
-                        'label' => $variable['label'],
-                    ],
-                    $variables,
-                ),
-                'valueLabels' => [],
+                'header' => [],
+                'variables' => $writerVariables,
                 'documents' => [],
                 'info' => [],
-                'data' => $data,
             ],
-            'caseCount' => count($data),
+            'caseCount' => count($rows),
             'diagnostics' => [
                 new FidelityDiagnostic(
                     'metadata_not_preserved',
-                    'This SQLite profile currently exports variable names, storage kinds, labels, values, and case order only. Value labels, user-missing rules, documents, attributes, sets, display settings, and file metadata are not preserved.',
+                    'This SQLite profile currently exports variable names, labels, values, and case order only. Original SPSS formats, declared string widths, value labels, user-missing rules, documents, attributes, sets, display settings, and file metadata are not preserved.',
                 ),
             ],
         ];
+    }
+
+    /**
+     * @param list<mixed> $values
+     */
+    private function stringWidth(array $values): int
+    {
+        $width = 1;
+        foreach ($values as $value) {
+            if (is_string($value)) {
+                $width = max($width, strlen($value));
+            }
+        }
+
+        return $width;
     }
 
     /**
