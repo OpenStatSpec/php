@@ -42,10 +42,10 @@ final class SpssAdapterTest extends TestCase
         $engine = new FakeSpssEngine([
             'header' => (object) ['fileLabel' => 'Customer survey source'],
             'variables' => [
-                (object) ['name' => 'Respondent ID', 'width' => 0, 'print' => [0, 5, 8, 0], 'label' => 'Respondent identifier'],
+                (object) ['name' => 'Respondent ID', 'width' => 0, 'print' => [0, 5, 8, 0], 'label' => 'Respondent identifier', 'missingValuesFormat' => -2, 'missingValues' => [1.0, 3.0]],
                 (object) ['name' => 'Favourite colour', 'width' => 12, 'print' => [0, 1, 12, 0], 'label' => 'Favourite colour'],
             ],
-            'valueLabels' => [],
+            'valueLabels' => [(object) ['indexes' => [0], 'labels' => [['value' => 7.0, 'label' => 'Seven']]]],
             'documents' => ['First document line', 'Second document line'],
             'info' => [],
             'data' => [
@@ -78,11 +78,11 @@ final class SpssAdapterTest extends TestCase
         self::assertSame('Customer survey', $result->datasetName);
         self::assertSame('roundtrip.sav', $result->targetPath);
         self::assertSame(2, $result->caseCount);
-        self::assertSame('metadata_not_preserved', $result->diagnostics[0]->code);
+        self::assertSame([], $result->diagnostics);
         self::assertSame(
             [
-                ['name' => 'Respondent ID', 'format' => 5, 'width' => 8, 'decimals' => 0, 'label' => 'Respondent identifier', 'data' => [7.0, 8.0]],
-                ['name' => 'Favourite colour', 'format' => 1, 'width' => 5, 'decimals' => 0, 'label' => 'Favourite colour', 'data' => ['blue', 'green']],
+                ['name' => 'Respondent ID', 'format' => 5, 'width' => 8, 'decimals' => 0, 'label' => 'Respondent identifier', 'data' => [7.0, 8.0], 'values' => ['7' => 'Seven'], 'missing' => [1.0, 3.0]],
+                ['name' => 'Favourite colour', 'format' => 1, 'width' => 5, 'decimals' => 0, 'label' => 'Favourite colour', 'data' => ['blue', 'green'], 'values' => [], 'missing' => []],
             ],
             $engine->lastWrite()['dataset']['variables'],
         );
@@ -138,7 +138,7 @@ final class SpssAdapterTest extends TestCase
         $adapter = new SpssAdapter($pdo, new FakeSpssEngine([
             'header' => null,
             'variables' => [],
-            'valueLabels' => [],
+            'valueLabels' => [(object) ['indexes' => [0], 'labels' => [['value' => 7.0, 'label' => 'Seven']]]],
             'documents' => [],
             'info' => [],
             'data' => [],

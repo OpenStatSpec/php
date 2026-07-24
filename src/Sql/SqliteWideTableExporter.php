@@ -44,7 +44,12 @@ final readonly class SqliteWideTableExporter
         }
 
         $writerVariables = [];
+        $diagnostics = [];
         foreach ($variables as $variable) {
+            $dictionary = $this->dictionary($datasetName, $variable['ordinal']);
+            if ($dictionary['unsupported']) {
+                $diagnostics[] = new FidelityDiagnostic('missing_rule_not_preserved', 'The external SAV writer cannot preserve a range-plus-discrete SPSS user-missing rule.');
+            }
             $values = [];
             foreach ($rows as $row) {
                 $values[] = $row[$variable['column_name']] ?? null;
@@ -58,6 +63,8 @@ final readonly class SqliteWideTableExporter
                 'decimals' => 0,
                 'label' => $variable['label'],
                 'data' => $values,
+                'values' => $dictionary['values'],
+                'missing' => $dictionary['missing'],
             ];
         }
 
@@ -69,12 +76,7 @@ final readonly class SqliteWideTableExporter
                 'info' => [],
             ],
             'caseCount' => count($rows),
-            'diagnostics' => [
-                new FidelityDiagnostic(
-                    'metadata_not_preserved',
-                    'This SQLite profile currently exports variable names, labels, values, and case order only. Original SPSS formats, declared string widths, value labels, user-missing rules, documents, attributes, sets, display settings, and file metadata are not preserved.',
-                ),
-            ],
+            'diagnostics' => $diagnostics,
         ];
     }
 
@@ -94,12 +96,12 @@ final readonly class SqliteWideTableExporter
     }
 
     /**
-     * @return list<array{source_name: string, column_name: string, storage_kind: string, label: ?string}>
+     * @return list<array{ordinal: int, source_name: string, column_name: string, storage_kind: string, label: ?string}>
      */
     private function variables(string $datasetName): array
     {
         $statement = $this->statement(
-            'SELECT source_name, column_name, storage_kind, label FROM variables WHERE dataset_name = ? ORDER BY ordinal',
+            'SELECT ordinal, source_name, column_name, storage_kind, label FROM variables WHERE dataset_name = ? ORDER BY ordinal',
         );
         $statement->execute([$datasetName]);
         $variables = $statement->fetchAll(PDO::FETCH_ASSOC);
@@ -109,15 +111,17 @@ final readonly class SqliteWideTableExporter
 
         return array_values(array_map(
             static function (array $variable): array {
+                $ordinal = $variable['ordinal'] ?? null;
                 $sourceName = $variable['source_name'] ?? null;
                 $columnName = $variable['column_name'] ?? null;
                 $storageKind = $variable['storage_kind'] ?? null;
                 $label = $variable['label'] ?? null;
-                if (!is_string($sourceName) || !is_string($columnName) || !is_string($storageKind)) {
+                if (!is_int($ordinal) || !is_string($sourceName) || !is_string($columnName) || !is_string($storageKind)) {
                     throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The SQLite variable catalogue is malformed.');
                 }
 
                 return [
+                    'ordinal' => $ordinal,
                     'source_name' => $sourceName,
                     'column_name' => $columnName,
                     'storage_kind' => $storageKind,
@@ -128,6 +132,37 @@ final readonly class SqliteWideTableExporter
         ));
     }
 
+    /** @return array{values: array<int|string, string>, missing: list<int|float|string>, unsupported: bool} */
+    private function dictionary(string $datasetName, int $ordinal): array
+    {
+        $labels = $this->statement('SELECT value_kind, numeric_value, text_value, label FROM value_labels WHERE dataset_name = ? AND variable_ordinal = ? ORDER BY ordinal');
+        $labels->execute([$datasetName, $ordinal]);
+        $values = [];
+        while (($row = $labels->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $key = $row['value_kind'] === 'text' ? $row['text_value'] : $row['numeric_value'];
+            if ((is_string($key) || is_int($key) || is_float($key)) && is_string($row['label'] ?? null)) {
+                $values[(string) $key] = $row['label'];
+            }
+        }
+
+        $rule = $this->statement('SELECT missing_format FROM missing_rules WHERE dataset_name = ? AND variable_ordinal = ?');
+        $rule->execute([$datasetName, $ordinal]);
+        $format = $rule->fetchColumn();
+        if (!is_int($format) || $format === -3) {
+            return ['values' => $values, 'missing' => [], 'unsupported' => $format === -3];
+        }
+        $missingStatement = $this->statement('SELECT value_kind, numeric_value, text_value FROM missing_rule_values WHERE dataset_name = ? AND variable_ordinal = ? ORDER BY ordinal');
+        $missingStatement->execute([$datasetName, $ordinal]);
+        $missing = [];
+        while (($row = $missingStatement->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $value = $row['value_kind'] === 'text' ? $row['text_value'] : $row['numeric_value'];
+            if (is_string($value) || is_int($value) || is_float($value)) {
+                $missing[] = $value;
+            }
+        }
+
+        return ['values' => $values, 'missing' => $missing, 'unsupported' => false];
+    }
     private function statement(string $sql): PDOStatement
     {
         $statement = $this->pdo->prepare($sql);
