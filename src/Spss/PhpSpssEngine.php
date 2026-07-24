@@ -12,10 +12,11 @@ use OpenStatSpec\Core\UnsupportedOperation;
  *
  * This package deliberately does not declare a VCS-only Composer dependency.
  */
-final class PhpSpssEngine
+final class PhpSpssEngine implements SpssEngine
 {
     public const PACKAGE = 'tiamo/spss';
     public const READER_CLASS = 'SPSS\\Sav\\Reader';
+    public const WRITER_CLASS = 'SPSS\\Sav\\Writer';
 
     public function isAvailable(): bool
     {
@@ -45,6 +46,19 @@ final class PhpSpssEngine
             'info' => $reader->info,
             'data' => $reader->data,
         ];
+    }
+
+    public function write(string $targetPath, array $dataset): void
+    {
+        if (!class_exists(self::WRITER_CLASS)) {
+            throw new UnsupportedOperation(
+                DiagnosticCode::ExternalEngineUnavailable,
+                'The selected SPSS engine is not installed. Install a compatible TonisOrmisson/php-spss checkout before exporting SAV data.',
+            );
+        }
+
+        $writerClass = self::WRITER_CLASS;
+        $writerClass::createInFile($targetPath, $dataset);
     }
 
 }

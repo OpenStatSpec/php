@@ -12,9 +12,9 @@ use PDO;
 final readonly class SpssAdapter
 {
     private Connection $connection;
-    private PhpSpssEngine $engine;
+    private SpssEngine $engine;
 
-    public function __construct(PDO $pdo, ?PhpSpssEngine $engine = null)
+    public function __construct(PDO $pdo, ?SpssEngine $engine = null)
     {
         $this->connection = new Connection($pdo);
         $this->engine = $engine ?? new PhpSpssEngine();
