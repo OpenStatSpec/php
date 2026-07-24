@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This package is a reference implementation of OpenStatSpec. The specification repository is authoritative for the data model and conformance rules.
+This package is a reference implementation of OpenStatSpec. The [specification repository](https://github.com/OpenStatSpec/specification) is authoritative for the data model and conformance rules.
 
 ## Strict source-faithful contract
 
@@ -11,34 +11,49 @@ For one imported SPSS source dataset:
 1. One source dataset maps to exactly one dedicated SQL data table.
 2. One SPSS case maps to exactly one SQL row.
 3. One SPSS variable maps to exactly one physical SQL column, preserving source order.
-4. A reserved technical case-ordinal column is added for source ordering and is not exported as an SPSS variable.
-5. Separate metadata tables preserve dictionary semantics such as labels, formats, user-missing rules, attributes, documents, variable sets and multiple-response sets.
+4. A reserved technical `__case_ordinal` column preserves source order and is not exported as an SPSS variable.
+5. The SQLite catalogue currently records dataset labels and documents; variable names, labels, storage kind, source width and print format; value labels; user-missing rules; and measurement level, display width and alignment.
 
-The adapter must not create EAV/cell tables, long views, chunked tables, reshaped data, automatic harmonisation, or inferred respondent keys. An unsupported source feature or target capability must produce an explicit diagnostic.
+The adapter must not create EAV/cell tables, long views, chunked tables, reshaped data, automatic harmonisation, or inferred respondent keys. Unsupported source features and target capabilities produce explicit diagnostics.
+
+## Implemented profile
+
+The only end-to-end profile is SQLite with unencrypted SAV files.
+
+- `SpssAdapter::import(string $sourcePath, string $datasetName): void` accepts only `.sav`, normalises the external engine's source dictionary, and creates a `dataset_<normalised-name>` table plus its catalogue entries in one transaction.
+- `SpssAdapter::export(string $datasetName, string $targetPath): SpssExportResult` accepts only a `.sav` target. It orders cases by `__case_ordinal`, reconstructs the writer payload, writes through the external engine, and returns fidelity diagnostics.
+- ZSAV is rejected before reading or writing. No claim is made about compressed SPSS data.
+- SQLite strings are stored as non-null `TEXT`; numeric system-missing values are stored as `NULL`.
+- A string variable or source value wider than 255 bytes is rejected for export before a target file is written, because the selected writer cannot preserve it.
+
+The catalogue retains some metadata that the selected external writer cannot reconstruct. Current export diagnostics cover display metadata, file labels/documents, and range-plus-discrete user-missing rules. A diagnostic does not currently stop an otherwise writable SAV export; callers that require no known loss must treat a non-empty diagnostic list as a failed export.
+
+## SQL capability profiles
+
+`SqliteProfile`, `MySqlProfile`, and `PostgreSqlProfile` define driver names, identifier quoting, numeric/text types, identifier limits, and maximum wide-table variable counts.
+
+Only SQLite has an importer and exporter, and only SQLite is exercised through a PDO connection. MySQL/MariaDB and PostgreSQL profiles are declarations of planned capabilities, not supported conversion targets.
 
 ## Package layers
 
 ### Core
 
-Core contains stable names, validation contracts and machine-readable diagnostics. It has no SPSS parser or SQL-dialect behaviour.
+Core contains diagnostic codes, fidelity diagnostics and explicit unsupported-operation errors.
 
 ### SQL
 
-SQL owns the supplied PDO connection, profile capability checks and eventual creation of the one wide data table plus metadata catalog. Dialect-specific behaviour belongs below this layer.
+SQL owns the supplied PDO connection, profile capability checks, the SQLite wide-table importer/exporter, and the SQLite catalogue.
 
 ### SPSS
 
-SPSS owns SAV/ZSAV reading and writing and maps their semantics through Core and SQL. Until real readers/writers exist, it must fail explicitly.
+SPSS owns SAV-only format gating, normalisation, and the bridge to the selected external engine. `SpssEngine` is an internal bridge, not a stable public extension API.
 
-## Planned API
+## External engine
 
-- `SpssAdapter::import(string $sourcePath, string $datasetName): void`
-- `SpssAdapter::export(string $datasetName, string $targetPath): void`
+The selected engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss). OpenStatSpec deliberately does not declare it as a Composer dependency. `PhpSpssEngine` reports an `external_engine_unavailable` diagnostic when its compatible reader or writer class is absent.
 
-Both operations require a PDO connection at adapter construction.
+The optional integration test uses `OPENSTATSPEC_PHP_SPSS_PATH` to point at a compatible engine checkout. It imports that engine's SAV fixture into SQLite, exports it, and reads the result back. The regular suite does not require that checkout.
 
-## Framework extension boundary
+## Framework boundary
 
-This package remains framework-neutral and depends only on PHP/PDO at its database boundary. It must not require Yii2 or Laravel.
-
-A future Yii2 integration belongs in a separate package. That package may depend on this PHP core and `yiisoft/yii2`, then adapt `yii\\db\\Connection`, offer migrations, and expose console commands. The integration must call this package's public API rather than embed a second implementation of the standard.
+This package remains framework-neutral and does not require Yii2 or Laravel. Applications supply PDO directly. A future framework-specific package may integrate a framework connection or CLI, but must call this package rather than reimplement the mapping.

@@ -2,34 +2,46 @@
 
 `openstatspec/php` is the PHP reference adapter for the [OpenStatSpec specification](https://github.com/OpenStatSpec/specification).
 
-It will import an SPSS `.sav` or `.zsav` dataset into a connected SQL database as one source-faithful wide data table plus the specification's separate metadata tables. It will also export a conforming dataset from that database back to SPSS.
+The current implemented profile imports an unencrypted SPSS `.sav` dataset into SQLite as one source-faithful wide data table plus a metadata catalogue. It can reconstruct a `.sav` writer payload from that SQLite catalogue and write it through a compatible external SPSS engine.
 
 ## Status
 
-This is an initial scaffold. It exposes the intended public API but does **not** yet parse or write SAV/ZSAV files. Calling a conversion method fails explicitly with `UnsupportedOperation`; it never silently transforms, reshapes, truncates, or drops data.
+This is an early reference implementation, not a release-ready full-fidelity converter.
+
+- **Implemented and tested with SQLite:** unencrypted SAV import and export, one data table per dataset, ordered cases, source variable names and physical-column mapping, value labels, ordinary user-missing values, formats, string widths, file labels, document records, and selected display metadata in the catalogue.
+- **Explicitly rejected:** ZSAV, non-SAV inputs and outputs, and non-SQLite PDO connections. Rejections occur before the adapter changes the target database or writes a target file.
+- **Declared but not live-server tested:** MySQL/MariaDB and PostgreSQL capability profiles. They describe identifiers, SQL types and wide-table limits; they do not yet implement imports or exports.
+- **Known export boundaries:** the selected writer does not restore file labels, documents, display metadata, or range-plus-discrete user-missing rules; these produce fidelity diagnostics in the export result. A string variable or value wider than 255 bytes stops export before a file is written.
+
+An export diagnostic is information about a known loss boundary; the current PHP API still writes the SAV file when the external writer can do so. Consumers that require lossless output must inspect `SpssExportResult::$diagnostics` and reject a non-empty result themselves.
 
 ## Requirements
 
 - PHP 8.3 or later
-- A PDO connection for the selected SQL dialect
+- PHP PDO with the SQLite driver for the current import/export profile
+- A compatible SAV engine for real file conversion. The package does not currently declare that engine as a Composer dependency.
 
-## Intended API
+## Current API
 
 ```php
 use OpenStatSpec\Spss\SpssAdapter;
 
-$adapter = new SpssAdapter($pdo);
+$adapter = new SpssAdapter($pdo); // SQLite PDO
 $adapter->import('/data/survey.sav', 'survey_2026');
-$adapter->export('survey_2026', '/data/survey-export.sav');
+$result = $adapter->export('survey_2026', '/data/survey-export.sav');
+
+if ($result->diagnostics !== []) {
+    // The file was written, but the result identifies known fidelity limits.
+}
 ```
 
-The current methods deliberately throw until an SPSS reader/writer and a supported SQL dialect profile are implemented.
+`import()` currently returns `void`; `export()` returns `SpssExportResult` with the dataset name, target path, case count and fidelity diagnostics.
 
 ## Architecture
 
 - `src/Core` — specification identities, validation and explicit diagnostics.
-- `src/Sql` — PDO-backed connection boundary and future dialect profiles.
-- `src/Spss` — SAV/ZSAV import and export adapter boundary.
+- `src/Sql` — PDO-backed profile boundary; SQLite is implemented, while MySQL/MariaDB and PostgreSQL are capability declarations only.
+- `src/Spss` — SAV-only import/export adapter boundary and the internal external-engine bridge.
 
 The package implements the specification; it does not define it. See [docs/architecture.md](docs/architecture.md) for the strict relational contract.
 
@@ -42,7 +54,13 @@ composer check
 
 `composer check` is the required local verification gate before every commit or push. It validates Composer configuration, checks PHP syntax, checks coding style, runs PHPStan static analysis, and runs the test suite. To apply safe code-style fixes locally, run `composer fix` and then run `composer check` again.
 
-Tests use SQLite in memory only where a database handle is needed; no database service or Docker setup is required for this scaffold.
+The regular test suite uses SQLite in memory; no database service or Docker setup is required. The optional real-engine integration test is skipped unless `OPENSTATSPEC_PHP_SPSS_PATH` points to a compatible checkout of [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss):
+
+```bash
+OPENSTATSPEC_PHP_SPSS_PATH=/path/to/php-spss composer test
+```
+
+That optional test imports the engine's fixture into SQLite, exports it, and reads the written SAV file back.
 
 ## Contributing
 
@@ -50,23 +68,17 @@ This is the PHP implementation of OpenStatSpec; the normative model lives in the
 
 Contributions are welcome for strict-scope adapters, SQL dialect profiles, SAV/ZSAV fixtures, conformance tests, and documentation. New work must preserve the source-faithful wide-table contract and must report unsupported conversions explicitly.
 
-## Framework extensions
+## Framework use
 
-The framework-neutral core accepts PDO and has no Yii2 or Laravel dependency. A future separate Yii2 package can depend on this package and `yiisoft/yii2`, then provide `yii\\db\\Connection` integration, migrations, and console commands without changing this core package.
-
-## First usable milestone
-
-The fastest integration path is framework-neutral PDO: pass the existing application PDO connection directly to `SpssAdapter`. The first vertical slice will create the strict wide data table and metadata catalog, run preflight capability checks, and return explicit diagnostics before SAV/ZSAV parsing and export are completed.
-
-This allows an existing Yii2 application to use its own database connection without adding Yii2 to this package. Framework-specific adapters remain deferred.
+The package is framework-neutral and has no Yii2 or Laravel dependency. A consuming application may pass its own PDO connection to `SpssAdapter`. SQLite is the only current end-to-end profile; using a Yii2, Laravel, MySQL/MariaDB or PostgreSQL application connection is not yet supported for conversion.
 
 ## SPSS engine
 
-The selected external SAV engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss). It is intentionally not a Composer dependency of this package yet, because its published Composer identity remains `tiamo/spss` and OpenStatSpec must not add a VCS-only public dependency.
+The selected external SAV engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss). It is intentionally not a Composer dependency because its published Composer identity remains `tiamo/spss` and OpenStatSpec must not add a VCS-only public dependency.
 
-`PhpSpssEngine` detects whether a compatible reader is available at runtime. If it is missing, import stops before any database change with the `external_engine_unavailable` diagnostic. The adapter also reports source semantics the engine cannot expose; it never silently discards them.
+`PhpSpssEngine` detects whether compatible reader and writer classes are available at runtime. If the needed class is missing, the operation stops with an `external_engine_unavailable` diagnostic. `SpssEngine` is an internal boundary around that engine, not a stable public extension API.
 
-The initial local integration path is to install the selected engine in the consuming application's development environment, then pass that application's PDO instance to `SpssAdapter`.
+The adapter does not claim ZSAV capability because the selected engine's ZLIB path is not verified. It rejects `.zsav` before attempting to read it.
 
 ## CI feedback loop
 
