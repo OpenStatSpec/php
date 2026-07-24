@@ -45,6 +45,9 @@ final readonly class SqliteWideTableExporter
 
         $writerVariables = [];
         $diagnostics = [];
+        if ($this->hasUnrestoredDisplayMetadata($datasetName)) {
+            $diagnostics[] = new FidelityDiagnostic('display_metadata_not_preserved', 'Measurement level, display width, alignment, and role metadata are retained in the catalogue but cannot be reconstructed by the selected php-spss writer.');
+        }
         if ($this->hasUnrestoredDatasetMetadata($datasetName)) {
             $diagnostics[] = new FidelityDiagnostic('dataset_metadata_not_preserved', 'File labels and document records are retained in the catalogue but are not yet reconstructed in the SAV writer payload.');
         }
@@ -131,6 +134,13 @@ final readonly class SqliteWideTableExporter
         ));
     }
 
+    private function hasUnrestoredDisplayMetadata(string $datasetName): bool
+    {
+        $statement = $this->statement('SELECT 1 FROM variable_display_metadata WHERE dataset_name = ? LIMIT 1');
+        $statement->execute([$datasetName]);
+
+        return $statement->fetchColumn() !== false;
+    }
     private function hasUnrestoredDatasetMetadata(string $datasetName): bool
     {
         $statement = $this->statement('SELECT 1 FROM dataset_metadata WHERE dataset_name = ? UNION ALL SELECT 1 FROM documents WHERE dataset_name = ? LIMIT 1');

@@ -48,6 +48,7 @@ final class SpssSourceNormalizer
         $header = array_key_exists('header', $source) ? $source['header'] : null;
         $documents = $source['documents'] ?? [];
         $valueLabels = $source['valueLabels'] ?? [];
+        $info = $source['info'] ?? [];
 
         return [
             'variables' => $variables,
@@ -55,8 +56,26 @@ final class SpssSourceNormalizer
             'fileLabel' => self::stringField($header, 'fileLabel'),
             'documents' => self::documents(is_array($documents) ? $documents : []),
             'valueLabels' => is_array($valueLabels) ? $valueLabels : [],
+            'displayParameters' => self::displayParameters($info),
         ];
 
+    }
+    /** @return list<array{measure: int, columns: int, alignment: int}> */
+    private static function displayParameters(mixed $info): array
+    {
+        $record = is_array($info) ? ($info[11] ?? null) : ($info instanceof \ArrayAccess && isset($info[11]) ? $info[11] : null);
+        $items = is_object($record) && method_exists($record, 'toArray') ? $record->toArray() : $record;
+        if (!is_array($items)) {
+            return [];
+        }
+        $result = [];
+        foreach ($items as $item) {
+            if (is_array($item) && is_int($item[0] ?? null) && is_int($item[1] ?? null) && is_int($item[2] ?? null)) {
+                $result[] = ['measure' => $item[0], 'columns' => $item[1], 'alignment' => $item[2]];
+            }
+        }
+
+        return $result;
     }
     private static function field(mixed $source, string $name): mixed
     {
