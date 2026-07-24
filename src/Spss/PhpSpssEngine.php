@@ -46,3 +46,5 @@ final class PhpSpssEngine
             'data' => $reader->data,
         ];
     }
+
+}
