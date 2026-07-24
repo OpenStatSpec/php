@@ -11,8 +11,8 @@ use OpenStatSpec\Core\UnsupportedOperation;
 final class SpssSourceNormalizer
 {
     /**
-     * @param array{variables: array<int, mixed>, data: array<int, mixed>} $source
-     * @return array{variables: list<array{name: string, type: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, label: ?string}>, data: array<int, mixed>}
+     * @param array{variables: array<int, mixed>, data: array<int, mixed>, header?: mixed, documents?: array<int, mixed>} $source
+     * @return array{variables: list<array{name: string, type: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, label: ?string}>, data: array<int, mixed>, fileLabel: ?string, documents: list<string>}
      */
     public static function normalize(array $source): array
     {
@@ -42,9 +42,17 @@ final class SpssSourceNormalizer
             ];
         }
 
-        return ['variables' => $variables, 'data' => $source['data']];
-    }
+        $header = array_key_exists('header', $source) ? $source['header'] : null;
+        $documents = $source['documents'] ?? [];
 
+        return [
+            'variables' => $variables,
+            'data' => $source['data'],
+            'fileLabel' => self::stringField($header, 'fileLabel'),
+            'documents' => self::documents($documents),
+        ];
+
+    }
     private static function field(mixed $source, string $name): mixed
     {
         if (is_array($source)) {
@@ -62,5 +70,26 @@ final class SpssSourceNormalizer
         $value = self::field($source, $name);
 
         return is_int($value) ? $value : $default;
+    }
+    private static function stringField(mixed $source, string $name): ?string
+    {
+        $value = self::field($source, $name);
+
+        return is_string($value) ? $value : null;
+    }
+
+    /**
+     * @param array<int, mixed> $documents
+     * @return list<string>
+     */
+    private static function documents(array $documents): array
+    {
+        $result = [];
+        foreach ($documents as $document) {
+            if (is_string($document)) {
+                $result[] = $document;
+            }
+        }
+        return $result;
     }
 }

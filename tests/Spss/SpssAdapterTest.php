@@ -40,13 +40,13 @@ final class SpssAdapterTest extends TestCase
 
         $pdo = new PDO('sqlite::memory:');
         $engine = new FakeSpssEngine([
-            'header' => null,
+            'header' => (object) ['fileLabel' => 'Customer survey source'],
             'variables' => [
                 (object) ['name' => 'Respondent ID', 'width' => 0, 'print' => [0, 5, 8, 0], 'label' => 'Respondent identifier'],
                 (object) ['name' => 'Favourite colour', 'width' => 12, 'print' => [0, 1, 12, 0], 'label' => 'Favourite colour'],
             ],
             'valueLabels' => [],
-            'documents' => [],
+            'documents' => ['First document line', 'Second document line'],
             'info' => [],
             'data' => [
                 ['Respondent ID' => 7, 'Favourite colour' => 'blue'],
@@ -72,6 +72,8 @@ final class SpssAdapterTest extends TestCase
             self::rows($pdo, 'SELECT ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals FROM variables WHERE dataset_name = "Customer survey" ORDER BY ordinal'),
         );
         $result = $adapter->export('Customer survey', 'roundtrip.sav');
+        self::assertSame([['meta_value' => 'Customer survey source']], self::rows($pdo, 'SELECT meta_value FROM dataset_metadata WHERE dataset_name = "Customer survey"'));
+        self::assertSame([['ordinal' => 1, 'text' => 'First document line'], ['ordinal' => 2, 'text' => 'Second document line']], self::rows($pdo, 'SELECT ordinal, text FROM documents WHERE dataset_name = "Customer survey" ORDER BY ordinal'));
 
         self::assertSame('Customer survey', $result->datasetName);
         self::assertSame('roundtrip.sav', $result->targetPath);

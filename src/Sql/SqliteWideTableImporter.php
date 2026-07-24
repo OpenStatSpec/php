@@ -29,6 +29,7 @@ final readonly class SqliteWideTableImporter
         $this->pdo->beginTransaction();
         try {
             $this->createCatalog();
+            $this->storeDatasetMetadata($datasetName, $source);
             $this->createDataTable($tableName, $variables);
             $this->pdo->prepare('INSERT INTO datasets (dataset_name, table_name) VALUES (?, ?)')->execute([$datasetName, $tableName]);
             $catalog = $this->pdo->prepare('INSERT INTO variables (dataset_name, ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals, label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
@@ -49,6 +50,20 @@ final readonly class SqliteWideTableImporter
     {
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS datasets (dataset_name TEXT NOT NULL PRIMARY KEY, table_name TEXT NOT NULL UNIQUE)');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS variables (dataset_name TEXT NOT NULL, ordinal INTEGER NOT NULL, source_name TEXT NOT NULL, column_name TEXT NOT NULL, storage_kind TEXT NOT NULL, source_width INTEGER NOT NULL, format_family INTEGER NOT NULL, format_width INTEGER NOT NULL, format_decimals INTEGER NOT NULL, label TEXT NULL, PRIMARY KEY (dataset_name, ordinal), UNIQUE (dataset_name, column_name))');
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS dataset_metadata (dataset_name TEXT NOT NULL, meta_key TEXT NOT NULL, meta_value TEXT NOT NULL, PRIMARY KEY (dataset_name, meta_key))');
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS documents (dataset_name TEXT NOT NULL, ordinal INTEGER NOT NULL, text TEXT NOT NULL, PRIMARY KEY (dataset_name, ordinal))');
+    }
+
+    /** @param array{fileLabel?: ?string, documents?: list<string>} $source */
+    private function storeDatasetMetadata(string $datasetName, array $source): void
+    {
+        if (is_string($source['fileLabel'] ?? null)) {
+            $this->pdo->prepare('INSERT INTO dataset_metadata (dataset_name, meta_key, meta_value) VALUES (?, ?, ?)')->execute([$datasetName, 'file_label', $source['fileLabel']]);
+        }
+        $document = $this->pdo->prepare('INSERT INTO documents (dataset_name, ordinal, text) VALUES (?, ?, ?)');
+        foreach ($source['documents'] ?? [] as $ordinal => $text) {
+            $document->execute([$datasetName, $ordinal + 1, $text]);
+        }
     }
 
     /** @param list<array{ordinal: int, source: string, column: string, kind: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, label: ?string}> $variables */
