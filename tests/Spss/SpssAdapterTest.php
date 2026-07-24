@@ -78,7 +78,7 @@ final class SpssAdapterTest extends TestCase
         self::assertSame('Customer survey', $result->datasetName);
         self::assertSame('roundtrip.sav', $result->targetPath);
         self::assertSame(2, $result->caseCount);
-        self::assertSame([], $result->diagnostics);
+        self::assertSame('dataset_metadata_not_preserved', $result->diagnostics[0]->code);
         self::assertSame(
             [
                 ['name' => 'Respondent ID', 'format' => 5, 'width' => 8, 'decimals' => 0, 'label' => 'Respondent identifier', 'data' => [7.0, 8.0], 'values' => ['7' => 'Seven'], 'missing' => [1.0, 3.0]],

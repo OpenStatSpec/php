@@ -45,6 +45,9 @@ final readonly class SqliteWideTableExporter
 
         $writerVariables = [];
         $diagnostics = [];
+        if ($this->hasUnrestoredDatasetMetadata($datasetName)) {
+            $diagnostics[] = new FidelityDiagnostic('dataset_metadata_not_preserved', 'File labels and document records are retained in the catalogue but are not yet reconstructed in the SAV writer payload.');
+        }
         foreach ($variables as $variable) {
             $dictionary = $this->dictionary($datasetName, $variable['ordinal']);
             if ($dictionary['unsupported']) {
@@ -132,6 +135,13 @@ final readonly class SqliteWideTableExporter
         ));
     }
 
+    private function hasUnrestoredDatasetMetadata(string $datasetName): bool
+    {
+        $statement = $this->statement('SELECT 1 FROM dataset_metadata WHERE dataset_name = ? UNION ALL SELECT 1 FROM documents WHERE dataset_name = ? LIMIT 1');
+        $statement->execute([$datasetName, $datasetName]);
+
+        return $statement->fetchColumn() !== false;
+    }
     /** @return array{values: array<int|string, string>, missing: list<int|float|string>, unsupported: bool} */
     private function dictionary(string $datasetName, int $ordinal): array
     {
