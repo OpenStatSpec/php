@@ -11,8 +11,8 @@ use OpenStatSpec\Core\UnsupportedOperation;
 final class SpssSourceNormalizer
 {
     /**
-     * @param array{variables: array<int, mixed>, data: array<int, mixed>, header?: mixed, documents?: array<int, mixed>} $source
-     * @return array{variables: list<array{name: string, type: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, label: ?string}>, data: array<int, mixed>, fileLabel: ?string, documents: list<string>}
+     * @param array<string, mixed> $source
+     * @return array<string, mixed>
      */
     public static function normalize(array $source): array
     {
@@ -30,6 +30,7 @@ final class SpssSourceNormalizer
             $formatWidth = is_array($print) && is_int($print[2] ?? null) ? $print[2] : ($width > 0 ? $width : 8);
             $formatDecimals = is_array($print) && is_int($print[3] ?? null) ? $print[3] : self::intField($variable, 'decimals', 0);
             $label = self::field($variable, 'label');
+            $missingValues = self::field($variable, 'missingValues');
 
             $variables[] = [
                 'name' => $name,
@@ -39,17 +40,21 @@ final class SpssSourceNormalizer
                 'formatWidth' => $formatWidth,
                 'formatDecimals' => $formatDecimals,
                 'label' => is_string($label) ? $label : null,
+                'missingFormat' => self::intField($variable, 'missingValuesFormat', 0),
+                'missingValues' => is_array($missingValues) ? $missingValues : [],
             ];
         }
 
         $header = array_key_exists('header', $source) ? $source['header'] : null;
         $documents = $source['documents'] ?? [];
+        $valueLabels = $source['valueLabels'] ?? [];
 
         return [
             'variables' => $variables,
             'data' => $source['data'],
             'fileLabel' => self::stringField($header, 'fileLabel'),
-            'documents' => self::documents($documents),
+            'documents' => self::documents(is_array($documents) ? $documents : []),
+            'valueLabels' => is_array($valueLabels) ? $valueLabels : [],
         ];
 
     }
