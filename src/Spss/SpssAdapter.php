@@ -7,6 +7,7 @@ namespace OpenStatSpec\Spss;
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\Connection;
+use OpenStatSpec\Sql\MySqlWideTableImporter;
 use OpenStatSpec\Sql\PostgreSqlWideTableExporter;
 use OpenStatSpec\Sql\PostgreSqlWideTableImporter;
 use OpenStatSpec\Sql\SqliteWideTableExporter;
@@ -38,13 +39,11 @@ final readonly class SpssAdapter
             );
         }
         $source = SpssSourceNormalizer::normalize($this->engine->read($sourcePath));
-        if ($this->connection->profile->driverName() === 'pgsql') {
-            (new PostgreSqlWideTableImporter($this->connection->pdo))->import($source, $datasetName);
-
-            return;
-        }
-
-        (new SqliteWideTableImporter($this->connection->pdo))->import($source, $datasetName);
+        match ($this->connection->profile->driverName()) {
+            'pgsql' => (new PostgreSqlWideTableImporter($this->connection->pdo))->import($source, $datasetName),
+            'mysql' => (new MySqlWideTableImporter($this->connection->pdo))->import($source, $datasetName),
+            default => (new SqliteWideTableImporter($this->connection->pdo))->import($source, $datasetName),
+        };
     }
 
     public function export(string $datasetName, string $targetPath): SpssExportResult
@@ -56,9 +55,14 @@ final readonly class SpssAdapter
                 'This adapter profile exports SAV and ZSAV files only.',
             );
         }
-        $export = $this->connection->profile->driverName() === 'pgsql'
-            ? (new PostgreSqlWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat)
-            : (new SqliteWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat);
+        $export = match ($this->connection->profile->driverName()) {
+            'pgsql' => (new PostgreSqlWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat),
+            'mysql' => throw new UnsupportedOperation(
+                DiagnosticCode::SqlProfileOperationUnavailable,
+                'MySQL/MariaDB export is not implemented; refusing to fall back to another SQL profile.',
+            ),
+            default => (new SqliteWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat),
+        };
         $this->engine->write($targetPath, $export['dataset']);
 
         return new SpssExportResult($datasetName, $targetPath, $export['caseCount'], $export['diagnostics']);

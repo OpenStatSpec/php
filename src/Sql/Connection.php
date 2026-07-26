@@ -25,6 +25,7 @@ final readonly class Connection
         $this->profile = match ($driver) {
             'sqlite' => new SqliteProfile(),
             'pgsql' => new PostgreSqlProfile(),
+            'mysql' => new MySqlProfile(),
             default => throw new UnsupportedOperation(
                 DiagnosticCode::UnsupportedSqlDriver,
                 sprintf('The PDO driver "%s" has no OpenStatSpec SQL profile.', $driver),
