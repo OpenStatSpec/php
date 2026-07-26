@@ -76,6 +76,7 @@ final readonly class PostgreSqlWideTableImporter
             $schema->createCatalog();
             $this->pdo->exec($definition->createSql);
             $this->storeCatalogue($datasetName, $variables, $definition);
+            $this->storeDisplayMetadata($datasetName, $source['displayParameters'] ?? []);
             $this->storeDictionaryMetadata($datasetName, $variables, $source['valueLabels'] ?? []);
             $this->insertCases($definition, $rows);
             $this->pdo->commit();
@@ -113,6 +114,26 @@ final readonly class PostgreSqlWideTableImporter
                 $this->integerField($source, 'formatDecimals', 0),
                 is_string($source['label'] ?? null) ? $source['label'] : null,
             ]);
+        }
+    }
+
+    /** @param mixed $displayParameters */
+    private function storeDisplayMetadata(string $datasetName, mixed $displayParameters): void
+    {
+        if (!is_array($displayParameters) || !array_is_list($displayParameters)) {
+            return;
+        }
+
+        $statement = null;
+        foreach ($displayParameters as $ordinal => $display) {
+            if (!is_array($display) || !is_int($display['measure'] ?? null) || !is_int($display['columns'] ?? null) || !is_int($display['alignment'] ?? null)) {
+                continue;
+            }
+            $statement ??= $this->requiredStatement(
+                'INSERT INTO variable_display_metadata (dataset_name, variable_ordinal, measurement_level, display_width, alignment) VALUES (?, ?, ?, ?, ?)',
+                'variable-display-metadata',
+            );
+            $statement->execute([$datasetName, $ordinal + 1, $display['measure'], $display['columns'], $display['alignment']]);
         }
     }
 

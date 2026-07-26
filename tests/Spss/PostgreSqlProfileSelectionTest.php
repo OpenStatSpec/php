@@ -27,6 +27,7 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $pdo = $this->pdoWithDriver('pgsql');
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
+        $display = $this->createMock(PDOStatement::class);
         $cases = $this->createMock(PDOStatement::class);
         $engine = $this->createMock(SpssEngine::class);
 
@@ -40,9 +41,9 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
         $pdo->expects(self::exactly(17))->method('exec')->willReturn(0);
-        $pdo->expects(self::exactly(3))
+        $pdo->expects(self::exactly(4))
             ->method('prepare')
-            ->willReturnOnConsecutiveCalls($dataset, $variables, $cases);
+            ->willReturnOnConsecutiveCalls($dataset, $variables, $display, $cases);
         $dataset->expects(self::once())
             ->method('execute')
             ->with(['fixture', 'dataset_fixture'])
@@ -50,6 +51,10 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $variables->expects(self::once())
             ->method('execute')
             ->with(['fixture', 1, 'Score', 'score', 'numeric', 0, 5, 8, 0, null])
+            ->willReturn(true);
+        $display->expects(self::once())
+            ->method('execute')
+            ->with(['fixture', 1, 0, 8, 0])
             ->willReturn(true);
         $cases->expects(self::once())
             ->method('execute')

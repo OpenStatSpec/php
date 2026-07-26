@@ -136,6 +136,47 @@ final class PostgreSqlWideTableImporterTest extends TestCase
         ], $labelRows);
     }
 
+    public function testImportsVariableDisplayMetadataThroughPdoTransaction(): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $dataset = $this->createMock(PDOStatement::class);
+        $variables = $this->createMock(PDOStatement::class);
+        $display = $this->createMock(PDOStatement::class);
+        $cases = $this->createMock(PDOStatement::class);
+        $displayRows = [];
+
+        $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
+        $pdo->expects(self::once())->method('commit')->willReturn(true);
+        $pdo->expects(self::never())->method('rollBack');
+        $pdo->expects(self::exactly(17))->method('exec')->willReturn(0);
+        $pdo->expects(self::exactly(4))->method('prepare')->willReturnOnConsecutiveCalls($dataset, $variables, $display, $cases);
+        $dataset->method('execute')->willReturn(true);
+        $variables->method('execute')->willReturn(true);
+        $display->expects(self::exactly(2))->method('execute')->willReturnCallback(function ($row) use (&$displayRows): bool {
+            $displayRows[] = $row;
+
+            return true;
+        });
+        $cases->expects(self::once())->method('execute')->willReturn(true);
+
+        (new PostgreSqlWideTableImporter($pdo))->import([
+            'variables' => [
+                ['name' => 'Score', 'type' => 'numeric'],
+                ['name' => 'Comment', 'type' => 'string'],
+            ],
+            'displayParameters' => [
+                ['measure' => 3, 'columns' => 12, 'alignment' => 1],
+                ['measure' => 1, 'columns' => 24, 'alignment' => 0],
+            ],
+            'data' => [[1.0, 'blue']],
+        ], 'customer survey');
+
+        self::assertSame([
+            ['customer survey', 1, 3, 12, 1],
+            ['customer survey', 2, 1, 24, 0],
+        ], $displayRows);
+    }
+
     public function testRejectsNullStringBeforeCommitAndRollsBack(): void
     {
         $pdo = $this->createMock(PDO::class);
