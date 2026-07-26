@@ -159,6 +159,110 @@ final class MySqlWideTableImporterTest extends TestCase
         ], $labelRows);
     }
 
+    public function testImportsV3ExtensionMetadataAndPreservesOrderedMembers(): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $dataset = $this->createMock(PDOStatement::class);
+        $variables = $this->createMock(PDOStatement::class);
+        $roles = $this->createMock(PDOStatement::class);
+        $variableAttributes = $this->createMock(PDOStatement::class);
+        $fileAttributes = $this->createMock(PDOStatement::class);
+        $variableSets = $this->createMock(PDOStatement::class);
+        $variableSetMembers = $this->createMock(PDOStatement::class);
+        $multipleResponseSets = $this->createMock(PDOStatement::class);
+        $multipleResponseSetMembers = $this->createMock(PDOStatement::class);
+        $cases = $this->createMock(PDOStatement::class);
+        $roleRows = [];
+        $fileAttributeRows = [];
+        $variableSetMemberRows = [];
+        $multipleResponseSetRows = [];
+        $multipleResponseMemberRows = [];
+
+        $pdo->expects(self::exactly(17))->method('exec')->willReturn(0);
+        $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
+        $pdo->expects(self::once())->method('commit')->willReturn(true);
+        $pdo->expects(self::never())->method('rollBack');
+        $pdo->expects(self::exactly(10))->method('prepare')->willReturnOnConsecutiveCalls(
+            $dataset,
+            $variables,
+            $roles,
+            $variableAttributes,
+            $fileAttributes,
+            $variableSets,
+            $variableSetMembers,
+            $multipleResponseSets,
+            $multipleResponseSetMembers,
+            $cases,
+        );
+
+        $dataset->expects(self::once())->method('execute')->willReturn(true);
+        $variables->expects(self::exactly(2))->method('execute')->willReturn(true);
+        $roles->expects(self::exactly(2))->method('execute')->willReturnCallback(function (array $row) use (&$roleRows): bool {
+            $roleRows[] = $row;
+
+            return true;
+        });
+        $variableAttributes->expects(self::once())->method('execute')->with(['customer survey', 1, 'Origin', 1, 'CRM'])->willReturn(true);
+        $fileAttributes->expects(self::once())->method('execute')->willReturnCallback(function (array $row) use (&$fileAttributeRows): bool {
+            $fileAttributeRows[] = $row;
+
+            return true;
+        });
+        $variableSets->expects(self::once())->method('execute')->with(['customer survey', 1, 'Core'])->willReturn(true);
+        $variableSetMembers->expects(self::exactly(2))->method('execute')->willReturnCallback(function (array $row) use (&$variableSetMemberRows): bool {
+            $variableSetMemberRows[] = $row;
+
+            return true;
+        });
+        $multipleResponseSets->expects(self::once())->method('execute')->willReturnCallback(function (array $row) use (&$multipleResponseSetRows): bool {
+            $multipleResponseSetRows[] = $row;
+
+            return true;
+        });
+        $multipleResponseSetMembers->expects(self::exactly(2))->method('execute')->willReturnCallback(function (array $row) use (&$multipleResponseMemberRows): bool {
+            $multipleResponseMemberRows[] = $row;
+
+            return true;
+        });
+        $cases->expects(self::once())->method('execute')->willReturn(true);
+
+        (new MySqlWideTableImporter($pdo))->import([
+            'variables' => [
+                ['name' => 'Respondent ID', 'type' => 'numeric', 'role' => 1, 'attributes' => [['name' => 'Origin', 'values' => ['CRM']]]],
+                ['name' => 'Favourite colour', 'type' => 'string', 'role' => 0, 'attributes' => []],
+            ],
+            'fileAttributes' => [['name' => 'Data source', 'values' => ['survey']]],
+            'variableSets' => [['name' => 'Core', 'variableNames' => ['Favourite colour', 'Respondent ID']]],
+            'multipleResponseSets' => [[
+                'name' => '$Profile',
+                'type' => 'dichotomy',
+                'variableNames' => ['Favourite colour', 'Respondent ID'],
+                'label' => 'Profile',
+                'countedValue' => 1.0,
+                'categoryLabels' => 'counted_values',
+                'labelSource' => 'variable_label',
+            ]],
+            'data' => [[1.0, 'blue']],
+        ], 'customer survey');
+
+        self::assertSame([
+            ['customer survey', 1, 1],
+            ['customer survey', 2, 0],
+        ], $roleRows);
+        self::assertSame([['customer survey', 'Data source', 1, 'survey']], $fileAttributeRows);
+        self::assertSame([
+            ['customer survey', 1, 1, 2],
+            ['customer survey', 1, 2, 1],
+        ], $variableSetMemberRows);
+        self::assertSame([
+            ['customer survey', 1, '$Profile', 'dichotomy', 'Profile', 'numeric', 1.0, null, 'counted_values', 'variable_label'],
+        ], $multipleResponseSetRows);
+        self::assertSame([
+            ['customer survey', 1, 1, 2],
+            ['customer survey', 1, 2, 1],
+        ], $multipleResponseMemberRows);
+    }
+
     public function testCompensatesForImplicitDdlCommitWhenCaseInsertFails(): void
     {
         $pdo = $this->createMock(PDO::class);
@@ -167,6 +271,7 @@ final class MySqlWideTableImporterTest extends TestCase
         $cases = $this->createMock(PDOStatement::class);
         $cleanup = $this->createMock(PDOStatement::class);
         $executedSql = [];
+        $cleanupSql = [];
 
         $pdo->expects(self::exactly(18))->method('exec')->willReturnCallback(function (string $sql) use (&$executedSql): int {
             $executedSql[] = $sql;
@@ -178,8 +283,10 @@ final class MySqlWideTableImporterTest extends TestCase
         $pdo->expects(self::once())->method('rollBack')->willReturn(true);
         $pdo->expects(self::never())->method('commit');
         $pdo->expects(self::exactly(19))->method('prepare')->willReturnCallback(
-            static function (string $sql) use ($dataset, $variables, $cases, $cleanup): PDOStatement {
+            static function (string $sql) use ($dataset, $variables, $cases, $cleanup, &$cleanupSql): PDOStatement {
                 if (str_starts_with($sql, 'DELETE FROM ')) {
+                    $cleanupSql[] = $sql;
+
                     return $cleanup;
                 }
 
@@ -205,6 +312,15 @@ final class MySqlWideTableImporterTest extends TestCase
         } finally {
             self::assertStringStartsWith('DROP TABLE IF EXISTS ', $executedSql[17] ?? '');
             self::assertStringContainsString('dataset_customer_survey', $executedSql[17] ?? '');
+            self::assertSame([
+                'DELETE FROM multiple_response_set_members WHERE dataset_name = ?',
+                'DELETE FROM multiple_response_sets WHERE dataset_name = ?',
+                'DELETE FROM variable_set_members WHERE dataset_name = ?',
+                'DELETE FROM variable_sets WHERE dataset_name = ?',
+                'DELETE FROM variable_attributes WHERE dataset_name = ?',
+                'DELETE FROM file_attributes WHERE dataset_name = ?',
+                'DELETE FROM variable_roles WHERE dataset_name = ?',
+            ], array_slice($cleanupSql, 0, 7));
         }
     }
 }
