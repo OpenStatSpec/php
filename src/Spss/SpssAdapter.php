@@ -35,8 +35,8 @@ final readonly class SpssAdapter
                 'This adapter profile supports SAV and ZSAV files only.',
             );
         }
-        if ($this->connection->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
-            throw new UnsupportedOperation(DiagnosticCode::UnsupportedSqlDriver, 'This import slice currently supports SQLite only.');
+        if ($this->connection->profile->driverName() === 'pgsql') {
+            $this->throwProfileOperationUnavailable('import');
         }
         $source = SpssSourceNormalizer::normalize($this->engine->read($sourcePath));
         (new SqliteWideTableImporter($this->connection->pdo))->import($source, $datasetName);
@@ -51,8 +51,8 @@ final readonly class SpssAdapter
                 'This adapter profile exports SAV and ZSAV files only.',
             );
         }
-        if ($this->connection->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
-            throw new UnsupportedOperation(DiagnosticCode::UnsupportedSqlDriver, 'This export slice currently supports SQLite only.');
+        if ($this->connection->profile->driverName() === 'pgsql') {
+            $this->throwProfileOperationUnavailable('export');
         }
 
         $export = (new SqliteWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat);
@@ -64,5 +64,16 @@ final readonly class SpssAdapter
     private function spssFormat(string $path): string
     {
         return strtolower(pathinfo($path, PATHINFO_EXTENSION));
+    }
+
+    private function throwProfileOperationUnavailable(string $operation): never
+    {
+        throw new UnsupportedOperation(
+            DiagnosticCode::SqlProfileOperationUnavailable,
+            sprintf(
+                'The PostgreSQL profile is selected, but %s is unavailable until the PostgreSQL wide-table implementation is complete. No tables were created.',
+                $operation,
+            ),
+        );
     }
 }

@@ -12,4 +12,5 @@ enum DiagnosticCode: string
     case UnsupportedSourceFormat = 'unsupported_source_format';
     case InvalidSourceDataset = 'invalid_source_dataset';
     case UnsupportedSqlDriver = 'unsupported_sql_driver';
+    case SqlProfileOperationUnavailable = 'sql_profile_operation_unavailable';
 }
