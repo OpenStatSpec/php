@@ -69,8 +69,8 @@ final class PostgreSqlWideTableImporterTest extends TestCase
         self::assertSame('score', $definition->columns[0]['columnName']);
         self::assertSame('comment', $definition->columns[1]['columnName']);
         self::assertSame([
-            ['customer survey', 1, 'Score', 'score', 'numeric', 0, 5, 8, 0, null],
-            ['customer survey', 2, 'Comment', 'comment', 'string', 12, 5, 8, 0, null],
+            ['customer survey', 1, 'Score', 'score', 'numeric', 0, 5, 8, 0, 5, 8, 0, null],
+            ['customer survey', 2, 'Comment', 'comment', 'string', 12, 5, 8, 0, 5, 8, 0, null],
         ], $variableRows);
         self::assertSame([
             ['value_0' => 1, 'value_1' => '0.10000000000000001', 'value_2' => 'blue'],

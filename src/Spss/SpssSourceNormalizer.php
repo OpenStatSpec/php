@@ -37,9 +37,14 @@ final class SpssSourceNormalizer
                 'name' => $variable->name,
                 'type' => $variable->type->value,
                 'width' => $variable->width,
+                // The legacy format* keys are the SPSS print format. Write
+                // format is separate and must never be inferred from it.
                 'formatFamily' => $variable->printFormat->code,
                 'formatWidth' => $variable->printFormat->width,
                 'formatDecimals' => $variable->printFormat->decimals,
+                'writeFormatFamily' => $variable->writeFormat->code,
+                'writeFormatWidth' => $variable->writeFormat->width,
+                'writeFormatDecimals' => $variable->writeFormat->decimals,
                 'label' => $variable->label,
                 'missingFormat' => self::missingFormat($variable->missingValues),
                 'missingValues' => self::missingValues($variable->missingValues),

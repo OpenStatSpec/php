@@ -36,9 +36,9 @@ final readonly class SqliteWideTableImporter
             $this->storeDisplayMetadata($datasetName, is_array($source['displayParameters'] ?? null) ? $source['displayParameters'] : []);
             $this->createDataTable($tableName, $variables);
             $this->pdo->prepare('INSERT INTO datasets (dataset_name, table_name) VALUES (?, ?)')->execute([$datasetName, $tableName]);
-            $catalog = $this->pdo->prepare('INSERT INTO variables (dataset_name, ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals, label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $catalog = $this->pdo->prepare('INSERT INTO variables (dataset_name, ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals, write_format_family, write_format_width, write_format_decimals, label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             foreach ($variables as $variable) {
-                $catalog->execute([$datasetName, $variable['ordinal'], $variable['source'], $variable['column'], $variable['kind'], $variable['width'], $variable['formatFamily'], $variable['formatWidth'], $variable['formatDecimals'], $variable['label']]);
+                $catalog->execute([$datasetName, $variable['ordinal'], $variable['source'], $variable['column'], $variable['kind'], $variable['width'], $variable['formatFamily'], $variable['formatWidth'], $variable['formatDecimals'], $variable['writeFormatFamily'], $variable['writeFormatWidth'], $variable['writeFormatDecimals'], $variable['label']]);
             }
             $this->insertCases($tableName, $variables, $source['data']);
             $this->pdo->commit();
@@ -53,7 +53,8 @@ final readonly class SqliteWideTableImporter
     private function createCatalog(): void
     {
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS datasets (dataset_name TEXT NOT NULL PRIMARY KEY, table_name TEXT NOT NULL UNIQUE)');
-        $this->pdo->exec('CREATE TABLE IF NOT EXISTS variables (dataset_name TEXT NOT NULL, ordinal INTEGER NOT NULL, source_name TEXT NOT NULL, column_name TEXT NOT NULL, storage_kind TEXT NOT NULL, source_width INTEGER NOT NULL, format_family INTEGER NOT NULL, format_width INTEGER NOT NULL, format_decimals INTEGER NOT NULL, label TEXT NULL, PRIMARY KEY (dataset_name, ordinal), UNIQUE (dataset_name, column_name))');
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS variables (dataset_name TEXT NOT NULL, ordinal INTEGER NOT NULL, source_name TEXT NOT NULL, column_name TEXT NOT NULL, storage_kind TEXT NOT NULL, source_width INTEGER NOT NULL, format_family INTEGER NOT NULL, format_width INTEGER NOT NULL, format_decimals INTEGER NOT NULL, write_format_family INTEGER NOT NULL, write_format_width INTEGER NOT NULL, write_format_decimals INTEGER NOT NULL, label TEXT NULL, PRIMARY KEY (dataset_name, ordinal), UNIQUE (dataset_name, column_name))');
+        $this->migrateFormatCatalogue();
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS dataset_metadata (dataset_name TEXT NOT NULL, meta_key TEXT NOT NULL, meta_value TEXT NOT NULL, PRIMARY KEY (dataset_name, meta_key))');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS file_technical_metadata (dataset_name TEXT NOT NULL PRIMARY KEY, source_format TEXT NOT NULL, record_type TEXT NULL, source_version TEXT NULL, provenance TEXT NULL, encoding TEXT NOT NULL, product_name TEXT NULL, raw_creation_date TEXT NULL, raw_creation_time TEXT NULL, case_count INTEGER NULL, nominal_case_size INTEGER NULL, layout_code INTEGER NULL, compression INTEGER NULL, compression_bias REAL NULL, machine_code INTEGER NULL, floating_point_representation INTEGER NULL, endianness INTEGER NULL, character_code INTEGER NULL)');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS documents (dataset_name TEXT NOT NULL, ordinal INTEGER NOT NULL, text TEXT NOT NULL, PRIMARY KEY (dataset_name, ordinal))');
@@ -62,6 +63,23 @@ final readonly class SqliteWideTableImporter
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS missing_rule_values (dataset_name TEXT NOT NULL, variable_ordinal INTEGER NOT NULL, ordinal INTEGER NOT NULL, value_kind TEXT NOT NULL, numeric_value REAL NULL, text_value TEXT NULL, PRIMARY KEY (dataset_name, variable_ordinal, ordinal))');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS variable_display_metadata (dataset_name TEXT NOT NULL, variable_ordinal INTEGER NOT NULL, measurement_level INTEGER NOT NULL, display_width INTEGER NOT NULL, alignment INTEGER NOT NULL, PRIMARY KEY (dataset_name, variable_ordinal))');
         SqliteV3MetadataImporter::createTables($this->pdo);
+    }
+
+    private function migrateFormatCatalogue(): void
+    {
+        $statement = $this->pdo->query('PRAGMA table_info(variables)');
+        if ($statement === false) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The SQLite variable catalogue could not be inspected for format migration.');
+        }
+        $columns = $statement->fetchAll(PDO::FETCH_ASSOC);
+        $names = array_column($columns, 'name');
+        foreach (['write_format_family', 'write_format_width', 'write_format_decimals'] as $column) {
+            if (!in_array($column, $names, true)) {
+                // Existing rows remain NULL; the exporter reports that incomplete
+                // legacy catalogue rather than copying print format data.
+                $this->pdo->exec('ALTER TABLE variables ADD COLUMN ' . $column . ' INTEGER NULL');
+            }
+        }
     }
 
     /** @param array{fileLabel?: ?string, documents?: list<string>} $source */
@@ -196,7 +214,7 @@ final readonly class SqliteWideTableImporter
 
         return null;
     }
-    /** @param list<array{ordinal: int, source: string, column: string, kind: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, label: ?string}> $variables */
+    /** @param list<array{ordinal: int, source: string, column: string, kind: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, writeFormatFamily: int, writeFormatWidth: int, writeFormatDecimals: int, label: ?string}> $variables */
     private function createDataTable(string $tableName, array $variables): void
     {
         $columns = [$this->profile->quoteIdentifier('__case_ordinal') . ' INTEGER NOT NULL PRIMARY KEY'];
@@ -206,7 +224,7 @@ final readonly class SqliteWideTableImporter
         $this->pdo->exec('CREATE TABLE ' . $this->quote($tableName) . ' (' . implode(', ', $columns) . ')');
     }
 
-    /** @param list<array{ordinal: int, source: string, column: string, kind: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, label: ?string}> $variables
+    /** @param list<array{ordinal: int, source: string, column: string, kind: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, writeFormatFamily: int, writeFormatWidth: int, writeFormatDecimals: int, label: ?string}> $variables
      * @param array<int, mixed> $rows
      */
     private function insertCases(string $tableName, array $variables, array $rows): void
@@ -229,7 +247,7 @@ final readonly class SqliteWideTableImporter
     }
 
     /** @param array<int, mixed> $sourceVariables
-     * @return list<array{ordinal: int, source: string, column: string, kind: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, label: ?string}>
+     * @return list<array{ordinal: int, source: string, column: string, kind: string, width: int, formatFamily: int, formatWidth: int, formatDecimals: int, writeFormatFamily: int, writeFormatWidth: int, writeFormatDecimals: int, label: ?string}>
      */
     private function variables(array $sourceVariables): array
     {
@@ -257,13 +275,37 @@ final readonly class SqliteWideTableImporter
                 'column' => $column,
                 'kind' => is_string($type) && str_contains(strtolower($type), 'string') ? 'string' : 'numeric',
                 'width' => is_int($variable['width'] ?? null) ? $variable['width'] : 0,
-                'formatFamily' => is_int($variable['formatFamily'] ?? null) ? $variable['formatFamily'] : 5,
-                'formatWidth' => is_int($variable['formatWidth'] ?? null) ? $variable['formatWidth'] : 8,
-                'formatDecimals' => is_int($variable['formatDecimals'] ?? null) ? $variable['formatDecimals'] : 0,
+                'formatFamily' => $this->printFormatField($variable, 'formatFamily', 5),
+                'formatWidth' => $this->printFormatField($variable, 'formatWidth', 8),
+                'formatDecimals' => $this->printFormatField($variable, 'formatDecimals', 0),
+                'writeFormatFamily' => $this->writeFormatField($variable, 'writeFormatFamily', 5),
+                'writeFormatWidth' => $this->writeFormatField($variable, 'writeFormatWidth', 8),
+                'writeFormatDecimals' => $this->writeFormatField($variable, 'writeFormatDecimals', 0),
                 'label' => is_string($label) ? $label : null,
             ];
         }
         return $variables;
+    }
+
+    /** @param array<string, mixed> $variable */
+    private function printFormatField(array $variable, string $key, int $default): int
+    {
+        return is_int($variable[$key] ?? null) ? $variable[$key] : $default;
+    }
+
+    /** @param array<string, mixed> $variable */
+    private function writeFormatField(array $variable, string $key, int $default): int
+    {
+        if (is_int($variable[$key] ?? null)) {
+            return $variable[$key];
+        }
+        // A pre-fidelity source with no format fields at all used the default
+        // SPSS format. Explicit print fields without write fields are rejected;
+        // copying those values would silently lose format fidelity.
+        if (!isset($variable['formatFamily']) && !isset($variable['formatWidth']) && !isset($variable['formatDecimals'])) {
+            return $default;
+        }
+        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Every source variable with explicit print formats must provide independent write format fields.');
     }
 
     private function identifier(string $value): string

@@ -34,6 +34,9 @@ final class MySqlWideTableExporterTest extends TestCase
                 'format_family' => 5,
                 'format_width' => 8,
                 'format_decimals' => 0,
+                'write_format_family' => 5,
+                'write_format_width' => 12,
+                'write_format_decimals' => 2,
                 'label' => 'Survey score',
             ]]),
             'cases' => $this->statement([['score' => '1.5']]),
@@ -102,6 +105,8 @@ final class MySqlWideTableExporterTest extends TestCase
         self::assertSame(Measure::SCALE, $variable->measure);
         self::assertSame(Alignment::RIGHT, $variable->alignment);
         self::assertSame(12, $variable->columns);
+        self::assertSame([5, 8, 0], [$variable->printFormat->code, $variable->printFormat->width, $variable->printFormat->decimals]);
+        self::assertSame([5, 12, 2], [$variable->writeFormat->code, $variable->writeFormat->width, $variable->writeFormat->decimals]);
         self::assertSame('Customer source', $export['dataset']->metadata->label);
         self::assertSame(['First document line', 'Second document line'], $export['dataset']->metadata->documents());
         self::assertSame('zsav', $export['dataset']->technicalMetadata->sourceFormat);
@@ -244,6 +249,9 @@ final class MySqlWideTableExporterTest extends TestCase
             'format_family' => 5,
             'format_width' => 8,
             'format_decimals' => 0,
+            'write_format_family' => 5,
+            'write_format_width' => 8,
+            'write_format_decimals' => 0,
             'label' => null,
         ];
     }

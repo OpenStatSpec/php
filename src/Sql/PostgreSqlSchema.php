@@ -23,7 +23,7 @@ final readonly class PostgreSqlSchema
     {
         return [
             'CREATE TABLE IF NOT EXISTS datasets (dataset_name TEXT NOT NULL PRIMARY KEY, table_name TEXT NOT NULL UNIQUE)',
-            'CREATE TABLE IF NOT EXISTS variables (dataset_name TEXT NOT NULL, ordinal BIGINT NOT NULL, source_name TEXT NOT NULL, column_name TEXT NOT NULL, storage_kind TEXT NOT NULL, source_width BIGINT NOT NULL, format_family INTEGER NOT NULL, format_width INTEGER NOT NULL, format_decimals INTEGER NOT NULL, label TEXT NULL, PRIMARY KEY (dataset_name, ordinal), UNIQUE (dataset_name, column_name))',
+            'CREATE TABLE IF NOT EXISTS variables (dataset_name TEXT NOT NULL, ordinal BIGINT NOT NULL, source_name TEXT NOT NULL, column_name TEXT NOT NULL, storage_kind TEXT NOT NULL, source_width BIGINT NOT NULL, format_family INTEGER NOT NULL, format_width INTEGER NOT NULL, format_decimals INTEGER NOT NULL, write_format_family INTEGER NOT NULL, write_format_width INTEGER NOT NULL, write_format_decimals INTEGER NOT NULL, label TEXT NULL, PRIMARY KEY (dataset_name, ordinal), UNIQUE (dataset_name, column_name))',
             'CREATE TABLE IF NOT EXISTS dataset_metadata (dataset_name TEXT NOT NULL, meta_key TEXT NOT NULL, meta_value TEXT NOT NULL, PRIMARY KEY (dataset_name, meta_key))',
             'CREATE TABLE IF NOT EXISTS file_technical_metadata (dataset_name TEXT NOT NULL PRIMARY KEY, source_format TEXT NOT NULL, record_type TEXT NULL, source_version TEXT NULL, provenance TEXT NULL, encoding TEXT NOT NULL, product_name TEXT NULL, raw_creation_date TEXT NULL, raw_creation_time TEXT NULL, case_count BIGINT NULL, nominal_case_size BIGINT NULL, layout_code INTEGER NULL, compression INTEGER NULL, compression_bias DOUBLE PRECISION NULL, machine_code INTEGER NULL, floating_point_representation INTEGER NULL, endianness INTEGER NULL, character_code INTEGER NULL)',
             'CREATE TABLE IF NOT EXISTS documents (dataset_name TEXT NOT NULL, ordinal BIGINT NOT NULL, text TEXT NOT NULL, PRIMARY KEY (dataset_name, ordinal))',
@@ -46,6 +46,25 @@ final readonly class PostgreSqlSchema
         foreach ($this->catalogStatements() as $sql) {
             $this->pdo->exec($sql);
         }
+    }
+
+    /** Execute explicit nullable migration DDL for pre-format-fidelity catalogues. */
+    public function migrateFormatCatalogue(): void
+    {
+        foreach ($this->formatCatalogueMigrationStatements() as $sql) {
+            $this->pdo->exec($sql);
+        }
+    }
+
+    /** @return list<string> */
+    public function formatCatalogueMigrationStatements(): array
+    {
+        // Old rows cannot reveal write formats, so NULL makes loss explicit.
+        return [
+            'ALTER TABLE variables ADD COLUMN IF NOT EXISTS write_format_family INTEGER NULL',
+            'ALTER TABLE variables ADD COLUMN IF NOT EXISTS write_format_width INTEGER NULL',
+            'ALTER TABLE variables ADD COLUMN IF NOT EXISTS write_format_decimals INTEGER NULL',
+        ];
     }
 
     /**

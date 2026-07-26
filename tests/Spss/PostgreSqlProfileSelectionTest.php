@@ -73,7 +73,7 @@ final class PostgreSqlProfileSelectionTest extends TestCase
             ->willReturn(true);
         $variables->expects(self::once())
             ->method('execute')
-            ->with(['fixture', 1, 'Score', 'score', 'numeric', 0, 5, 8, 0, null])
+            ->with(['fixture', 1, 'Score', 'score', 'numeric', 0, 5, 8, 0, 5, 8, 0, null])
             ->willReturn(true);
         $display->expects(self::once())
             ->method('execute')
@@ -124,8 +124,8 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $dataset->expects(self::once())->method('fetch')->willReturn(['table_name' => 'dataset_fixture']);
         $variables->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
         $variables->expects(self::once())->method('fetchAll')->willReturn([
-            ['ordinal' => 1, 'source_name' => 'Score', 'column_name' => 'score', 'storage_kind' => 'numeric', 'source_width' => 0, 'format_family' => 5, 'format_width' => 8, 'format_decimals' => 0, 'label' => 'Result'],
-            ['ordinal' => 2, 'source_name' => 'Comment', 'column_name' => 'comment', 'storage_kind' => 'string', 'source_width' => 12, 'format_family' => 1, 'format_width' => 12, 'format_decimals' => 0, 'label' => null],
+            ['ordinal' => 1, 'source_name' => 'Score', 'column_name' => 'score', 'storage_kind' => 'numeric', 'source_width' => 0, 'format_family' => 5, 'format_width' => 8, 'format_decimals' => 0, 'write_format_family' => 5, 'write_format_width' => 8, 'write_format_decimals' => 0, 'label' => 'Result'],
+            ['ordinal' => 2, 'source_name' => 'Comment', 'column_name' => 'comment', 'storage_kind' => 'string', 'source_width' => 12, 'format_family' => 1, 'format_width' => 12, 'format_decimals' => 0, 'write_format_family' => 1, 'write_format_width' => 12, 'write_format_decimals' => 0, 'label' => null],
         ]);
         $cases->expects(self::once())->method('execute')->with()->willReturn(true);
         $cases->expects(self::exactly(3))->method('fetch')->willReturnOnConsecutiveCalls(
@@ -244,8 +244,8 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $dataset->expects(self::once())->method('fetch')->willReturn(['table_name' => 'dataset_fixture']);
         $variables->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
         $variables->expects(self::once())->method('fetchAll')->willReturn([
-            ['ordinal' => '1', 'source_name' => 'Score', 'column_name' => 'score', 'storage_kind' => 'numeric', 'source_width' => '0', 'format_family' => '5', 'format_width' => '8', 'format_decimals' => '0', 'label' => null],
-            ['ordinal' => '2', 'source_name' => 'Reason', 'column_name' => 'reason', 'storage_kind' => 'string', 'source_width' => '20', 'format_family' => '1', 'format_width' => '20', 'format_decimals' => '0', 'label' => 'Reason label'],
+            ['ordinal' => '1', 'source_name' => 'Score', 'column_name' => 'score', 'storage_kind' => 'numeric', 'source_width' => '0', 'format_family' => '5', 'format_width' => '8', 'format_decimals' => '0', 'write_format_family' => '5', 'write_format_width' => '8', 'write_format_decimals' => '0', 'label' => null],
+            ['ordinal' => '2', 'source_name' => 'Reason', 'column_name' => 'reason', 'storage_kind' => 'string', 'source_width' => '20', 'format_family' => '1', 'format_width' => '20', 'format_decimals' => '0', 'write_format_family' => '1', 'write_format_width' => '20', 'write_format_decimals' => '0', 'label' => 'Reason label'],
         ]);
         $cases->expects(self::once())->method('execute')->with()->willReturn(true);
         $cases->expects(self::exactly(2))->method('fetch')->willReturnOnConsecutiveCalls(['score' => '2', 'reason' => 'MISSING'], false);

@@ -82,14 +82,15 @@ final readonly class SqliteWideTableExporter
             $width = $isString ? $variable['source_width'] : 0;
             // SPSS stores format widths in one byte, but long-string storage widths are
             // separate and may be up to 32767 bytes. Do not cap the storage width.
-            $formatWidth = $isString ? min($variable['format_width'], 255) : $variable['format_width'];
+            $printFormatWidth = $isString ? min($variable['format_width'], 255) : $variable['format_width'];
+            $writeFormatWidth = $isString ? min($variable['write_format_width'], 255) : $variable['write_format_width'];
 
             $typedVariables[] = new VariableMetadata(
                 name: $variable['source_name'],
                 type: $type,
                 width: $width,
-                printFormat: new VariableFormat($variable['format_family'], $formatWidth, $variable['format_decimals']),
-                writeFormat: new VariableFormat($variable['format_family'], $formatWidth, $variable['format_decimals']),
+                printFormat: new VariableFormat($variable['format_family'], $printFormatWidth, $variable['format_decimals']),
+                writeFormat: new VariableFormat($variable['write_format_family'], $writeFormatWidth, $variable['write_format_decimals']),
                 label: $variable['label'],
                 valueLabels: new ValueLabelSet($dictionary['labels'], [$variable['source_name']]),
                 missingValues: $dictionary['missing'],
@@ -115,12 +116,12 @@ final readonly class SqliteWideTableExporter
     }
 
     /**
-     * @return list<array{ordinal: int, source_name: string, column_name: string, storage_kind: string, source_width: int, format_family: int, format_width: int, format_decimals: int, label: ?string}>
+     * @return list<array{ordinal: int, source_name: string, column_name: string, storage_kind: string, source_width: int, format_family: int, format_width: int, format_decimals: int, write_format_family: int, write_format_width: int, write_format_decimals: int, label: ?string}>
      */
     private function variables(string $datasetName): array
     {
         $statement = $this->statement(
-            'SELECT ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals, label FROM variables WHERE dataset_name = ? ORDER BY ordinal',
+            'SELECT ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals, write_format_family, write_format_width, write_format_decimals, label FROM variables WHERE dataset_name = ? ORDER BY ordinal',
         );
         $statement->execute([$datasetName]);
         $variables = $statement->fetchAll(PDO::FETCH_ASSOC);
@@ -138,8 +139,11 @@ final readonly class SqliteWideTableExporter
                 $formatFamily = $variable['format_family'] ?? null;
                 $formatWidth = $variable['format_width'] ?? null;
                 $formatDecimals = $variable['format_decimals'] ?? null;
+                $writeFormatFamily = $variable['write_format_family'] ?? null;
+                $writeFormatWidth = $variable['write_format_width'] ?? null;
+                $writeFormatDecimals = $variable['write_format_decimals'] ?? null;
                 $label = $variable['label'] ?? null;
-                if (!is_int($ordinal) || !is_string($sourceName) || !is_string($columnName) || !is_string($storageKind) || !is_int($sourceWidth) || !is_int($formatFamily) || !is_int($formatWidth) || !is_int($formatDecimals)) {
+                if (!is_int($ordinal) || !is_string($sourceName) || !is_string($columnName) || !is_string($storageKind) || !is_int($sourceWidth) || !is_int($formatFamily) || !is_int($formatWidth) || !is_int($formatDecimals) || !is_int($writeFormatFamily) || !is_int($writeFormatWidth) || !is_int($writeFormatDecimals)) {
                     throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The SQLite variable catalogue is malformed.');
                 }
 
@@ -152,6 +156,9 @@ final readonly class SqliteWideTableExporter
                     'format_family' => $formatFamily,
                     'format_width' => $formatWidth,
                     'format_decimals' => $formatDecimals,
+                    'write_format_family' => $writeFormatFamily,
+                    'write_format_width' => $writeFormatWidth,
+                    'write_format_decimals' => $writeFormatDecimals,
                     'label' => is_string($label) ? $label : null,
                 ];
             },

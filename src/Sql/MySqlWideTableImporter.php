@@ -85,7 +85,7 @@ final readonly class MySqlWideTableImporter
             'dataset catalogue',
         );
         $variable = $this->requiredStatement(
-            'INSERT INTO variables (dataset_name, ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals, label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO variables (dataset_name, ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals, write_format_family, write_format_width, write_format_decimals, label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             'variable catalogue',
         );
 
@@ -99,9 +99,12 @@ final readonly class MySqlWideTableImporter
                 $column['columnName'],
                 $column['storageKind'],
                 $this->integerField($source, 'width', 0),
-                $this->integerField($source, 'formatFamily', 5),
-                $this->integerField($source, 'formatWidth', 8),
-                $this->integerField($source, 'formatDecimals', 0),
+                $this->printFormatField($source, 'formatFamily', 5),
+                $this->printFormatField($source, 'formatWidth', 8),
+                $this->printFormatField($source, 'formatDecimals', 0),
+                $this->writeFormatField($source, 'writeFormatFamily', 5),
+                $this->writeFormatField($source, 'writeFormatWidth', 8),
+                $this->writeFormatField($source, 'writeFormatDecimals', 0),
                 is_string($source['label'] ?? null) ? $source['label'] : null,
             ]);
         }
@@ -377,6 +380,27 @@ final readonly class MySqlWideTableImporter
     private function integerField(array $source, string $key, int $default): int
     {
         return is_int($source[$key] ?? null) ? $source[$key] : $default;
+    }
+
+    /** @param array<string, mixed> $source */
+    private function printFormatField(array $source, string $key, int $default): int
+    {
+        return is_int($source[$key] ?? null) ? $source[$key] : $default;
+    }
+
+    /** @param array<string, mixed> $source */
+    private function writeFormatField(array $source, string $key, int $default): int
+    {
+        if (is_int($source[$key] ?? null)) {
+            return $source[$key];
+        }
+        // A pre-fidelity source with no format fields at all used the default
+        // SPSS format. Explicit print fields without write fields are rejected;
+        // copying those values would silently lose format fidelity.
+        if (!isset($source['formatFamily']) && !isset($source['formatWidth']) && !isset($source['formatDecimals'])) {
+            return $default;
+        }
+        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Every source variable with explicit print formats must provide independent write format fields.');
     }
 
     private function caseValue(mixed $value, string $storageKind): int|string|null

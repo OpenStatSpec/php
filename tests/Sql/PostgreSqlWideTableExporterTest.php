@@ -17,6 +17,19 @@ use SPSS\Sav\VariableRole;
 
 final class PostgreSqlWideTableExporterTest extends TestCase
 {
+    public function testRestoresIndependentPrintAndWriteFormats(): void
+    {
+        $variable = $this->variable('Score');
+        $variable['write_format_width'] = 12;
+        $variable['write_format_decimals'] = 2;
+
+        $export = $this->export(['variables' => [$variable]]);
+        $typed = $export['dataset']->variables()[0];
+
+        self::assertSame([5, 8, 0], [$typed->printFormat->code, $typed->printFormat->width, $typed->printFormat->decimals]);
+        self::assertSame([5, 12, 2], [$typed->writeFormat->code, $typed->writeFormat->width, $typed->writeFormat->decimals]);
+    }
+
     public function testRestoresVariableRolesAndOrderedAttributes(): void
     {
         $export = $this->export([
@@ -172,6 +185,9 @@ final class PostgreSqlWideTableExporterTest extends TestCase
             'format_family' => 5,
             'format_width' => 8,
             'format_decimals' => 0,
+            'write_format_family' => 5,
+            'write_format_width' => 8,
+            'write_format_decimals' => 0,
             'label' => null,
         ];
     }

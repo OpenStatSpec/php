@@ -69,15 +69,16 @@ final readonly class MySqlWideTableExporter
         $typedVariables = [];
         foreach ($variables as $variable) {
             $isString = $variable['storage_kind'] === 'string';
-            $formatWidth = $isString ? min($variable['format_width'], 255) : $variable['format_width'];
+            $printFormatWidth = $isString ? min($variable['format_width'], 255) : $variable['format_width'];
+            $writeFormatWidth = $isString ? min($variable['write_format_width'], 255) : $variable['write_format_width'];
             $dictionary = $this->dictionary($datasetName, $variable['ordinal']);
             $display = $this->display($datasetName, $variable['ordinal']);
             $typedVariables[] = new VariableMetadata(
                 name: $variable['source_name'],
                 type: $isString ? VariableType::STRING : VariableType::NUMERIC,
                 width: $isString ? $variable['source_width'] : 0,
-                printFormat: new VariableFormat($variable['format_family'], $formatWidth, $variable['format_decimals']),
-                writeFormat: new VariableFormat($variable['format_family'], $formatWidth, $variable['format_decimals']),
+                printFormat: new VariableFormat($variable['format_family'], $printFormatWidth, $variable['format_decimals']),
+                writeFormat: new VariableFormat($variable['write_format_family'], $writeFormatWidth, $variable['write_format_decimals']),
                 label: $variable['label'],
                 valueLabels: new ValueLabelSet($dictionary['labels'], [$variable['source_name']]),
                 missingValues: $dictionary['missing'],
@@ -121,11 +122,11 @@ final readonly class MySqlWideTableExporter
         return ['table_name' => $dataset['table_name']];
     }
 
-    /** @return list<array{ordinal:int,source_name:string,column_name:string,storage_kind:'numeric'|'string',source_width:int,format_family:int,format_width:int,format_decimals:int,label:?string}> */
+    /** @return list<array{ordinal:int,source_name:string,column_name:string,storage_kind:'numeric'|'string',source_width:int,format_family:int,format_width:int,format_decimals:int,write_format_family:int,write_format_width:int,write_format_decimals:int,label:?string}> */
     private function variables(string $datasetName): array
     {
         $statement = $this->statement(
-            'SELECT ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals, label FROM variables WHERE dataset_name = ? ORDER BY ordinal',
+            'SELECT ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals, write_format_family, write_format_width, write_format_decimals, label FROM variables WHERE dataset_name = ? ORDER BY ordinal',
         );
         $statement->execute([$datasetName]);
         $records = $statement->fetchAll(PDO::FETCH_ASSOC);
@@ -140,6 +141,9 @@ final readonly class MySqlWideTableExporter
             $formatFamily = $this->integer($record['format_family'] ?? null);
             $formatWidth = $this->integer($record['format_width'] ?? null);
             $formatDecimals = $this->integer($record['format_decimals'] ?? null);
+            $writeFormatFamily = $this->integer($record['write_format_family'] ?? null);
+            $writeFormatWidth = $this->integer($record['write_format_width'] ?? null);
+            $writeFormatDecimals = $this->integer($record['write_format_decimals'] ?? null);
             $sourceName = $record['source_name'] ?? null;
             $columnName = $record['column_name'] ?? null;
             $storageKind = $record['storage_kind'] ?? null;
@@ -148,6 +152,7 @@ final readonly class MySqlWideTableExporter
                 $ordinal === null || $ordinal < 1 || !is_string($sourceName) || $sourceName === ''
                 || !is_string($columnName) || $columnName === '' || !in_array($storageKind, ['numeric', 'string'], true)
                 || $sourceWidth === null || $formatFamily === null || $formatWidth === null || $formatDecimals === null
+                || $writeFormatFamily === null || $writeFormatWidth === null || $writeFormatDecimals === null
                 || (!is_string($label) && $label !== null)
                 || ($storageKind === 'string' && ($sourceWidth < 1 || $sourceWidth > 32767))
             ) {
@@ -163,6 +168,9 @@ final readonly class MySqlWideTableExporter
                 'format_family' => $formatFamily,
                 'format_width' => $formatWidth,
                 'format_decimals' => $formatDecimals,
+                'write_format_family' => $writeFormatFamily,
+                'write_format_width' => $writeFormatWidth,
+                'write_format_decimals' => $writeFormatDecimals,
                 'label' => $label,
             ];
         }

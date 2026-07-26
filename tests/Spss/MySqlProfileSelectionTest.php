@@ -62,7 +62,7 @@ final class MySqlProfileSelectionTest extends TestCase
             $cases,
         );
         $dataset->expects(self::once())->method('execute')->with(['fixture', 'dataset_fixture'])->willReturn(true);
-        $variables->expects(self::once())->method('execute')->with(['fixture', 1, 'Score', 'score', 'numeric', 0, 5, 8, 0, null])->willReturn(true);
+        $variables->expects(self::once())->method('execute')->with(['fixture', 1, 'Score', 'score', 'numeric', 0, 5, 8, 0, 5, 8, 0, null])->willReturn(true);
         $display->expects(self::once())->method('execute')->with(['fixture', 1, 0, 8, 0])->willReturn(true);
         $roles->expects(self::once())->method('execute')->with(['fixture', 1, 0])->willReturn(true);
         $cases->expects(self::once())->method('execute')->with(['value_0' => 1, 'value_1' => '1.5'])->willReturn(true);
@@ -75,8 +75,8 @@ final class MySqlProfileSelectionTest extends TestCase
         $pdo = $this->pdoWithDriver('mysql');
         $datasets = $this->statement([['table_name' => 'dataset_fixture']]);
         $variables = $this->statement([], [
-            ['ordinal' => '1', 'source_name' => 'Score', 'column_name' => 'score', 'storage_kind' => 'numeric', 'source_width' => '0', 'format_family' => '5', 'format_width' => '8', 'format_decimals' => '0', 'label' => 'Score label'],
-            ['ordinal' => '2', 'source_name' => 'Name', 'column_name' => 'name', 'storage_kind' => 'string', 'source_width' => '24', 'format_family' => '1', 'format_width' => '24', 'format_decimals' => '0', 'label' => null],
+            ['ordinal' => '1', 'source_name' => 'Score', 'column_name' => 'score', 'storage_kind' => 'numeric', 'source_width' => '0', 'format_family' => '5', 'format_width' => '8', 'format_decimals' => '0', 'write_format_family' => '5', 'write_format_width' => '8', 'write_format_decimals' => '0', 'label' => 'Score label'],
+            ['ordinal' => '2', 'source_name' => 'Name', 'column_name' => 'name', 'storage_kind' => 'string', 'source_width' => '24', 'format_family' => '1', 'format_width' => '24', 'format_decimals' => '0', 'write_format_family' => '1', 'write_format_width' => '24', 'write_format_decimals' => '0', 'label' => null],
         ]);
         $cases = $this->statement([
             ['score' => '1.5', 'name' => 'Ada'],

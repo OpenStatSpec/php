@@ -23,7 +23,7 @@ final readonly class MySqlSchema
     {
         return [
             'CREATE TABLE IF NOT EXISTS datasets (dataset_name VARCHAR(94) NOT NULL PRIMARY KEY, table_name VARCHAR(64) NOT NULL UNIQUE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
-            'CREATE TABLE IF NOT EXISTS variables (dataset_name VARCHAR(94) NOT NULL, ordinal BIGINT NOT NULL, source_name VARCHAR(191) NOT NULL, column_name VARCHAR(64) NOT NULL, storage_kind VARCHAR(16) NOT NULL, source_width BIGINT NOT NULL, format_family INTEGER NOT NULL, format_width INTEGER NOT NULL, format_decimals INTEGER NOT NULL, label LONGTEXT NULL, PRIMARY KEY (dataset_name, ordinal), UNIQUE (dataset_name, column_name)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
+            'CREATE TABLE IF NOT EXISTS variables (dataset_name VARCHAR(94) NOT NULL, ordinal BIGINT NOT NULL, source_name VARCHAR(191) NOT NULL, column_name VARCHAR(64) NOT NULL, storage_kind VARCHAR(16) NOT NULL, source_width BIGINT NOT NULL, format_family INTEGER NOT NULL, format_width INTEGER NOT NULL, format_decimals INTEGER NOT NULL, write_format_family INTEGER NOT NULL, write_format_width INTEGER NOT NULL, write_format_decimals INTEGER NOT NULL, label LONGTEXT NULL, PRIMARY KEY (dataset_name, ordinal), UNIQUE (dataset_name, column_name)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
             'CREATE TABLE IF NOT EXISTS dataset_metadata (dataset_name VARCHAR(94) NOT NULL, meta_key VARCHAR(94) NOT NULL, meta_value LONGTEXT NOT NULL, PRIMARY KEY (dataset_name, meta_key)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
             'CREATE TABLE IF NOT EXISTS file_technical_metadata (dataset_name VARCHAR(94) NOT NULL PRIMARY KEY, source_format VARCHAR(16) NOT NULL, record_type VARCHAR(32) NULL, source_version VARCHAR(64) NULL, provenance LONGTEXT NULL, encoding VARCHAR(64) NOT NULL, product_name LONGTEXT NULL, raw_creation_date VARCHAR(16) NULL, raw_creation_time VARCHAR(16) NULL, case_count BIGINT NULL, nominal_case_size BIGINT NULL, layout_code INTEGER NULL, compression INTEGER NULL, compression_bias DOUBLE NULL, machine_code INTEGER NULL, floating_point_representation INTEGER NULL, endianness INTEGER NULL, character_code INTEGER NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
             'CREATE TABLE IF NOT EXISTS documents (dataset_name VARCHAR(94) NOT NULL, ordinal BIGINT NOT NULL, text LONGTEXT NOT NULL, PRIMARY KEY (dataset_name, ordinal)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
@@ -46,6 +46,25 @@ final readonly class MySqlSchema
         foreach ($this->catalogStatements() as $sql) {
             $this->pdo->exec($sql);
         }
+    }
+
+    /** Execute explicit nullable migration DDL for pre-format-fidelity catalogues. */
+    public function migrateFormatCatalogue(): void
+    {
+        foreach ($this->formatCatalogueMigrationStatements() as $sql) {
+            $this->pdo->exec($sql);
+        }
+    }
+
+    /** @return list<string> */
+    public function formatCatalogueMigrationStatements(): array
+    {
+        // Old rows cannot reveal write formats, so NULL makes loss explicit.
+        return [
+            'ALTER TABLE variables ADD COLUMN IF NOT EXISTS write_format_family INTEGER NULL',
+            'ALTER TABLE variables ADD COLUMN IF NOT EXISTS write_format_width INTEGER NULL',
+            'ALTER TABLE variables ADD COLUMN IF NOT EXISTS write_format_decimals INTEGER NULL',
+        ];
     }
 
     /**
