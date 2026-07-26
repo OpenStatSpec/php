@@ -12,6 +12,9 @@ use PDOStatement;
 use SPSS\Sav\Dataset;
 use SPSS\Sav\FileMetadata;
 use SPSS\Sav\FileTechnicalMetadata;
+use SPSS\Sav\MissingValues;
+use SPSS\Sav\ValueLabel;
+use SPSS\Sav\ValueLabelSet;
 use SPSS\Sav\VariableDictionary;
 use SPSS\Sav\VariableFormat;
 use SPSS\Sav\VariableMetadata;
@@ -46,6 +49,7 @@ final readonly class PostgreSqlWideTableExporter
         $typedVariables = [];
         foreach ($variables as $variable) {
             $isString = $variable['storage_kind'] === 'string';
+            $dictionary = $this->dictionary($datasetName, $variable['ordinal']);
             $typedVariables[] = new VariableMetadata(
                 name: $variable['source_name'],
                 type: $isString ? VariableType::STRING : VariableType::NUMERIC,
@@ -53,6 +57,8 @@ final readonly class PostgreSqlWideTableExporter
                 printFormat: new VariableFormat($variable['format_family'], $variable['format_width'], $variable['format_decimals']),
                 writeFormat: new VariableFormat($variable['format_family'], $variable['format_width'], $variable['format_decimals']),
                 label: $variable['label'],
+                valueLabels: new ValueLabelSet($dictionary['labels'], [$variable['source_name']]),
+                missingValues: $dictionary['missing'],
                 dictionaryIndex: $variable['ordinal'],
             );
         }
@@ -67,7 +73,7 @@ final readonly class PostgreSqlWideTableExporter
             'caseCount' => count($rows),
             'diagnostics' => [new FidelityDiagnostic(
                 'postgresql_dictionary_metadata_deferred',
-                'PostgreSQL export currently preserves strict-wide case values and core variable definitions only. Value labels, user-missing rules, display settings, and file-level metadata require the next catalogue-export slice.',
+                'PostgreSQL export preserves strict-wide case values, core variable definitions, value labels, and user-missing rules. Display settings, file-level metadata, attributes, variable sets, and multiple-response sets require later catalogue-export work.',
             )],
         ];
     }
@@ -128,6 +134,100 @@ final readonly class PostgreSqlWideTableExporter
         return $variables;
     }
 
+    /** @return array{labels: list<ValueLabel>, missing: MissingValues} */
+    private function dictionary(string $datasetName, int $ordinal): array
+    {
+        $labels = $this->statement('SELECT value_kind, numeric_value, text_value, label FROM value_labels WHERE dataset_name = ? AND variable_ordinal = ? ORDER BY ordinal');
+        $labels->execute([$datasetName, $ordinal]);
+        $typedLabels = [];
+        while (($row = $labels->fetch(PDO::FETCH_ASSOC)) !== false) {
+            if (!is_array($row) || !is_string($row['label'] ?? null)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL value-label catalogue is malformed.');
+            }
+            $typedLabels[] = new ValueLabel($this->dictionaryValue($row), $row['label']);
+        }
+
+        $rule = $this->statement('SELECT missing_format FROM missing_rules WHERE dataset_name = ? AND variable_ordinal = ?');
+        $rule->execute([$datasetName, $ordinal]);
+        $format = $this->integer($rule->fetchColumn());
+        if ($format === null || $format === 0) {
+            return ['labels' => $typedLabels, 'missing' => MissingValues::none()];
+        }
+        if ($format < -3 || ($format < 0 && $format !== -2 && $format !== -3) || $format > 3) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL user-missing rule has an unsupported SPSS missing format.');
+        }
+
+        $valuesStatement = $this->statement('SELECT value_kind, numeric_value, text_value FROM missing_rule_values WHERE dataset_name = ? AND variable_ordinal = ? ORDER BY ordinal');
+        $valuesStatement->execute([$datasetName, $ordinal]);
+        $values = [];
+        while (($row = $valuesStatement->fetch(PDO::FETCH_ASSOC)) !== false) {
+            if (!is_array($row)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL user-missing value catalogue is malformed.');
+            }
+            $values[] = $this->dictionaryValue($row);
+        }
+
+        if ($format === -2) {
+            if (count($values) !== 2) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL user-missing rule has an incomplete ordered value list.');
+            }
+
+            return ['labels' => $typedLabels, 'missing' => MissingValues::range(
+                $this->numeric($values[0]),
+                $this->numeric($values[1]),
+            )];
+        }
+        if ($format === -3) {
+            if (count($values) !== 3) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL user-missing rule has an incomplete ordered value list.');
+            }
+
+            return ['labels' => $typedLabels, 'missing' => MissingValues::rangeAndValue(
+                $this->numeric($values[0]),
+                $this->numeric($values[1]),
+                $this->numeric($values[2]),
+            )];
+        }
+        if (count($values) !== $format) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL user-missing rule has an incomplete ordered value list.');
+        }
+
+        return ['labels' => $typedLabels, 'missing' => MissingValues::discrete(...$values)];
+    }
+
+    /** @param array<string, mixed> $row */
+    private function dictionaryValue(array $row): int|float|string
+    {
+        $kind = $row['value_kind'] ?? null;
+        if ($kind === 'text') {
+            if (is_string($row['text_value'] ?? null)) {
+                return $row['text_value'];
+            }
+        } elseif ($kind === 'numeric') {
+            $value = $row['numeric_value'] ?? null;
+            if (is_int($value) || is_float($value)) {
+                return $value;
+            }
+            if (is_string($value) && is_numeric($value)) {
+                return (float) $value;
+            }
+        }
+
+        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL dictionary contains an invalid typed value.');
+    }
+
+    private function numeric(int|float|string $value): int|float
+    {
+        if (is_int($value) || is_float($value)) {
+            return $value;
+        }
+        if (is_numeric($value)) {
+            return (float) $value;
+        }
+
+        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS missing-value ranges require numeric endpoints.');
+    }
+
     private function caseValue(mixed $value, string $storageKind): int|float|string|null
     {
         if ($storageKind === 'string') {
@@ -149,7 +249,7 @@ final readonly class PostgreSqlWideTableExporter
 
     private function integer(mixed $value): ?int
     {
-        return is_int($value) ? $value : (is_string($value) && ctype_digit($value) ? (int) $value : null);
+        return is_int($value) ? $value : (is_string($value) && preg_match('/^-?[0-9]+$/D', $value) === 1 ? (int) $value : null);
     }
 
     private function statement(string $sql): PDOStatement

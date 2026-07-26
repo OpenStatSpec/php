@@ -15,6 +15,8 @@ use PDOStatement;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use SPSS\Sav\Dataset;
+use SPSS\Sav\MissingValues;
+use SPSS\Sav\ValueLabel;
 use SPSS\Sav\VariableDictionary;
 use SPSS\Sav\VariableFormat;
 use SPSS\Sav\VariableMetadata;
@@ -70,11 +72,15 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
         $cases = $this->createMock(PDOStatement::class);
+        $scoreLabels = $this->createMock(PDOStatement::class);
+        $scoreMissing = $this->createMock(PDOStatement::class);
+        $commentLabels = $this->createMock(PDOStatement::class);
+        $commentMissing = $this->createMock(PDOStatement::class);
         $engine = $this->createMock(SpssEngine::class);
 
-        $pdo->expects(self::exactly(3))
+        $pdo->expects(self::exactly(7))
             ->method('prepare')
-            ->willReturnOnConsecutiveCalls($dataset, $variables, $cases);
+            ->willReturnOnConsecutiveCalls($dataset, $variables, $cases, $scoreLabels, $scoreMissing, $commentLabels, $commentMissing);
         $dataset->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
         $dataset->expects(self::once())->method('fetch')->willReturn(['table_name' => 'dataset_fixture']);
         $variables->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
@@ -88,6 +94,14 @@ final class PostgreSqlProfileSelectionTest extends TestCase
             ['score' => null, 'comment' => 'green'],
             false,
         );
+        $scoreLabels->expects(self::once())->method('execute')->with(['fixture', 1])->willReturn(true);
+        $scoreLabels->expects(self::once())->method('fetch')->willReturn(false);
+        $scoreMissing->expects(self::once())->method('execute')->with(['fixture', 1])->willReturn(true);
+        $scoreMissing->expects(self::once())->method('fetchColumn')->willReturn(false);
+        $commentLabels->expects(self::once())->method('execute')->with(['fixture', 2])->willReturn(true);
+        $commentLabels->expects(self::once())->method('fetch')->willReturn(false);
+        $commentMissing->expects(self::once())->method('execute')->with(['fixture', 2])->willReturn(true);
+        $commentMissing->expects(self::once())->method('fetchColumn')->willReturn(false);
         $engine->expects(self::once())
             ->method('write')
             ->with('fixture.zsav', self::callback(static function (Dataset $written): bool {
@@ -103,6 +117,100 @@ final class PostgreSqlProfileSelectionTest extends TestCase
 
         self::assertSame(2, $result->caseCount);
         self::assertSame('postgresql_dictionary_metadata_deferred', $result->diagnostics[0]->code);
+    }
+
+    public function testPostgreSqlExportRestoresOrderedTypedLabelsAndAllUserMissingRuleForms(): void
+    {
+        $pdo = $this->pdoWithDriver('pgsql');
+        $dataset = $this->createMock(PDOStatement::class);
+        $variables = $this->createMock(PDOStatement::class);
+        $cases = $this->createMock(PDOStatement::class);
+        $numericLabels = $this->createMock(PDOStatement::class);
+        $numericRule = $this->createMock(PDOStatement::class);
+        $numericValues = $this->createMock(PDOStatement::class);
+        $textLabels = $this->createMock(PDOStatement::class);
+        $textRule = $this->createMock(PDOStatement::class);
+        $textValues = $this->createMock(PDOStatement::class);
+        $engine = $this->createMock(SpssEngine::class);
+
+        $pdo->expects(self::exactly(9))
+            ->method('prepare')
+            ->willReturnOnConsecutiveCalls(
+                $dataset,
+                $variables,
+                $cases,
+                $numericLabels,
+                $numericRule,
+                $numericValues,
+                $textLabels,
+                $textRule,
+                $textValues,
+            );
+        $dataset->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
+        $dataset->expects(self::once())->method('fetch')->willReturn(['table_name' => 'dataset_fixture']);
+        $variables->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
+        $variables->expects(self::once())->method('fetchAll')->willReturn([
+            ['ordinal' => '1', 'source_name' => 'Score', 'column_name' => 'score', 'storage_kind' => 'numeric', 'source_width' => '0', 'format_family' => '5', 'format_width' => '8', 'format_decimals' => '0', 'label' => null],
+            ['ordinal' => '2', 'source_name' => 'Reason', 'column_name' => 'reason', 'storage_kind' => 'string', 'source_width' => '20', 'format_family' => '1', 'format_width' => '20', 'format_decimals' => '0', 'label' => 'Reason label'],
+        ]);
+        $cases->expects(self::once())->method('execute')->with()->willReturn(true);
+        $cases->expects(self::exactly(2))->method('fetch')->willReturnOnConsecutiveCalls(['score' => '2', 'reason' => 'MISSING'], false);
+
+        $numericLabels->expects(self::once())->method('execute')->with(['fixture', 1])->willReturn(true);
+        $numericLabels->expects(self::exactly(3))->method('fetch')->willReturnOnConsecutiveCalls(
+            ['value_kind' => 'numeric', 'numeric_value' => '2', 'text_value' => null, 'label' => 'No'],
+            ['value_kind' => 'numeric', 'numeric_value' => '1', 'text_value' => null, 'label' => 'Yes'],
+            false,
+        );
+        $numericRule->expects(self::once())->method('execute')->with(['fixture', 1])->willReturn(true);
+        $numericRule->expects(self::once())->method('fetchColumn')->willReturn('-3');
+        $numericValues->expects(self::once())->method('execute')->with(['fixture', 1])->willReturn(true);
+        $numericValues->expects(self::exactly(4))->method('fetch')->willReturnOnConsecutiveCalls(
+            ['value_kind' => 'numeric', 'numeric_value' => '10', 'text_value' => null],
+            ['value_kind' => 'numeric', 'numeric_value' => '20', 'text_value' => null],
+            ['value_kind' => 'numeric', 'numeric_value' => '99', 'text_value' => null],
+            false,
+        );
+
+        $textLabels->expects(self::once())->method('execute')->with(['fixture', 2])->willReturn(true);
+        $textLabels->expects(self::exactly(3))->method('fetch')->willReturnOnConsecutiveCalls(
+            ['value_kind' => 'text', 'numeric_value' => null, 'text_value' => 'MISSING', 'label' => 'Not answered'],
+            ['value_kind' => 'text', 'numeric_value' => null, 'text_value' => 'REFUSED', 'label' => 'Refused'],
+            false,
+        );
+        $textRule->expects(self::once())->method('execute')->with(['fixture', 2])->willReturn(true);
+        $textRule->expects(self::once())->method('fetchColumn')->willReturn(2);
+        $textValues->expects(self::once())->method('execute')->with(['fixture', 2])->willReturn(true);
+        $textValues->expects(self::exactly(3))->method('fetch')->willReturnOnConsecutiveCalls(
+            ['value_kind' => 'text', 'numeric_value' => null, 'text_value' => 'MISSING'],
+            ['value_kind' => 'text', 'numeric_value' => null, 'text_value' => 'REFUSED'],
+            false,
+        );
+
+        $engine->expects(self::once())
+            ->method('write')
+            ->with('fixture.sav', self::callback(static function (Dataset $written): bool {
+                $variables = $written->variables();
+                self::assertEquals([
+                    new ValueLabel(2.0, 'No'),
+                    new ValueLabel(1.0, 'Yes'),
+                ], $variables[0]->valueLabels->labels());
+                self::assertEquals(MissingValues::rangeAndValue(10.0, 20.0, 99.0), $variables[0]->missingValues);
+                self::assertEquals([
+                    new ValueLabel('MISSING', 'Not answered'),
+                    new ValueLabel('REFUSED', 'Refused'),
+                ], $variables[1]->valueLabels->labels());
+                self::assertEquals(MissingValues::discrete('MISSING', 'REFUSED'), $variables[1]->missingValues);
+
+                return true;
+            }));
+
+        $result = (new SpssAdapter($pdo, $engine))->export('fixture', 'fixture.sav');
+
+        self::assertSame(1, $result->caseCount);
+        self::assertSame('postgresql_dictionary_metadata_deferred', $result->diagnostics[0]->code);
+        self::assertStringContainsString('value labels, and user-missing rules', $result->diagnostics[0]->message);
+        self::assertStringContainsString('Display settings', $result->diagnostics[0]->message);
     }
 
     /** @return PDO&MockObject */
