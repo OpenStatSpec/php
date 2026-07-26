@@ -20,3 +20,34 @@ jobs:
           coverage: none
       - run: composer install --no-interaction --prefer-dist
       - run: composer check
+
+  postgres-integration:
+    name: PostgreSQL integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: openstatspec
+          POSTGRES_USER: openstatspec
+          POSTGRES_PASSWORD: openstatspec
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openstatspec -d openstatspec"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      OPENSTATSPEC_PG_DSN: pgsql:host=127.0.0.1;port=5432;dbname=openstatspec
+      OPENSTATSPEC_PG_USER: openstatspec
+      OPENSTATSPEC_PG_PASSWORD: openstatspec
+    steps:
+      - uses: actions/checkout@v7
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          extensions: pdo_pgsql, pdo_sqlite, bcmath, mbstring, zlib
+      - run: composer install --no-interaction --prefer-dist
+      - run: vendor/bin/phpunit --filter PostgreSqlSpssRoundTripTest
