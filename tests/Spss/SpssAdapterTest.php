@@ -256,6 +256,41 @@ final class SpssAdapterTest extends TestCase
         $adapter->import('malformed.sav', 'malformed');
     }
 
+    public function testTechnicalMetadataIsCataloguedOnImport(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $pdo = new PDO('sqlite::memory:');
+        $adapter = new SpssAdapter($pdo, new FakeSpssEngine($this->fixture()));
+
+        $adapter->import('fixture.zsav', 'technical fixture');
+
+        self::assertSame(
+            [[
+                'source_format' => 'zsav',
+                'record_type' => '$FL3',
+                'source_version' => 'OpenStatSpec 0.1',
+                'provenance' => 'Päritolu: küsitlus',
+                'encoding' => 'UTF-8',
+                'product_name' => 'OpenStatSpec tööriist',
+                'raw_creation_date' => '26 JUL 26',
+                'raw_creation_time' => '12:34:56',
+                'case_count' => 2,
+                'nominal_case_size' => 2,
+                'layout_code' => 2,
+                'compression' => 2,
+                'compression_bias' => 100.0,
+                'machine_code' => 1,
+                'floating_point_representation' => 1,
+                'endianness' => 2,
+                'character_code' => 65001,
+            ]],
+            self::rows($pdo, 'SELECT source_format, record_type, source_version, provenance, encoding, product_name, raw_creation_date, raw_creation_time, case_count, nominal_case_size, layout_code, compression, compression_bias, machine_code, floating_point_representation, endianness, character_code FROM file_technical_metadata WHERE dataset_name = "technical fixture"'),
+        );
+    }
+
     private function fixture(): Dataset
     {
         return new Dataset(
@@ -309,6 +344,25 @@ final class SpssAdapterTest extends TestCase
                     ),
                     new MultipleResponseSet('$Profile', MultipleResponseSetType::CATEGORY, ['Respondent ID', 'Favourite colour'], 'Profile'),
                 ],
+            ),
+            new FileTechnicalMetadata(
+                sourceFormat: 'zsav',
+                recordType: '$FL3',
+                sourceVersion: 'OpenStatSpec 0.1',
+                provenance: 'Päritolu: küsitlus',
+                encoding: 'UTF-8',
+                productName: 'OpenStatSpec tööriist',
+                rawCreationDate: '26 JUL 26',
+                rawCreationTime: '12:34:56',
+                caseCount: 2,
+                nominalCaseSize: 2,
+                layoutCode: 2,
+                compression: 2,
+                compressionBias: 100.0,
+                machineCode: 1,
+                floatingPointRepresentation: 1,
+                endianness: 2,
+                characterCode: 65001,
             ),
         );
     }

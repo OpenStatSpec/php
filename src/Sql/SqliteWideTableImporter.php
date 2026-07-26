@@ -30,6 +30,7 @@ final readonly class SqliteWideTableImporter
         try {
             $this->createCatalog();
             $this->storeDatasetMetadata($datasetName, $source);
+            $this->storeTechnicalMetadata($datasetName, $source);
             $this->storeDictionaryMetadata($datasetName, $source['variables'], $source['valueLabels'] ?? []);
             (new SqliteV3MetadataImporter($this->pdo))->store($datasetName, $source);
             $this->storeDisplayMetadata($datasetName, is_array($source['displayParameters'] ?? null) ? $source['displayParameters'] : []);
@@ -54,6 +55,7 @@ final readonly class SqliteWideTableImporter
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS datasets (dataset_name TEXT NOT NULL PRIMARY KEY, table_name TEXT NOT NULL UNIQUE)');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS variables (dataset_name TEXT NOT NULL, ordinal INTEGER NOT NULL, source_name TEXT NOT NULL, column_name TEXT NOT NULL, storage_kind TEXT NOT NULL, source_width INTEGER NOT NULL, format_family INTEGER NOT NULL, format_width INTEGER NOT NULL, format_decimals INTEGER NOT NULL, label TEXT NULL, PRIMARY KEY (dataset_name, ordinal), UNIQUE (dataset_name, column_name))');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS dataset_metadata (dataset_name TEXT NOT NULL, meta_key TEXT NOT NULL, meta_value TEXT NOT NULL, PRIMARY KEY (dataset_name, meta_key))');
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS file_technical_metadata (dataset_name TEXT NOT NULL PRIMARY KEY, source_format TEXT NOT NULL, record_type TEXT NULL, source_version TEXT NULL, provenance TEXT NULL, encoding TEXT NOT NULL, product_name TEXT NULL, raw_creation_date TEXT NULL, raw_creation_time TEXT NULL, case_count INTEGER NULL, nominal_case_size INTEGER NULL, layout_code INTEGER NULL, compression INTEGER NULL, compression_bias REAL NULL, machine_code INTEGER NULL, floating_point_representation INTEGER NULL, endianness INTEGER NULL, character_code INTEGER NULL)');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS documents (dataset_name TEXT NOT NULL, ordinal INTEGER NOT NULL, text TEXT NOT NULL, PRIMARY KEY (dataset_name, ordinal))');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS value_labels (dataset_name TEXT NOT NULL, variable_ordinal INTEGER NOT NULL, ordinal INTEGER NOT NULL, value_kind TEXT NOT NULL, numeric_value REAL NULL, text_value TEXT NULL, label TEXT NOT NULL, PRIMARY KEY (dataset_name, variable_ordinal, ordinal))');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS missing_rules (dataset_name TEXT NOT NULL, variable_ordinal INTEGER NOT NULL, missing_format INTEGER NOT NULL, PRIMARY KEY (dataset_name, variable_ordinal))');
@@ -72,6 +74,58 @@ final readonly class SqliteWideTableImporter
         foreach ($source['documents'] ?? [] as $ordinal => $text) {
             $document->execute([$datasetName, $ordinal + 1, $text]);
         }
+    }
+
+    /** @param array<string, mixed> $source */
+    private function storeTechnicalMetadata(string $datasetName, array $source): void
+    {
+        $technical = $source['technicalMetadata'] ?? null;
+        if (!is_array($technical)) {
+            return;
+        }
+
+        $sourceFormat = $technical['sourceFormat'] ?? null;
+        $encoding = $technical['encoding'] ?? null;
+        if (!is_string($sourceFormat) || $sourceFormat === '' || !is_string($encoding) || $encoding === '') {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'V3 technical metadata requires a non-empty source format and encoding.');
+        }
+
+        $statement = $this->pdo->prepare('INSERT INTO file_technical_metadata (dataset_name, source_format, record_type, source_version, provenance, encoding, product_name, raw_creation_date, raw_creation_time, case_count, nominal_case_size, layout_code, compression, compression_bias, machine_code, floating_point_representation, endianness, character_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        $statement->execute([
+            $datasetName,
+            $sourceFormat,
+            $this->technicalString($technical['recordType'] ?? null),
+            $this->technicalString($technical['sourceVersion'] ?? null),
+            $this->technicalString($technical['provenance'] ?? null),
+            $encoding,
+            $this->technicalString($technical['productName'] ?? null),
+            $this->technicalString($technical['rawCreationDate'] ?? null),
+            $this->technicalString($technical['rawCreationTime'] ?? null),
+            $this->technicalInt($technical['caseCount'] ?? null),
+            $this->technicalInt($technical['nominalCaseSize'] ?? null),
+            $this->technicalInt($technical['layoutCode'] ?? null),
+            $this->technicalInt($technical['compression'] ?? null),
+            $this->technicalFloat($technical['compressionBias'] ?? null),
+            $this->technicalInt($technical['machineCode'] ?? null),
+            $this->technicalInt($technical['floatingPointRepresentation'] ?? null),
+            $this->technicalInt($technical['endianness'] ?? null),
+            $this->technicalInt($technical['characterCode'] ?? null),
+        ]);
+    }
+
+    private function technicalString(mixed $value): ?string
+    {
+        return is_string($value) ? $value : null;
+    }
+
+    private function technicalInt(mixed $value): ?int
+    {
+        return is_int($value) ? $value : null;
+    }
+
+    private function technicalFloat(mixed $value): ?float
+    {
+        return is_float($value) || is_int($value) ? (float) $value : null;
     }
 
     /**

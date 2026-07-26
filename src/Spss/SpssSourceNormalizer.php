@@ -86,6 +86,33 @@ final class SpssSourceNormalizer
                 ],
                 $source->metadata->multipleResponseSets(),
             ),
+            'technicalMetadata' => self::technicalMetadata($source),
+        ];
+    }
+
+    /** @return array<string, int|float|string|null> */
+    private static function technicalMetadata(Dataset $source): array
+    {
+        $technical = $source->technicalMetadata;
+
+        return [
+            'sourceFormat' => $technical->sourceFormat,
+            'recordType' => $technical->recordType,
+            'sourceVersion' => $technical->sourceVersion,
+            'provenance' => $technical->provenance,
+            'encoding' => $technical->encoding,
+            'productName' => $technical->productName,
+            'rawCreationDate' => $technical->rawCreationDate,
+            'rawCreationTime' => $technical->rawCreationTime,
+            'caseCount' => $technical->caseCount,
+            'nominalCaseSize' => $technical->nominalCaseSize,
+            'layoutCode' => $technical->layoutCode,
+            'compression' => $technical->compression,
+            'compressionBias' => $technical->compressionBias,
+            'machineCode' => $technical->machineCode,
+            'floatingPointRepresentation' => $technical->floatingPointRepresentation,
+            'endianness' => $technical->endianness,
+            'characterCode' => $technical->characterCode,
         ];
     }
 
