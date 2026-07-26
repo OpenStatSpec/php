@@ -38,6 +38,8 @@ final class MySqlProfileSelectionTest extends TestCase
         $multipleResponseSets = $this->createMock(PDOStatement::class);
         $multipleResponseSetMembers = $this->createMock(PDOStatement::class);
         $cases = $this->createMock(PDOStatement::class);
+        $journalStart = $this->createMock(PDOStatement::class);
+        $journalSucceed = $this->createMock(PDOStatement::class);
         $engine = $this->createMock(SpssEngine::class);
 
         self::assertInstanceOf(MySqlProfile::class, (new Connection($pdo))->profile);
@@ -46,8 +48,9 @@ final class MySqlProfileSelectionTest extends TestCase
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
-        $pdo->expects(self::exactly(17))->method('exec')->willReturn(0);
-        $pdo->expects(self::exactly(12))->method('prepare')->willReturnOnConsecutiveCalls(
+        $pdo->expects(self::exactly(19))->method('exec')->willReturn(0);
+        $pdo->expects(self::exactly(14))->method('prepare')->willReturnOnConsecutiveCalls(
+            $journalStart,
             $technical,
             $dataset,
             $variables,
@@ -60,7 +63,14 @@ final class MySqlProfileSelectionTest extends TestCase
             $multipleResponseSets,
             $multipleResponseSetMembers,
             $cases,
+            $journalSucceed,
         );
+        $journalStart->expects(self::once())->method('execute')->with(self::callback(static function (array $values): bool {
+            return count($values) === 8 && $values[1] === 'import' && $values[2] === 'running' && $values[3] === null && $values[4] === 'fixture.sav';
+        }))->willReturn(true);
+        $journalSucceed->expects(self::once())->method('execute')->with(self::callback(static function (array $values): bool {
+            return $values[0] === 'succeeded' && $values[1] === 'fixture' && is_string($values[2]);
+        }))->willReturn(true);
         $dataset->expects(self::once())->method('execute')->with(['fixture', 'dataset_fixture'])->willReturn(true);
         $variables->expects(self::once())->method('execute')->with(['fixture', 1, 'Score', 'score', 'numeric', 0, 5, 8, 0, 5, 8, 0, null])->willReturn(true);
         $display->expects(self::once())->method('execute')->with(['fixture', 1, 0, 8, 0])->willReturn(true);
@@ -95,8 +105,11 @@ final class MySqlProfileSelectionTest extends TestCase
         $fileLabel = $this->statement([], [], false);
         $documents = $this->statement();
         $technical = $this->statement();
-        $pdo->method('prepare')->willReturnCallback(static function (string $sql) use ($datasets, $variables, $cases, $labels, $missing, $display, $roles, $variableAttributes, $fileAttributes, $variableSets, $variableSetMembers, $multipleResponseSets, $multipleResponseSetMembers, $fileLabel, $documents, $technical): PDOStatement {
+        $journal = $this->statement();
+        $pdo->method('prepare')->willReturnCallback(static function (string $sql) use ($datasets, $variables, $cases, $labels, $missing, $display, $roles, $variableAttributes, $fileAttributes, $variableSets, $variableSetMembers, $multipleResponseSets, $multipleResponseSetMembers, $fileLabel, $documents, $technical, $journal): PDOStatement {
             return match (true) {
+                str_contains($sql, 'operation_catalog') => $journal,
+                str_contains($sql, 'fidelity_event_catalog') => $journal,
                 str_contains($sql, 'FROM datasets') => $datasets,
                 str_contains($sql, 'SELECT ordinal, source_name') => $variables,
                 str_starts_with($sql, 'SELECT `score`') => $cases,

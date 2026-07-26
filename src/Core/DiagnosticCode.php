@@ -13,4 +13,5 @@ enum DiagnosticCode: string
     case InvalidSourceDataset = 'invalid_source_dataset';
     case UnsupportedSqlDriver = 'unsupported_sql_driver';
     case SqlProfileOperationUnavailable = 'sql_profile_operation_unavailable';
+    case FidelityLossRequiresAcceptance = 'fidelity_loss_requires_acceptance';
 }

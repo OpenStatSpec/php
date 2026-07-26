@@ -50,8 +50,12 @@ final class SpssAdapterTest extends TestCase
         $engine = new FakeSpssEngine($this->fixture());
         $adapter = new SpssAdapter($pdo, $engine);
 
-        $adapter->import('fixture.sav', 'Customer survey');
+        $import = $adapter->import('fixture.sav', 'Customer survey');
 
+        self::assertSame('Customer survey', $import->datasetName);
+        self::assertSame(2, $import->caseCount);
+        self::assertSame([], $import->diagnostics);
+        self::assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/', $import->operationId);
         self::assertSame(
             [
                 ['__case_ordinal' => 1, 'respondent_id' => 7.0, 'favourite_colour' => 'blue'],
@@ -108,6 +112,15 @@ final class SpssAdapterTest extends TestCase
         $written = $engine->lastWrite()['dataset'];
 
         self::assertSame([], $result->diagnostics);
+        self::assertSame([], $result->allowLoss);
+        self::assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/', $result->operationId);
+        self::assertSame(
+            [
+                ['direction' => 'import', 'status' => 'succeeded', 'dataset_name' => 'Customer survey', 'target_path' => 'fixture.sav', 'allow_loss' => '[]', 'failure_code' => null],
+                ['direction' => 'export', 'status' => 'succeeded', 'dataset_name' => 'Customer survey', 'target_path' => 'roundtrip.sav', 'allow_loss' => '[]', 'failure_code' => null],
+            ],
+            self::rows($pdo, 'SELECT direction, status, dataset_name, target_path, allow_loss, failure_code FROM operation_catalog ORDER BY rowid'),
+        );
         self::assertSame('Customer survey source', $written->metadata->label);
         self::assertSame(['First document line', 'Second document line'], $written->metadata->documents());
         self::assertSame([[7.0, 'blue'], [8.0, 'green']], $written->rows());
@@ -166,6 +179,38 @@ final class SpssAdapterTest extends TestCase
         } finally {
             @unlink($target);
         }
+    }
+
+    public function testFailedImportPreflightIsRecordedWithoutCreatingTheDataset(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $pdo = new PDO('sqlite::memory:');
+        $adapter = new SpssAdapter($pdo, new FakeSpssEngine($this->fixture()));
+
+        try {
+            $adapter->import('fixture.por', 'not_created');
+            self::fail('POR preflight must fail.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame('unsupported_source_format', $exception->diagnosticCode->value);
+        }
+
+        self::assertSame(
+            [[
+                'direction' => 'import',
+                'status' => 'failed',
+                'dataset_name' => null,
+                'target_path' => 'fixture.por',
+                'failure_code' => 'unsupported_source_format',
+            ]],
+            self::rows($pdo, 'SELECT direction, status, dataset_name, target_path, failure_code FROM operation_catalog'),
+        );
+        self::assertSame(
+            [],
+            self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dataset_not_created'"),
+        );
     }
 
     public function testImportAllowsZsav(): void
