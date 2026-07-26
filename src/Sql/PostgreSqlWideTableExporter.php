@@ -69,17 +69,22 @@ final readonly class PostgreSqlWideTableExporter
             );
         }
 
+        $metadata = new FileMetadata(
+            label: $this->fileLabel($datasetName),
+            documents: $this->documents($datasetName),
+        );
+
         return [
             'dataset' => new Dataset(
                 new VariableDictionary($typedVariables),
                 $rows,
-                new FileMetadata(),
-                new FileTechnicalMetadata(sourceFormat: $targetFormat, compression: $targetFormat === 'zsav' ? 2 : 1),
+                $metadata,
+                $this->technicalMetadata($datasetName, $targetFormat),
             ),
             'caseCount' => count($rows),
             'diagnostics' => [new FidelityDiagnostic(
                 'postgresql_dictionary_metadata_deferred',
-                'PostgreSQL export preserves strict-wide case values, core variable definitions, value labels, user-missing rules, and display settings. File-level metadata, attributes, variable sets, and multiple-response sets require later catalogue-export work.',
+                'PostgreSQL export preserves strict-wide case values, core variable definitions, value labels, user-missing rules, display settings, file label, ordered documents, and file technical metadata. File attributes, variable attributes, variable sets, and multiple-response sets require later catalogue-export work.',
             )],
         ];
     }
@@ -253,6 +258,45 @@ final readonly class PostgreSqlWideTableExporter
         }
 
         throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS missing-value ranges require numeric endpoints.');
+    }
+
+    private function fileLabel(string $datasetName): ?string
+    {
+        $statement = $this->statement('SELECT meta_value FROM dataset_metadata WHERE dataset_name = ? AND meta_key = ?');
+        $statement->execute([$datasetName, 'file_label']);
+        $label = $statement->fetchColumn();
+
+        return is_string($label) ? $label : null;
+    }
+
+    /** @return list<string> */
+    private function documents(string $datasetName): array
+    {
+        $statement = $this->statement('SELECT text FROM documents WHERE dataset_name = ? ORDER BY ordinal');
+        $statement->execute([$datasetName]);
+
+        return array_values(array_filter($statement->fetchAll(PDO::FETCH_COLUMN), 'is_string'));
+    }
+
+    /** Rebuild the V3 file fields whose SAV/ZSAV writer representation is supported. */
+    private function technicalMetadata(string $datasetName, string $targetFormat): FileTechnicalMetadata
+    {
+        $statement = $this->statement(
+            'SELECT source_version, provenance, encoding, product_name FROM file_technical_metadata WHERE dataset_name = ?',
+        );
+        $statement->execute([$datasetName]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        $targetIsZsav = $targetFormat === 'zsav';
+
+        return new FileTechnicalMetadata(
+            sourceFormat: $targetFormat,
+            recordType: $targetIsZsav ? '$FL3' : '$FL2',
+            sourceVersion: is_array($row) && is_string($row['source_version'] ?? null) && $row['source_version'] !== '' ? $row['source_version'] : null,
+            provenance: is_array($row) && is_string($row['provenance'] ?? null) && $row['provenance'] !== '' ? $row['provenance'] : null,
+            encoding: is_array($row) && is_string($row['encoding'] ?? null) && $row['encoding'] !== '' ? $row['encoding'] : 'UTF-8',
+            productName: is_array($row) && is_string($row['product_name'] ?? null) && $row['product_name'] !== '' ? $row['product_name'] : null,
+            compression: $targetIsZsav ? 2 : 1,
+        );
     }
 
     private function caseValue(mixed $value, string $storageKind): int|float|string|null

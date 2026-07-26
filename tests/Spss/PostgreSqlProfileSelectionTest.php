@@ -74,6 +74,9 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
         $cases = $this->createMock(PDOStatement::class);
+        $fileLabel = $this->createMock(PDOStatement::class);
+        $documents = $this->createMock(PDOStatement::class);
+        $technical = $this->createMock(PDOStatement::class);
         $scoreLabels = $this->createMock(PDOStatement::class);
         $scoreMissing = $this->createMock(PDOStatement::class);
         $commentLabels = $this->createMock(PDOStatement::class);
@@ -82,9 +85,9 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $commentDisplay = $this->createMock(PDOStatement::class);
         $engine = $this->createMock(SpssEngine::class);
 
-        $pdo->expects(self::exactly(9))
+        $pdo->expects(self::exactly(12))
             ->method('prepare')
-            ->willReturnOnConsecutiveCalls($dataset, $variables, $cases, $scoreLabels, $scoreMissing, $scoreDisplay, $commentLabels, $commentMissing, $commentDisplay);
+            ->willReturnOnConsecutiveCalls($dataset, $variables, $cases, $scoreLabels, $scoreMissing, $scoreDisplay, $commentLabels, $commentMissing, $commentDisplay, $fileLabel, $documents, $technical);
         $dataset->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
         $dataset->expects(self::once())->method('fetch')->willReturn(['table_name' => 'dataset_fixture']);
         $variables->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
@@ -98,6 +101,17 @@ final class PostgreSqlProfileSelectionTest extends TestCase
             ['score' => null, 'comment' => 'green'],
             false,
         );
+        $fileLabel->expects(self::once())->method('execute')->with(['fixture', 'file_label'])->willReturn(true);
+        $fileLabel->expects(self::once())->method('fetchColumn')->willReturn('Customer survey source');
+        $documents->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
+        $documents->expects(self::once())->method('fetchAll')->with(PDO::FETCH_COLUMN)->willReturn(['First document line', 'Second document line']);
+        $technical->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
+        $technical->expects(self::once())->method('fetch')->willReturn([
+            'source_version' => '31.0',
+            'provenance' => 'unit-test',
+            'encoding' => 'UTF-8',
+            'product_name' => 'SPSS Statistics',
+        ]);
         $scoreLabels->expects(self::once())->method('execute')->with(['fixture', 1])->willReturn(true);
         $scoreLabels->expects(self::once())->method('fetch')->willReturn(false);
         $scoreMissing->expects(self::once())->method('execute')->with(['fixture', 1])->willReturn(true);
@@ -122,7 +136,13 @@ final class PostgreSqlProfileSelectionTest extends TestCase
                 self::assertSame(Measure::NOMINAL, $written->variables()[1]->measure);
                 self::assertSame(24, $written->variables()[1]->columns);
                 self::assertSame(Alignment::LEFT, $written->variables()[1]->alignment);
+                self::assertSame('Customer survey source', $written->metadata->label);
+                self::assertSame(['First document line', 'Second document line'], $written->metadata->documents());
                 self::assertSame('zsav', $written->technicalMetadata->sourceFormat);
+                self::assertSame('31.0', $written->technicalMetadata->sourceVersion);
+                self::assertSame('unit-test', $written->technicalMetadata->provenance);
+                self::assertSame('UTF-8', $written->technicalMetadata->encoding);
+                self::assertSame('SPSS Statistics', $written->technicalMetadata->productName);
 
                 return true;
             }));
@@ -132,7 +152,8 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         self::assertSame(2, $result->caseCount);
         self::assertSame('postgresql_dictionary_metadata_deferred', $result->diagnostics[0]->code);
         self::assertStringContainsString('display settings', $result->diagnostics[0]->message);
-        self::assertStringNotContainsString('Display settings require', $result->diagnostics[0]->message);
+        self::assertStringContainsString('file label, ordered documents, and file technical metadata', $result->diagnostics[0]->message);
+        self::assertStringNotContainsString('File-level metadata', $result->diagnostics[0]->message);
     }
 
     public function testPostgreSqlExportRestoresOrderedTypedLabelsAndAllUserMissingRuleForms(): void
@@ -141,6 +162,9 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
         $cases = $this->createMock(PDOStatement::class);
+        $fileLabel = $this->createMock(PDOStatement::class);
+        $documents = $this->createMock(PDOStatement::class);
+        $technical = $this->createMock(PDOStatement::class);
         $numericLabels = $this->createMock(PDOStatement::class);
         $numericRule = $this->createMock(PDOStatement::class);
         $numericValues = $this->createMock(PDOStatement::class);
@@ -151,7 +175,7 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $textDisplay = $this->createMock(PDOStatement::class);
         $engine = $this->createMock(SpssEngine::class);
 
-        $pdo->expects(self::exactly(11))
+        $pdo->expects(self::exactly(14))
             ->method('prepare')
             ->willReturnOnConsecutiveCalls(
                 $dataset,
@@ -165,6 +189,9 @@ final class PostgreSqlProfileSelectionTest extends TestCase
                 $textRule,
                 $textValues,
                 $textDisplay,
+                $fileLabel,
+                $documents,
+                $technical,
             );
         $dataset->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
         $dataset->expects(self::once())->method('fetch')->willReturn(['table_name' => 'dataset_fixture']);
@@ -175,6 +202,13 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         ]);
         $cases->expects(self::once())->method('execute')->with()->willReturn(true);
         $cases->expects(self::exactly(2))->method('fetch')->willReturnOnConsecutiveCalls(['score' => '2', 'reason' => 'MISSING'], false);
+
+        $fileLabel->expects(self::once())->method('execute')->with(['fixture', 'file_label'])->willReturn(true);
+        $fileLabel->expects(self::once())->method('fetchColumn')->willReturn(false);
+        $documents->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
+        $documents->expects(self::once())->method('fetchAll')->with(PDO::FETCH_COLUMN)->willReturn([]);
+        $technical->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
+        $technical->expects(self::once())->method('fetch')->willReturn(false);
 
         $numericLabels->expects(self::once())->method('execute')->with(['fixture', 1])->willReturn(true);
         $numericLabels->expects(self::exactly(3))->method('fetch')->willReturnOnConsecutiveCalls(
@@ -225,6 +259,9 @@ final class PostgreSqlProfileSelectionTest extends TestCase
                     new ValueLabel('REFUSED', 'Refused'),
                 ], $variables[1]->valueLabels->labels());
                 self::assertEquals(MissingValues::discrete('MISSING', 'REFUSED'), $variables[1]->missingValues);
+                self::assertNull($written->metadata->label);
+                self::assertSame([], $written->metadata->documents());
+                self::assertSame('UTF-8', $written->technicalMetadata->encoding);
 
                 return true;
             }));
@@ -233,7 +270,7 @@ final class PostgreSqlProfileSelectionTest extends TestCase
 
         self::assertSame(1, $result->caseCount);
         self::assertSame('postgresql_dictionary_metadata_deferred', $result->diagnostics[0]->code);
-        self::assertStringContainsString('value labels, user-missing rules, and display settings', $result->diagnostics[0]->message);
+        self::assertStringContainsString('value labels, user-missing rules, display settings', $result->diagnostics[0]->message);
         self::assertStringContainsString('display settings', $result->diagnostics[0]->message);
     }
 
