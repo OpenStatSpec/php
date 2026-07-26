@@ -33,6 +33,11 @@ final class SpssSourceNormalizer
                 'label' => $variable->label,
                 'missingFormat' => self::missingFormat($variable->missingValues),
                 'missingValues' => self::missingValues($variable->missingValues),
+                'role' => $variable->role->value,
+                'attributes' => array_map(
+                    static fn($attribute): array => ['name' => $attribute->name, 'values' => $attribute->values()],
+                    $variable->attributes(),
+                ),
             ];
 
             $labels = [];
@@ -51,6 +56,26 @@ final class SpssSourceNormalizer
             'documents' => $source->metadata->documents(),
             'valueLabels' => $valueLabels,
             'displayParameters' => self::displayParameters($source),
+            'fileAttributes' => array_map(
+                static fn($attribute): array => ['name' => $attribute->name, 'values' => $attribute->values()],
+                $source->metadata->attributes(),
+            ),
+            'variableSets' => array_map(
+                static fn($set): array => ['name' => $set->name, 'variableNames' => $set->variableNames()],
+                $source->metadata->variableSets(),
+            ),
+            'multipleResponseSets' => array_map(
+                static fn($set): array => [
+                    'name' => $set->name,
+                    'type' => $set->type->value,
+                    'variableNames' => $set->variableNames(),
+                    'label' => $set->label,
+                    'countedValue' => $set->countedValue,
+                    'categoryLabels' => $set->categoryLabels->value,
+                    'labelSource' => $set->labelSource->value,
+                ],
+                $source->metadata->multipleResponseSets(),
+            ),
         ];
     }
 

@@ -31,6 +31,7 @@ final readonly class SqliteWideTableImporter
             $this->createCatalog();
             $this->storeDatasetMetadata($datasetName, $source);
             $this->storeDictionaryMetadata($datasetName, $source['variables'], $source['valueLabels'] ?? []);
+            (new SqliteV3MetadataImporter($this->pdo))->store($datasetName, $source);
             $this->storeDisplayMetadata($datasetName, is_array($source['displayParameters'] ?? null) ? $source['displayParameters'] : []);
             $this->createDataTable($tableName, $variables);
             $this->pdo->prepare('INSERT INTO datasets (dataset_name, table_name) VALUES (?, ?)')->execute([$datasetName, $tableName]);
@@ -58,6 +59,7 @@ final readonly class SqliteWideTableImporter
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS missing_rules (dataset_name TEXT NOT NULL, variable_ordinal INTEGER NOT NULL, missing_format INTEGER NOT NULL, PRIMARY KEY (dataset_name, variable_ordinal))');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS missing_rule_values (dataset_name TEXT NOT NULL, variable_ordinal INTEGER NOT NULL, ordinal INTEGER NOT NULL, value_kind TEXT NOT NULL, numeric_value REAL NULL, text_value TEXT NULL, PRIMARY KEY (dataset_name, variable_ordinal, ordinal))');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS variable_display_metadata (dataset_name TEXT NOT NULL, variable_ordinal INTEGER NOT NULL, measurement_level INTEGER NOT NULL, display_width INTEGER NOT NULL, alignment INTEGER NOT NULL, PRIMARY KEY (dataset_name, variable_ordinal))');
+        SqliteV3MetadataImporter::createTables($this->pdo);
     }
 
     /** @param array{fileLabel?: ?string, documents?: list<string>} $source */
