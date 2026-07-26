@@ -6,12 +6,9 @@ namespace OpenStatSpec\Spss;
 
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
+use SPSS\Sav\Dataset;
 
-/**
- * Transition boundary around the Composer-installed TonisOrmisson/php-spss V3 engine.
- *
- * Typed V3 Dataset/Variable catalogue mapping is implemented separately.
- */
+/** Typed boundary around the Composer-installed php-spss V3 engine. */
 final class PhpSpssEngine implements SpssEngine
 {
     public const PACKAGE = 'tiamo/spss';
@@ -23,10 +20,7 @@ final class PhpSpssEngine implements SpssEngine
         return class_exists(self::READER_CLASS);
     }
 
-    /**
-     * @return array{header: mixed, variables: array<int, mixed>, valueLabels: array<int, mixed>, documents: array<int, mixed>, info: array<int, mixed>, data: array<int, mixed>}
-     */
-    public function read(string $sourcePath): array
+    public function read(string $sourcePath): Dataset
     {
         if (!$this->isAvailable()) {
             throw new UnsupportedOperation(
@@ -36,19 +30,11 @@ final class PhpSpssEngine implements SpssEngine
         }
 
         $readerClass = self::READER_CLASS;
-        $reader = $readerClass::fromFile($sourcePath)->read();
 
-        return [
-            'header' => $reader->header,
-            'variables' => $reader->variables,
-            'valueLabels' => $reader->valueLabels,
-            'documents' => $reader->documents,
-            'info' => $reader->info,
-            'data' => $reader->data,
-        ];
+        return $readerClass::fromFile($sourcePath)->readDataset();
     }
 
-    public function write(string $targetPath, array $dataset): void
+    public function write(string $targetPath, Dataset $dataset): void
     {
         if (!class_exists(self::WRITER_CLASS)) {
             throw new UnsupportedOperation(
@@ -61,5 +47,4 @@ final class PhpSpssEngine implements SpssEngine
         $writer = $writerClass::createInFile($targetPath, $dataset);
         $writer->close();
     }
-
 }

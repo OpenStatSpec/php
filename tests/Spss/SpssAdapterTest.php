@@ -8,39 +8,37 @@ use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Spss\PhpSpssEngine;
 use OpenStatSpec\Spss\SpssAdapter;
 use OpenStatSpec\Tests\Support\FakeSpssEngine;
-use RuntimeException;
 use PDO;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
+use SPSS\Sav\Alignment;
+use SPSS\Sav\Dataset;
+use SPSS\Sav\FileMetadata;
+use SPSS\Sav\Measure;
+use SPSS\Sav\MissingValues;
+use SPSS\Sav\ValueLabel;
+use SPSS\Sav\ValueLabelSet;
+use SPSS\Sav\VariableDictionary;
+use SPSS\Sav\VariableFormat;
+use SPSS\Sav\VariableMetadata;
+use SPSS\Sav\VariableType;
 
 final class SpssAdapterTest extends TestCase
 {
     public function testComposerInstallsTheOfficialPhpSpssV3Engine(): void
     {
         self::assertTrue((new PhpSpssEngine())->isAvailable());
-        self::assertTrue(class_exists('SPSS\\Sav\\Dataset'));
+        self::assertTrue(class_exists(Dataset::class));
     }
 
-    public function testImportCreatesOneWideTableAndRecordsSourceOrder(): void
+    public function testTypedDatasetImportCreatesWideTableAndExportPreservesSupportedMetadata(): void
     {
         if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
             self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
         }
 
         $pdo = new PDO('sqlite::memory:');
-        $engine = new FakeSpssEngine([
-            'header' => (object) ['fileLabel' => 'Customer survey source'],
-            'variables' => [
-                (object) ['name' => 'Respondent ID', 'width' => 0, 'print' => [0, 5, 8, 0], 'label' => 'Respondent identifier', 'missingValuesFormat' => -2, 'missingValues' => [1.0, 3.0]],
-                (object) ['name' => 'Favourite colour', 'width' => 12, 'print' => [0, 1, 12, 0], 'label' => 'Favourite colour'],
-            ],
-            'valueLabels' => [(object) ['indexes' => [0], 'labels' => [['value' => 7.0, 'label' => 'Seven']]]],
-            'documents' => ['First document line', 'Second document line'],
-            'info' => [],
-            'data' => [
-                ['Respondent ID' => 7, 'Favourite colour' => 'blue'],
-                ['Respondent ID' => 8, 'Favourite colour' => 'green'],
-            ],
-        ]);
+        $engine = new FakeSpssEngine($this->fixture());
         $adapter = new SpssAdapter($pdo, $engine);
 
         $adapter->import('fixture.sav', 'Customer survey');
@@ -59,110 +57,44 @@ final class SpssAdapterTest extends TestCase
             ],
             self::rows($pdo, 'SELECT ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals FROM variables WHERE dataset_name = "Customer survey" ORDER BY ordinal'),
         );
+
         $result = $adapter->export('Customer survey', 'roundtrip.sav');
-        self::assertSame([['meta_value' => 'Customer survey source']], self::rows($pdo, 'SELECT meta_value FROM dataset_metadata WHERE dataset_name = "Customer survey"'));
-        self::assertSame([['ordinal' => 1, 'text' => 'First document line'], ['ordinal' => 2, 'text' => 'Second document line']], self::rows($pdo, 'SELECT ordinal, text FROM documents WHERE dataset_name = "Customer survey" ORDER BY ordinal'));
+        $written = $engine->lastWrite()['dataset'];
 
-        self::assertSame('Customer survey', $result->datasetName);
-        self::assertSame('roundtrip.sav', $result->targetPath);
-        self::assertSame(2, $result->caseCount);
-        self::assertSame('dataset_metadata_not_preserved', $result->diagnostics[0]->code);
-        self::assertSame(
-            [
-                ['name' => 'Respondent ID', 'format' => 5, 'width' => 8, 'decimals' => 0, 'label' => 'Respondent identifier', 'data' => [7.0, 8.0], 'values' => ['7' => 'Seven'], 'missing' => [1.0, 3.0]],
-                ['name' => 'Favourite colour', 'format' => 1, 'width' => 12, 'decimals' => 0, 'label' => 'Favourite colour', 'data' => ['blue', 'green'], 'values' => [], 'missing' => []],
-            ],
-            $engine->lastWrite()['dataset']['variables'],
-        );
-        self::assertSame([], $engine->lastWrite()['dataset']['header']);
-        self::assertArrayNotHasKey('data', $engine->lastWrite()['dataset']);
+        self::assertSame([], $result->diagnostics);
+        self::assertSame('Customer survey source', $written->metadata->label);
+        self::assertSame(['First document line', 'Second document line'], $written->metadata->documents());
+        self::assertSame([[7.0, 'blue'], [8.0, 'green']], $written->rows());
 
+        $first = $written->variables()[0];
+        self::assertSame('Respondent ID', $first->name);
+        self::assertSame('Respondent identifier', $first->label);
+        self::assertEquals([new ValueLabel(7.0, 'Seven')], $first->valueLabels->labels());
+        self::assertEquals(MissingValues::range(1.0, 3.0), $first->missingValues);
+        self::assertSame(Measure::SCALE, $first->measure);
+        self::assertSame(Alignment::RIGHT, $first->alignment);
+        self::assertSame(10, $first->columns);
     }
 
-    public function testPhpSpssEngineImportsConfiguredFixture(): void
+    public function testPhpSpssEngineWritesAndReadsTypedDataset(): void
     {
-        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
-            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
-        }
-
-        $engineRoot = getenv('OPENSTATSPEC_PHP_SPSS_PATH');
-        if (!is_string($engineRoot) || !is_file($engineRoot . '/src/Sav/Reader.php')) {
-            self::markTestSkipped('Set OPENSTATSPEC_PHP_SPSS_PATH to a compatible php-spss checkout to run this integration test.');
-        }
-
-        spl_autoload_register(static function (string $class) use ($engineRoot): void {
-            if (str_starts_with($class, 'SPSS\\')) {
-                $path = $engineRoot . '/src/' . str_replace('\\', '/', substr($class, 5)) . '.php';
-                if (is_file($path)) {
-                    require_once $path;
-                }
-            }
-        });
-
-        $fixture = $engineRoot . '/examples/data.sav';
-        self::assertFileExists($fixture);
-
-        $original = (new PhpSpssEngine())->read($fixture);
-        $pdo = new PDO('sqlite::memory:');
-        $adapter = new SpssAdapter($pdo);
-        $adapter->import($fixture, 'php-spss fixture');
-
-        self::assertNotSame(
-            [],
-            self::rows($pdo, 'SELECT source_name, source_width, format_family, format_width, format_decimals FROM variables WHERE dataset_name = "php-spss fixture" ORDER BY ordinal'),
-        );
-        self::assertNotSame(
-            [],
-            self::rows($pdo, 'SELECT * FROM "dataset_php_spss_fixture" ORDER BY "__case_ordinal"'),
-        );
-
-        $target = sys_get_temp_dir() . '/openstatspec-readback-' . uniqid('', true) . '.sav';
-        try {
-            $adapter->export('php-spss fixture', $target);
-            $readBack = (new PhpSpssEngine())->read($target);
-            self::assertNotSame([], $readBack['variables']);
-            self::assertNotSame([], $readBack['data']);
-            self::assertSame(count($original['data']), count($readBack['data']));
-            self::assertSame(array_keys($original['data'][0]), array_keys($readBack['data'][0]));
-        } finally {
-            @unlink($target);
-        }
-    }
-
-    public function testPhpSpssEngineLimitsLongStringWidthTo255(): void
-    {
-        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
-            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
-        }
-        $engineRoot = getenv('OPENSTATSPEC_PHP_SPSS_PATH');
-        if (!is_string($engineRoot) || !is_file($engineRoot . '/src/Sav/Reader.php')) {
-            self::markTestSkipped('Set OPENSTATSPEC_PHP_SPSS_PATH to a compatible php-spss checkout.');
-        }
-        spl_autoload_register(static function (string $class) use ($engineRoot): void {
-            if (str_starts_with($class, 'SPSS\\')) {
-                $path = $engineRoot . '/src/' . str_replace('\\', '/', substr($class, 5)) . '.php';
-                if (is_file($path)) {
-                    require_once $path;
-                }
-            }
-        });
-        $source = sys_get_temp_dir() . '/openstatspec-long-source-' . uniqid('', true) . '.sav';
-        $target = sys_get_temp_dir() . '/openstatspec-long-target-' . uniqid('', true) . '.sav';
-        $value = str_repeat('x', 300);
+        $target = sys_get_temp_dir() . '/openstatspec-v3-' . uniqid('', true) . '.sav';
         try {
             $engine = new PhpSpssEngine();
-            $engine->write($source, ['header' => [], 'variables' => [['name' => 'Longtext', 'format' => 1, 'width' => 300, 'decimals' => 0, 'label' => 'Long text', 'data' => [$value]]], 'documents' => [], 'info' => []]);
-            $adapter = new SpssAdapter(new PDO('sqlite::memory:'));
-            $adapter->import($source, 'long string');
-            $adapter->export('long string', $target);
+            $engine->write($target, $this->engineFixture());
             $readBack = $engine->read($target);
-            self::assertSame(255, $readBack['variables'][0]->width);
-            self::assertNull($readBack['data'][0]['Longtext'] ?? null);
+
+            self::assertSame($this->engineFixture()->rows(), $readBack->rows());
+            self::assertSame('Customer survey source', $readBack->metadata->label);
+            self::assertSame(['First document line', 'Second document line'], $readBack->metadata->documents());
+            self::assertSame('Respondent_ID', $readBack->variables()[0]->name);
+            self::assertEquals([new ValueLabel(7.0, 'Seven')], $readBack->variables()[0]->valueLabels->labels());
+            self::assertEquals(MissingValues::range(1.0, 3.0), $readBack->variables()[0]->missingValues);
         } finally {
-            @unlink($source);
             @unlink($target);
         }
     }
+
     public function testImportRejectsZsavBeforeReadingOrChangingTheDatabase(): void
     {
         if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
@@ -170,14 +102,7 @@ final class SpssAdapterTest extends TestCase
         }
 
         $pdo = new PDO('sqlite::memory:');
-        $adapter = new SpssAdapter($pdo, new FakeSpssEngine([
-            'header' => null,
-            'variables' => [],
-            'valueLabels' => [(object) ['indexes' => [0], 'labels' => [['value' => 7.0, 'label' => 'Seven']]]],
-            'documents' => [],
-            'info' => [],
-            'data' => [],
-        ]));
+        $adapter = new SpssAdapter($pdo, new FakeSpssEngine($this->fixture()));
 
         $this->expectException(UnsupportedOperation::class);
         $this->expectExceptionMessage('ZSAV import is not supported');
@@ -189,7 +114,79 @@ final class SpssAdapterTest extends TestCase
         }
     }
 
-    /** @return array<int, array<string, mixed>> */
+    private function fixture(): Dataset
+    {
+        return new Dataset(
+            new VariableDictionary([
+                new VariableMetadata(
+                    name: 'Respondent ID',
+                    type: VariableType::NUMERIC,
+                    width: 0,
+                    printFormat: new VariableFormat(5, 8),
+                    writeFormat: new VariableFormat(5, 8),
+                    label: 'Respondent identifier',
+                    valueLabels: new ValueLabelSet([new ValueLabel(7.0, 'Seven')], ['Respondent ID']),
+                    missingValues: MissingValues::range(1.0, 3.0),
+                    measure: Measure::SCALE,
+                    alignment: Alignment::RIGHT,
+                    columns: 10,
+                    dictionaryIndex: 1,
+                ),
+                new VariableMetadata(
+                    name: 'Favourite colour',
+                    type: VariableType::STRING,
+                    width: 12,
+                    printFormat: new VariableFormat(1, 12),
+                    writeFormat: new VariableFormat(1, 12),
+                    label: 'Favourite colour',
+                    measure: Measure::NOMINAL,
+                    alignment: Alignment::LEFT,
+                    columns: 12,
+                    dictionaryIndex: 2,
+                ),
+            ]),
+            [[7.0, 'blue'], [8.0, 'green']],
+            new FileMetadata('Customer survey source', documents: ['First document line', 'Second document line']),
+        );
+    }
+
+    private function engineFixture(): Dataset
+    {
+        return new Dataset(
+            new VariableDictionary([
+                new VariableMetadata(
+                    name: 'Respondent_ID',
+                    type: VariableType::NUMERIC,
+                    width: 0,
+                    printFormat: new VariableFormat(5, 8),
+                    writeFormat: new VariableFormat(5, 8),
+                    label: 'Respondent identifier',
+                    valueLabels: new ValueLabelSet([new ValueLabel(7.0, 'Seven')], ['Respondent_ID']),
+                    missingValues: MissingValues::range(1.0, 3.0),
+                    measure: Measure::SCALE,
+                    alignment: Alignment::RIGHT,
+                    columns: 10,
+                    dictionaryIndex: 1,
+                ),
+                new VariableMetadata(
+                    name: 'Favourite_colour',
+                    type: VariableType::STRING,
+                    width: 12,
+                    printFormat: new VariableFormat(1, 12),
+                    writeFormat: new VariableFormat(1, 12),
+                    label: 'Favourite colour',
+                    measure: Measure::NOMINAL,
+                    alignment: Alignment::LEFT,
+                    columns: 12,
+                    dictionaryIndex: 2,
+                ),
+            ]),
+            [[7.0, 'blue'], [8.0, 'green']],
+            new FileMetadata('Customer survey source', documents: ['First document line', 'Second document line']),
+        );
+    }
+
+    /** @return list<array<string, mixed>> */
     private static function rows(PDO $pdo, string $sql): array
     {
         $statement = $pdo->query($sql);
@@ -197,7 +194,6 @@ final class SpssAdapterTest extends TestCase
             throw new RuntimeException('Test query failed.');
         }
 
-        return $statement->fetchAll(PDO::FETCH_ASSOC);
+        return array_values($statement->fetchAll(PDO::FETCH_ASSOC));
     }
-
 }

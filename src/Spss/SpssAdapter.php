@@ -67,7 +67,7 @@ final readonly class SpssAdapter
         }
 
         $export = (new SqliteWideTableExporter($this->connection->pdo))->export($datasetName);
-        $this->engine->write($targetPath, $export['payload']);
+        $this->engine->write($targetPath, $export['dataset']);
 
         return new SpssExportResult($datasetName, $targetPath, $export['caseCount'], $export['diagnostics']);
     }

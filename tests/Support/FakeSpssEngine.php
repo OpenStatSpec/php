@@ -5,33 +5,31 @@ declare(strict_types=1);
 namespace OpenStatSpec\Tests\Support;
 
 use OpenStatSpec\Spss\SpssEngine;
+use SPSS\Sav\Dataset;
 
 final class FakeSpssEngine implements SpssEngine
 {
-    /** @var list<array{targetPath: string, dataset: array<string, mixed>}> */
+    /** @var list<array{targetPath: string, dataset: Dataset}> */
     private array $writes = [];
 
-    /**
-     * @param array{header: mixed, variables: array<int, mixed>, valueLabels: array<int, mixed>, documents: array<int, mixed>, info: array<int, mixed>, data: array<int, mixed>} $dataset
-     */
-    public function __construct(private array $dataset) {}
+    public function __construct(private Dataset $dataset) {}
 
-    public function read(string $sourcePath): array
+    public function read(string $sourcePath): Dataset
     {
         return $this->dataset;
     }
-    /** @param array<string, mixed> $dataset */
-    public function write(string $targetPath, array $dataset): void
+
+    public function write(string $targetPath, Dataset $dataset): void
     {
         $this->writes[] = ['targetPath' => $targetPath, 'dataset' => $dataset];
     }
 
-    /** @return array{targetPath: string, dataset: array<string, mixed>} */
+    /** @return array{targetPath: string, dataset: Dataset} */
     public function lastWrite(): array
     {
         $write = $this->writes[array_key_last($this->writes)] ?? null;
         if ($write === null) {
-            throw new \LogicException('No SAV payload was written.');
+            throw new \LogicException('No SAV dataset was written.');
         }
 
         return $write;

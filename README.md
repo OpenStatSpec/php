@@ -2,7 +2,7 @@
 
 `openstatspec/php` is the PHP reference adapter for the [OpenStatSpec specification](https://github.com/OpenStatSpec/specification).
 
-The current implemented profile imports an unencrypted SPSS `.sav` dataset into SQLite as one source-faithful wide data table plus a metadata catalogue. It can reconstruct a `.sav` writer payload from that SQLite catalogue and pass it to the bundled php-spss V3 engine.
+The current implemented profile imports an unencrypted SPSS `.sav` dataset into SQLite as one source-faithful wide data table plus a metadata catalogue. It reconstructs a typed php-spss V3 `Dataset` from that catalogue for SAV export.
 
 ## Status
 
@@ -11,7 +11,7 @@ This is an early reference implementation, not a release-ready full-fidelity con
 - **Implemented and tested with SQLite:** unencrypted SAV import and export, one data table per dataset, ordered cases, source variable names and physical-column mapping, value labels, ordinary user-missing values, formats, string widths, file labels, document records, and selected display metadata in the catalogue.
 - **Explicitly rejected:** ZSAV, non-SAV inputs and outputs, and non-SQLite PDO connections. Rejections occur before the adapter changes the target database or writes a target file.
 - **Declared but not live-server tested:** MySQL/MariaDB and PostgreSQL capability profiles. They describe identifiers, SQL types and wide-table limits; they do not yet implement imports or exports.
-- **Current V3 integration boundary:** php-spss V3 is now an official Composer dependency, but this adapter still uses its pre-V3 array payload bridge. The next implementation step is to map V3 `Dataset` and `Variable` objects plus their expanded metadata into the catalogue and back. Until then the adapter remains SAV-only and does not claim V3-level round-trip fidelity for long strings, ZSAV, attributes, sets, or display metadata.
+- **Current V3 integration boundary:** the adapter uses php-spss V3 typed `Dataset` and `VariableMetadata` objects end to end for its implemented SQLite/SAV slice. It preserves values, labels, all supported user-missing rule shapes, file labels, documents, formats and display metadata. ZSAV, file/variable attributes, variable sets, multiple-response sets, variable roles and non-SQLite conversion remain unimplemented and are not claimed.
 
 An export diagnostic is information about a known loss boundary; the current PHP API still writes a SAV file when the transition bridge can do so. Consumers that require lossless output must inspect `SpssExportResult::$diagnostics` and reject a non-empty result themselves.
 
@@ -53,7 +53,7 @@ composer check
 
 `composer check` is the required local verification gate before every commit or push. It validates Composer configuration, checks PHP syntax, checks coding style, runs PHPStan static analysis, and runs the test suite. To apply safe code-style fixes locally, run `composer fix` and then run `composer check` again.
 
-The regular test suite uses SQLite in memory; no database service or Docker setup is required. php-spss V3 is installed through Composer. The adapter’s V3 typed-object bridge and its real-engine semantic round-trip suite are the next implementation step; they are not yet claimed as part of the current profile.
+The regular test suite uses SQLite in memory; no database service or Docker setup is required. php-spss V3 is installed through Composer, and the suite covers a typed engine SAV write/read round trip plus the SQLite catalogue round trip.
 
 ## Contributing
 
@@ -69,7 +69,7 @@ The package is framework-neutral and has no Yii2 or Laravel dependency. A consum
 
 The selected engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss), consumed as the official Composer dependency `tiamo/spss` version 3.x through its V3 source repository. It is not maintained by OpenStatSpec.
 
-The present `PhpSpssEngine` is a temporary array-payload boundary around the V3 reader and writer. A dedicated follow-up converts the expanded V3 typed `Dataset`/`Variable` model and its metadata into the OpenStatSpec catalogue. The current adapter deliberately continues to reject ZSAV until that mapping and its conformance tests land.
+`PhpSpssEngine` is a typed V3 `Dataset` boundary. The adapter deliberately continues to reject ZSAV, and it does not yet map attributes, variable sets, multiple-response sets or roles into the OpenStatSpec catalogue.
 
 ## CI feedback loop
 Treat a failing CI run as a development task: diagnose the cause, make the focused fix, run `composer check` locally, then commit and push the correction. Do not merely report a failure.

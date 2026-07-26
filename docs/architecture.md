@@ -21,12 +21,12 @@ The adapter must not create EAV/cell tables, long views, chunked tables, reshape
 The only end-to-end profile is SQLite with unencrypted SAV files.
 
 - `SpssAdapter::import(string $sourcePath, string $datasetName): void` accepts only `.sav`, normalises the external engine's source dictionary, and creates a `dataset_<normalised-name>` table plus its catalogue entries in one transaction.
-- `SpssAdapter::export(string $datasetName, string $targetPath): SpssExportResult` accepts only a `.sav` target. It orders cases by `__case_ordinal`, reconstructs the writer payload, writes through the external engine, and returns fidelity diagnostics.
+- `SpssAdapter::export(string $datasetName, string $targetPath): SpssExportResult` accepts only a `.sav` target. It orders cases by `__case_ordinal`, reconstructs a typed php-spss V3 `Dataset`, writes through the external engine, and returns fidelity diagnostics.
+- The typed slice preserves values, labels, all supported user-missing rules (including range-plus-value), file labels, documents, formats and measurement/display metadata.
 - ZSAV is rejected before reading or writing. No claim is made about compressed SPSS data.
 - SQLite strings are stored as non-null `TEXT`; numeric system-missing values are stored as `NULL`.
-- A string variable or source value wider than 255 bytes is rejected for export before a target file is written, because the selected writer cannot preserve it.
 
-The catalogue retains some metadata that the selected external writer cannot reconstruct. Current export diagnostics cover display metadata, file labels/documents, and range-plus-discrete user-missing rules. A diagnostic does not currently stop an otherwise writable SAV export; callers that require no known loss must treat a non-empty diagnostic list as a failed export.
+File and variable attributes, variable sets, multiple-response sets and variable roles are not yet catalogued by this adapter. They are deliberately outside this implementation slice and must not be represented as preserved output.
 
 ## SQL capability profiles
 
@@ -50,9 +50,9 @@ SPSS owns SAV-only format gating, normalisation, and the bridge to the selected 
 
 ## External engine
 
-The selected engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss). OpenStatSpec deliberately does not declare it as a Composer dependency. `PhpSpssEngine` reports an `external_engine_unavailable` diagnostic when its compatible reader or writer class is absent.
+The selected engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss), declared as the Composer dependency `tiamo/spss` 3.x. `PhpSpssEngine` reports an `external_engine_unavailable` diagnostic when its compatible reader or writer class is absent.
 
-The optional integration test uses `OPENSTATSPEC_PHP_SPSS_PATH` to point at a compatible engine checkout. It imports that engine's SAV fixture into SQLite, exports it, and reads the result back. The regular suite does not require that checkout.
+The regular suite exercises the typed V3 engine with a SAV write/read round trip. It does not claim ZSAV or unimplemented catalogue metadata support.
 
 ## Framework boundary
 

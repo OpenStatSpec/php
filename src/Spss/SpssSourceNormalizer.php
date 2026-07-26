@@ -6,114 +6,96 @@ namespace OpenStatSpec\Spss;
 
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
+use SPSS\Sav\Dataset;
+use SPSS\Sav\MissingValues;
+use SPSS\Sav\MissingValuesKind;
 
-/** Normalizes supported php-spss reader objects and array-based engine fixtures. */
+/** Converts php-spss V3 Dataset objects to the adapter's strict SQL source model. */
 final class SpssSourceNormalizer
 {
-    /**
-     * @param array<string, mixed> $source
-     * @return array<string, mixed>
-     */
-    public static function normalize(array $source): array
+    /** @return array<string, mixed> */
+    public static function normalize(Dataset $source): array
     {
         $variables = [];
-        foreach ($source['variables'] as $variable) {
-            $name = self::field($variable, 'name');
-            if (!is_string($name) || $name === '') {
+        $valueLabels = [];
+        foreach ($source->variables() as $index => $variable) {
+            if ($variable->name === '') {
                 throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Every source variable must have a non-empty name.');
             }
 
-            $width = self::intField($variable, 'width', 0);
-            $type = self::field($variable, 'type');
-            $print = self::field($variable, 'print');
-            $formatFamily = is_array($print) && is_int($print[1] ?? null) ? $print[1] : self::intField($variable, 'format', $width > 0 ? 1 : 5);
-            $formatWidth = is_array($print) && is_int($print[2] ?? null) ? $print[2] : ($width > 0 ? $width : 8);
-            $formatDecimals = is_array($print) && is_int($print[3] ?? null) ? $print[3] : self::intField($variable, 'decimals', 0);
-            $label = self::field($variable, 'label');
-            $missingValues = self::field($variable, 'missingValues');
-
             $variables[] = [
-                'name' => $name,
-                'type' => is_string($type) ? $type : ($width > 0 ? 'string' : 'numeric'),
-                'width' => $width,
-                'formatFamily' => $formatFamily,
-                'formatWidth' => $formatWidth,
-                'formatDecimals' => $formatDecimals,
-                'label' => is_string($label) ? $label : null,
-                'missingFormat' => self::intField($variable, 'missingValuesFormat', 0),
-                'missingValues' => is_array($missingValues) ? $missingValues : [],
+                'name' => $variable->name,
+                'type' => $variable->type->value,
+                'width' => $variable->width,
+                'formatFamily' => $variable->printFormat->code,
+                'formatWidth' => $variable->printFormat->width,
+                'formatDecimals' => $variable->printFormat->decimals,
+                'label' => $variable->label,
+                'missingFormat' => self::missingFormat($variable->missingValues),
+                'missingValues' => self::missingValues($variable->missingValues),
             ];
-        }
 
-        $header = array_key_exists('header', $source) ? $source['header'] : null;
-        $documents = $source['documents'] ?? [];
-        $valueLabels = $source['valueLabels'] ?? [];
-        $info = $source['info'] ?? [];
+            $labels = [];
+            foreach ($variable->valueLabels->labels() as $label) {
+                $labels[] = ['value' => $label->value, 'label' => $label->label];
+            }
+            if ($labels !== []) {
+                $valueLabels[] = ['indexes' => [$index], 'labels' => $labels];
+            }
+        }
 
         return [
             'variables' => $variables,
-            'data' => $source['data'],
-            'fileLabel' => self::stringField($header, 'fileLabel'),
-            'documents' => self::documents(is_array($documents) ? $documents : []),
-            'valueLabels' => is_array($valueLabels) ? $valueLabels : [],
-            'displayParameters' => self::displayParameters($info),
+            'data' => $source->rows(),
+            'fileLabel' => $source->metadata->label,
+            'documents' => $source->metadata->documents(),
+            'valueLabels' => $valueLabels,
+            'displayParameters' => self::displayParameters($source),
         ];
-
     }
+
+    private static function missingFormat(MissingValues $missingValues): int
+    {
+        return match ($missingValues->kind) {
+            MissingValuesKind::NONE => 0,
+            MissingValuesKind::DISCRETE => count($missingValues->discreteValues()),
+            MissingValuesKind::RANGE => -2,
+            MissingValuesKind::RANGE_AND_VALUE => -3,
+        };
+    }
+
+    /** @return list<int|float|string> */
+    private static function missingValues(MissingValues $missingValues): array
+    {
+        return match ($missingValues->kind) {
+            MissingValuesKind::NONE => [],
+            MissingValuesKind::DISCRETE => $missingValues->discreteValues(),
+            MissingValuesKind::RANGE => [self::numeric($missingValues->lower), self::numeric($missingValues->upper)],
+            MissingValuesKind::RANGE_AND_VALUE => [self::numeric($missingValues->lower), self::numeric($missingValues->upper), self::numeric($missingValues->additionalValue)],
+        };
+    }
+
+    private static function numeric(int|float|null $value): int|float
+    {
+        if (!is_int($value) && !is_float($value)) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A numeric missing-value rule is incomplete.');
+        }
+
+        return $value;
+    }
+
     /** @return list<array{measure: int, columns: int, alignment: int}> */
-    private static function displayParameters(mixed $info): array
-    {
-        $record = is_array($info) ? ($info[11] ?? null) : ($info instanceof \ArrayAccess && isset($info[11]) ? $info[11] : null);
-        $items = is_object($record) && method_exists($record, 'toArray') ? $record->toArray() : $record;
-        if (!is_array($items)) {
-            return [];
-        }
-        $result = [];
-        foreach ($items as $item) {
-            if (is_array($item) && is_int($item[0] ?? null) && is_int($item[1] ?? null) && is_int($item[2] ?? null)) {
-                $result[] = ['measure' => $item[0], 'columns' => $item[1], 'alignment' => $item[2]];
-            }
-        }
-
-        return $result;
-    }
-    private static function field(mixed $source, string $name): mixed
-    {
-        if (is_array($source)) {
-            return $source[$name] ?? null;
-        }
-        if (is_object($source) && isset($source->{$name})) {
-            return $source->{$name};
-        }
-
-        return null;
-    }
-
-    private static function intField(mixed $source, string $name, int $default): int
-    {
-        $value = self::field($source, $name);
-
-        return is_int($value) ? $value : $default;
-    }
-    private static function stringField(mixed $source, string $name): ?string
-    {
-        $value = self::field($source, $name);
-
-        return is_string($value) ? $value : null;
-    }
-
-    /**
-     * @param array<int, mixed> $documents
-     * @return list<string>
-     */
-    private static function documents(array $documents): array
+    private static function displayParameters(Dataset $source): array
     {
         $result = [];
-        foreach ($documents as $document) {
-            if (is_string($document)) {
-                $result[] = $document;
-            }
+        foreach ($source->variables() as $variable) {
+            $result[] = [
+                'measure' => $variable->measure->value,
+                'columns' => $variable->columns,
+                'alignment' => $variable->alignment->value,
+            ];
         }
+
         return $result;
     }
 }
