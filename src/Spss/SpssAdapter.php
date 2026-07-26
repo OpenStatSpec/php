@@ -7,6 +7,7 @@ namespace OpenStatSpec\Spss;
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\Connection;
+use OpenStatSpec\Sql\PostgreSqlWideTableImporter;
 use OpenStatSpec\Sql\SqliteWideTableExporter;
 use OpenStatSpec\Sql\SqliteWideTableImporter;
 use PDO;
@@ -35,10 +36,13 @@ final readonly class SpssAdapter
                 'This adapter profile supports SAV and ZSAV files only.',
             );
         }
-        if ($this->connection->profile->driverName() === 'pgsql') {
-            $this->throwProfileOperationUnavailable('import');
-        }
         $source = SpssSourceNormalizer::normalize($this->engine->read($sourcePath));
+        if ($this->connection->profile->driverName() === 'pgsql') {
+            (new PostgreSqlWideTableImporter($this->connection->pdo))->import($source, $datasetName);
+
+            return;
+        }
+
         (new SqliteWideTableImporter($this->connection->pdo))->import($source, $datasetName);
     }
 
