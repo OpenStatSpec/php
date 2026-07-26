@@ -78,6 +78,62 @@ final class PostgreSqlWideTableImporterTest extends TestCase
         ], $caseRows);
     }
 
+    public function testImportsFileLabelDocumentsAndTechnicalMetadata(): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $fileLabel = $this->createMock(PDOStatement::class);
+        $documents = $this->createMock(PDOStatement::class);
+        $technical = $this->createMock(PDOStatement::class);
+        $dataset = $this->createMock(PDOStatement::class);
+        $variables = $this->createMock(PDOStatement::class);
+        $cases = $this->createMock(PDOStatement::class);
+        $documentRows = [];
+
+        $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
+        $pdo->expects(self::once())->method('commit')->willReturn(true);
+        $pdo->expects(self::never())->method('rollBack');
+        $pdo->expects(self::exactly(17))->method('exec')->willReturn(0);
+        $pdo->expects(self::exactly(6))->method('prepare')->willReturnOnConsecutiveCalls(
+            $fileLabel,
+            $documents,
+            $technical,
+            $dataset,
+            $variables,
+            $cases,
+        );
+        $fileLabel->expects(self::once())->method('execute')->with(['customer survey', 'file_label', 'Customer source'])->willReturn(true);
+        $documents->expects(self::exactly(2))->method('execute')->willReturnCallback(function (array $row) use (&$documentRows): bool {
+            $documentRows[] = $row;
+
+            return true;
+        });
+        $technical->expects(self::once())->method('execute')->with([
+            'customer survey', 'sav', '$FL2', '31.0', 'unit-test', 'UTF-8', 'SPSS', null, null,
+            1, 1, 2, 1, 100.0, 1, 1, 1, 65001,
+        ])->willReturn(true);
+        $dataset->expects(self::once())->method('execute')->willReturn(true);
+        $variables->expects(self::once())->method('execute')->willReturn(true);
+        $cases->expects(self::once())->method('execute')->willReturn(true);
+
+        (new PostgreSqlWideTableImporter($pdo))->import([
+            'fileLabel' => 'Customer source',
+            'documents' => ['First document line', 'Second document line'],
+            'technicalMetadata' => [
+                'sourceFormat' => 'sav', 'recordType' => '$FL2', 'sourceVersion' => '31.0', 'provenance' => 'unit-test',
+                'encoding' => 'UTF-8', 'productName' => 'SPSS', 'caseCount' => 1, 'nominalCaseSize' => 1,
+                'layoutCode' => 2, 'compression' => 1, 'compressionBias' => 100.0, 'machineCode' => 1,
+                'floatingPointRepresentation' => 1, 'endianness' => 1, 'characterCode' => 65001,
+            ],
+            'variables' => [['name' => 'Score', 'type' => 'numeric']],
+            'data' => [[1.0]],
+        ], 'customer survey');
+
+        self::assertSame([
+            ['customer survey', 1, 'First document line'],
+            ['customer survey', 2, 'Second document line'],
+        ], $documentRows);
+    }
+
     public function testImportsValueLabelsAndOrderedUserMissingRulesThroughPdoTransaction(): void
     {
         $pdo = $this->createMock(PDO::class);

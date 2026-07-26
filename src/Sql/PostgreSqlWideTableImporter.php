@@ -75,6 +75,8 @@ final readonly class PostgreSqlWideTableImporter
         try {
             $schema->createCatalog();
             $this->pdo->exec($definition->createSql);
+            $this->storeDatasetMetadata($datasetName, $source);
+            $this->storeTechnicalMetadata($datasetName, $source);
             $this->storeCatalogue($datasetName, $variables, $definition);
             $this->storeDisplayMetadata($datasetName, $source['displayParameters'] ?? []);
             $this->storeDictionaryMetadata($datasetName, $variables, $source['valueLabels'] ?? []);
@@ -91,6 +93,75 @@ final readonly class PostgreSqlWideTableImporter
         }
 
         return $definition;
+    }
+
+    /** @param array<string, mixed> $source */
+    private function storeDatasetMetadata(string $datasetName, array $source): void
+    {
+        if (is_string($source['fileLabel'] ?? null)) {
+            $this->requiredStatement(
+                'INSERT INTO dataset_metadata (dataset_name, meta_key, meta_value) VALUES (?, ?, ?)',
+                'file-label metadata',
+            )->execute([$datasetName, 'file_label', $source['fileLabel']]);
+        }
+
+        $documents = $source['documents'] ?? [];
+        if (!is_array($documents) || !array_is_list($documents)) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS documents must be an ordered list.');
+        }
+        if ($documents === []) {
+            return;
+        }
+
+        $statement = $this->requiredStatement(
+            'INSERT INTO documents (dataset_name, ordinal, text) VALUES (?, ?, ?)',
+            'document metadata',
+        );
+        foreach ($documents as $ordinal => $text) {
+            if (!is_string($text)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS documents must contain strings.');
+            }
+            $statement->execute([$datasetName, $ordinal + 1, $text]);
+        }
+    }
+
+    /** @param array<string, mixed> $source */
+    private function storeTechnicalMetadata(string $datasetName, array $source): void
+    {
+        $technical = $source['technicalMetadata'] ?? null;
+        if (!is_array($technical)) {
+            return;
+        }
+
+        $sourceFormat = $technical['sourceFormat'] ?? null;
+        $encoding = $technical['encoding'] ?? null;
+        if (!is_string($sourceFormat) || $sourceFormat === '' || !is_string($encoding) || $encoding === '') {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'V3 technical metadata requires a non-empty source format and encoding.');
+        }
+
+        $this->requiredStatement(
+            'INSERT INTO file_technical_metadata (dataset_name, source_format, record_type, source_version, provenance, encoding, product_name, raw_creation_date, raw_creation_time, case_count, nominal_case_size, layout_code, compression, compression_bias, machine_code, floating_point_representation, endianness, character_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'technical metadata',
+        )->execute([
+            $datasetName,
+            $sourceFormat,
+            $this->technicalString($technical['recordType'] ?? null),
+            $this->technicalString($technical['sourceVersion'] ?? null),
+            $this->technicalString($technical['provenance'] ?? null),
+            $encoding,
+            $this->technicalString($technical['productName'] ?? null),
+            $this->technicalString($technical['rawCreationDate'] ?? null),
+            $this->technicalString($technical['rawCreationTime'] ?? null),
+            $this->technicalInt($technical['caseCount'] ?? null),
+            $this->technicalInt($technical['nominalCaseSize'] ?? null),
+            $this->technicalInt($technical['layoutCode'] ?? null),
+            $this->technicalInt($technical['compression'] ?? null),
+            $this->technicalFloat($technical['compressionBias'] ?? null),
+            $this->technicalInt($technical['machineCode'] ?? null),
+            $this->technicalInt($technical['floatingPointRepresentation'] ?? null),
+            $this->technicalInt($technical['endianness'] ?? null),
+            $this->technicalInt($technical['characterCode'] ?? null),
+        ]);
     }
 
     /** @param list<array<string, mixed>> $sourceVariables */
@@ -218,6 +289,21 @@ final readonly class PostgreSqlWideTableImporter
         }
 
         return $statement;
+    }
+
+    private function technicalString(mixed $value): ?string
+    {
+        return is_string($value) ? $value : null;
+    }
+
+    private function technicalInt(mixed $value): ?int
+    {
+        return is_int($value) ? $value : null;
+    }
+
+    private function technicalFloat(mixed $value): ?float
+    {
+        return is_float($value) || is_int($value) ? (float) $value : null;
     }
 
     /** @return array{string, float|null, string|null} */
