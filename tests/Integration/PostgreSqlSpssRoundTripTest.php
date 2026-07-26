@@ -72,7 +72,7 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
                 );
                 self::assertSame(2, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM documents WHERE dataset_name = ?', [$datasetName]));
                 self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM value_labels WHERE dataset_name = ?', [$datasetName]));
-                self::assertSame(3, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM missing_rule_values WHERE dataset_name = ?', [$datasetName]));
+                self::assertSame(4, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM missing_rule_values WHERE dataset_name = ?', [$datasetName]));
                 self::assertSame(3, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable_roles WHERE dataset_name = ?', [$datasetName]));
                 self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM file_attributes WHERE dataset_name = ?', [$datasetName]));
                 self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable_sets WHERE dataset_name = ?', [$datasetName]));
