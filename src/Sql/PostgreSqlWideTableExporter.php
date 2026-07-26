@@ -9,9 +9,11 @@ use OpenStatSpec\Core\FidelityDiagnostic;
 use OpenStatSpec\Core\UnsupportedOperation;
 use PDO;
 use PDOStatement;
+use SPSS\Sav\Alignment;
 use SPSS\Sav\Dataset;
 use SPSS\Sav\FileMetadata;
 use SPSS\Sav\FileTechnicalMetadata;
+use SPSS\Sav\Measure;
 use SPSS\Sav\MissingValues;
 use SPSS\Sav\ValueLabel;
 use SPSS\Sav\ValueLabelSet;
@@ -50,6 +52,7 @@ final readonly class PostgreSqlWideTableExporter
         foreach ($variables as $variable) {
             $isString = $variable['storage_kind'] === 'string';
             $dictionary = $this->dictionary($datasetName, $variable['ordinal']);
+            $display = $this->display($datasetName, $variable['ordinal']);
             $typedVariables[] = new VariableMetadata(
                 name: $variable['source_name'],
                 type: $isString ? VariableType::STRING : VariableType::NUMERIC,
@@ -59,6 +62,9 @@ final readonly class PostgreSqlWideTableExporter
                 label: $variable['label'],
                 valueLabels: new ValueLabelSet($dictionary['labels'], [$variable['source_name']]),
                 missingValues: $dictionary['missing'],
+                measure: $display['measure'],
+                alignment: $display['alignment'],
+                columns: $display['columns'],
                 dictionaryIndex: $variable['ordinal'],
             );
         }
@@ -73,7 +79,7 @@ final readonly class PostgreSqlWideTableExporter
             'caseCount' => count($rows),
             'diagnostics' => [new FidelityDiagnostic(
                 'postgresql_dictionary_metadata_deferred',
-                'PostgreSQL export preserves strict-wide case values, core variable definitions, value labels, and user-missing rules. Display settings, file-level metadata, attributes, variable sets, and multiple-response sets require later catalogue-export work.',
+                'PostgreSQL export preserves strict-wide case values, core variable definitions, value labels, user-missing rules, and display settings. File-level metadata, attributes, variable sets, and multiple-response sets require later catalogue-export work.',
             )],
         ];
     }
@@ -132,6 +138,27 @@ final readonly class PostgreSqlWideTableExporter
         }
 
         return $variables;
+    }
+
+    /** @return array{measure: Measure, columns: int, alignment: Alignment} */
+    private function display(string $datasetName, int $ordinal): array
+    {
+        $statement = $this->statement('SELECT measurement_level, display_width, alignment FROM variable_display_metadata WHERE dataset_name = ? AND variable_ordinal = ?');
+        $statement->execute([$datasetName, $ordinal]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return ['measure' => Measure::UNKNOWN, 'columns' => 8, 'alignment' => Alignment::LEFT];
+        }
+
+        $measurementLevel = $this->integer($row['measurement_level'] ?? null);
+        $displayWidth = $this->integer($row['display_width'] ?? null);
+        $alignment = $this->integer($row['alignment'] ?? null);
+
+        return [
+            'measure' => Measure::tryFrom($measurementLevel ?? 0) ?? Measure::UNKNOWN,
+            'columns' => max(0, $displayWidth ?? 8),
+            'alignment' => Alignment::tryFrom($alignment ?? 0) ?? Alignment::LEFT,
+        ];
     }
 
     /** @return array{labels: list<ValueLabel>, missing: MissingValues} */
