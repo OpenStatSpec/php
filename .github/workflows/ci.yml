@@ -51,3 +51,67 @@ jobs:
           extensions: pdo_pgsql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
       - run: vendor/bin/phpunit --filter PostgreSqlSpssRoundTripTest
+
+  mysql-integration:
+    name: MySQL 8.4 integration
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: openstatspec
+          MYSQL_USER: openstatspec
+          MYSQL_PASSWORD: openstatspec
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uopenstatspec -popenstatspec"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OPENSTATSPEC_MYSQL_DSN: mysql:host=127.0.0.1;port=3306;dbname=openstatspec;charset=utf8mb4
+      OPENSTATSPEC_MYSQL_USER: openstatspec
+      OPENSTATSPEC_MYSQL_PASSWORD: openstatspec
+    steps:
+      - uses: actions/checkout@v7
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          extensions: pdo_mysql, pdo_sqlite, bcmath, mbstring, zlib
+      - run: composer install --no-interaction --prefer-dist
+      - run: vendor/bin/phpunit --filter MySqlSpssRoundTripTest
+
+  mariadb-integration:
+    name: MariaDB 11.4 integration
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_DATABASE: openstatspec
+          MARIADB_USER: openstatspec
+          MARIADB_PASSWORD: openstatspec
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OPENSTATSPEC_MARIADB_DSN: mysql:host=127.0.0.1;port=3306;dbname=openstatspec;charset=utf8mb4
+      OPENSTATSPEC_MARIADB_USER: openstatspec
+      OPENSTATSPEC_MARIADB_PASSWORD: openstatspec
+    steps:
+      - uses: actions/checkout@v7
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          extensions: pdo_mysql, pdo_sqlite, bcmath, mbstring, zlib
+      - run: composer install --no-interaction --prefer-dist
+      - run: vendor/bin/phpunit --filter MariaDbSpssRoundTripTest
