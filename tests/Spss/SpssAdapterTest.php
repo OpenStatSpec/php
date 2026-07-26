@@ -176,6 +176,8 @@ final class SpssAdapterTest extends TestCase
             self::assertSame('Respondent_ID', $readBack->variables()[0]->name);
             self::assertEquals([new ValueLabel(7.0, 'Seven')], $readBack->variables()[0]->valueLabels->labels());
             self::assertEquals(MissingValues::range(1.0, 3.0), $readBack->variables()[0]->missingValues);
+            self::assertSame(VariableRole::TARGET, $readBack->variables()[0]->role);
+            self::assertEquals([new VariableAttribute('Respondent_ID', 'Origin', ['engine'])], $readBack->variables()[0]->attributes());
         } finally {
             @unlink($target);
         }
@@ -449,6 +451,8 @@ final class SpssAdapterTest extends TestCase
                     measure: Measure::SCALE,
                     alignment: Alignment::RIGHT,
                     columns: 10,
+                    role: VariableRole::TARGET,
+                    attributes: [new VariableAttribute('Respondent_ID', 'Origin', ['engine'])],
                     dictionaryIndex: 1,
                 ),
                 new VariableMetadata(

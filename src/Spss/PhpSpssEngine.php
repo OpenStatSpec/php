@@ -7,6 +7,8 @@ namespace OpenStatSpec\Spss;
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use SPSS\Sav\Dataset;
+use SPSS\Sav\VariableDictionary;
+use SPSS\Sav\VariableMetadata;
 
 /** Typed boundary around the Composer-installed php-spss V3 engine. */
 final class PhpSpssEngine implements SpssEngine
@@ -31,7 +33,7 @@ final class PhpSpssEngine implements SpssEngine
 
         $readerClass = self::READER_CLASS;
 
-        return $readerClass::fromFile($sourcePath)->readDataset();
+        return $this->withoutReservedRoleAttribute($readerClass::fromFile($sourcePath)->readDataset());
     }
 
     public function write(string $targetPath, Dataset $dataset): void
@@ -46,5 +48,54 @@ final class PhpSpssEngine implements SpssEngine
         $writerClass = self::WRITER_CLASS;
         $writer = $writerClass::createInFile($targetPath, $dataset);
         $writer->close();
+    }
+
+    /**
+     * php-spss V3 stores VariableRole in the SAV dictionary as the reserved
+     * "$@Role" attribute, but also exposes it in VariableMetadata::$role.
+     * OpenStatSpec keeps the role in its dedicated metadata relation, so the
+     * serialization detail must never be presented as a custom attribute.
+     */
+    private function withoutReservedRoleAttribute(Dataset $dataset): Dataset
+    {
+        $variables = [];
+        $changed = false;
+
+        foreach ($dataset->variables() as $variable) {
+            $attributes = array_values(array_filter(
+                $variable->attributes(),
+                static fn($attribute): bool => '$@Role' !== $attribute->name,
+            ));
+            $changed = $changed || count($attributes) !== count($variable->attributes());
+
+            $variables[] = new VariableMetadata(
+                name: $variable->name,
+                type: $variable->type,
+                width: $variable->width,
+                printFormat: $variable->printFormat,
+                writeFormat: $variable->writeFormat,
+                shortName: $variable->shortName,
+                label: $variable->label,
+                valueLabels: $variable->valueLabels,
+                missingValues: $variable->missingValues,
+                measure: $variable->measure,
+                alignment: $variable->alignment,
+                columns: $variable->columns,
+                role: $variable->role,
+                attributes: $attributes,
+                dictionaryIndex: $variable->dictionaryIndex,
+            );
+        }
+
+        if (!$changed) {
+            return $dataset;
+        }
+
+        return new Dataset(
+            dictionary: new VariableDictionary($variables),
+            rows: $dataset->rows(),
+            metadata: $dataset->metadata,
+            technicalMetadata: $dataset->technicalMetadata,
+        );
     }
 }
