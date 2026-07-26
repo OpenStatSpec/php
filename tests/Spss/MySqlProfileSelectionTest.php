@@ -85,10 +85,17 @@ final class MySqlProfileSelectionTest extends TestCase
         $labels = $this->statement();
         $missing = $this->statement([], [], false);
         $display = $this->statement();
+        $roles = $this->statement([], [], 0);
+        $variableAttributes = $this->statement();
+        $fileAttributes = $this->statement();
+        $variableSets = $this->statement();
+        $variableSetMembers = $this->statement();
+        $multipleResponseSets = $this->statement();
+        $multipleResponseSetMembers = $this->statement();
         $fileLabel = $this->statement([], [], false);
         $documents = $this->statement();
         $technical = $this->statement();
-        $pdo->method('prepare')->willReturnCallback(static function (string $sql) use ($datasets, $variables, $cases, $labels, $missing, $display, $fileLabel, $documents, $technical): PDOStatement {
+        $pdo->method('prepare')->willReturnCallback(static function (string $sql) use ($datasets, $variables, $cases, $labels, $missing, $display, $roles, $variableAttributes, $fileAttributes, $variableSets, $variableSetMembers, $multipleResponseSets, $multipleResponseSetMembers, $fileLabel, $documents, $technical): PDOStatement {
             return match (true) {
                 str_contains($sql, 'FROM datasets') => $datasets,
                 str_contains($sql, 'SELECT ordinal, source_name') => $variables,
@@ -96,6 +103,13 @@ final class MySqlProfileSelectionTest extends TestCase
                 str_contains($sql, 'FROM value_labels') => $labels,
                 str_contains($sql, 'FROM missing_rules') => $missing,
                 str_contains($sql, 'FROM variable_display_metadata') => $display,
+                str_contains($sql, 'FROM variable_roles') => $roles,
+                str_contains($sql, 'FROM variable_attributes') => $variableAttributes,
+                str_contains($sql, 'FROM file_attributes') => $fileAttributes,
+                str_contains($sql, 'FROM variable_sets') => $variableSets,
+                str_contains($sql, 'FROM variable_set_members') => $variableSetMembers,
+                str_contains($sql, 'FROM multiple_response_sets') => $multipleResponseSets,
+                str_contains($sql, 'FROM multiple_response_set_members') => $multipleResponseSetMembers,
                 str_contains($sql, 'FROM dataset_metadata') => $fileLabel,
                 str_contains($sql, 'FROM documents') => $documents,
                 str_contains($sql, 'FROM file_technical_metadata') => $technical,
@@ -110,10 +124,7 @@ final class MySqlProfileSelectionTest extends TestCase
         self::assertSame([[1.5, 'Ada'], [null, 'Bea']], $written->rows());
         self::assertSame(['Score', 'Name'], array_map(static fn(VariableMetadata $variable): string => $variable->name, $written->variables()));
         self::assertSame(2, $result->caseCount);
-        self::assertSame(
-            ['deferred_variable_extensions'],
-            array_map(static fn($diagnostic): string => $diagnostic->code, $result->diagnostics),
-        );
+        self::assertSame([], $result->diagnostics);
     }
 
     /**
