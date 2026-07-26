@@ -48,7 +48,14 @@ final readonly class MySqlWideTableImporter
 
         try {
             $this->pdo->beginTransaction();
+            $this->storeDatasetMetadata($datasetName, $source);
+            $this->storeTechnicalMetadata($datasetName, $source);
             $this->storeCatalogue($datasetName, $variables, $definition);
+            $this->storeDisplayMetadata($datasetName, $source['displayParameters'] ?? []);
+            $this->storeDictionaryMetadata($datasetName, $variables, $source['valueLabels'] ?? []);
+            if (is_array($variables[0] ?? null) && array_key_exists('role', $variables[0])) {
+                (new SqliteV3MetadataImporter($this->pdo))->store($datasetName, $source);
+            }
             $this->insertCases($definition, $rows);
             $this->pdo->commit();
         } catch (Throwable $exception) {
@@ -136,16 +143,210 @@ final readonly class MySqlWideTableImporter
         }
     }
 
+    /** @param array<string, mixed> $source */
+    private function storeDatasetMetadata(string $datasetName, array $source): void
+    {
+        if (is_string($source['fileLabel'] ?? null)) {
+            $this->requiredStatement(
+                'INSERT INTO dataset_metadata (dataset_name, meta_key, meta_value) VALUES (?, ?, ?)',
+                'file-label metadata',
+            )->execute([$datasetName, 'file_label', $source['fileLabel']]);
+        }
+
+        $documents = $source['documents'] ?? [];
+        if (!is_array($documents) || !array_is_list($documents)) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS documents must be an ordered list.');
+        }
+        if ($documents === []) {
+            return;
+        }
+        $statement = $this->requiredStatement(
+            'INSERT INTO documents (dataset_name, ordinal, text) VALUES (?, ?, ?)',
+            'document metadata',
+        );
+        foreach ($documents as $ordinal => $text) {
+            if (!is_string($text)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS documents must contain strings.');
+            }
+            $statement->execute([$datasetName, $ordinal + 1, $text]);
+        }
+    }
+
+    /** @param array<string, mixed> $source */
+    private function storeTechnicalMetadata(string $datasetName, array $source): void
+    {
+        $technical = $source['technicalMetadata'] ?? null;
+        if (!is_array($technical)) {
+            return;
+        }
+        $sourceFormat = $technical['sourceFormat'] ?? null;
+        $encoding = $technical['encoding'] ?? null;
+        if (!is_string($sourceFormat) || $sourceFormat === '' || !is_string($encoding) || $encoding === '') {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'V3 technical metadata requires a non-empty source format and encoding.');
+        }
+        $this->requiredStatement(
+            'INSERT INTO file_technical_metadata (dataset_name, source_format, record_type, source_version, provenance, encoding, product_name, raw_creation_date, raw_creation_time, case_count, nominal_case_size, layout_code, compression, compression_bias, machine_code, floating_point_representation, endianness, character_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'technical metadata',
+        )->execute([
+            $datasetName,
+            $sourceFormat,
+            $this->technicalString($technical['recordType'] ?? null),
+            $this->technicalString($technical['sourceVersion'] ?? null),
+            $this->technicalString($technical['provenance'] ?? null),
+            $encoding,
+            $this->technicalString($technical['productName'] ?? null),
+            $this->technicalString($technical['rawCreationDate'] ?? null),
+            $this->technicalString($technical['rawCreationTime'] ?? null),
+            $this->technicalInt($technical['caseCount'] ?? null),
+            $this->technicalInt($technical['nominalCaseSize'] ?? null),
+            $this->technicalInt($technical['layoutCode'] ?? null),
+            $this->technicalInt($technical['compression'] ?? null),
+            $this->technicalFloat($technical['compressionBias'] ?? null),
+            $this->technicalInt($technical['machineCode'] ?? null),
+            $this->technicalInt($technical['floatingPointRepresentation'] ?? null),
+            $this->technicalInt($technical['endianness'] ?? null),
+            $this->technicalInt($technical['characterCode'] ?? null),
+        ]);
+    }
+
+    /** @param mixed $displayParameters */
+    private function storeDisplayMetadata(string $datasetName, mixed $displayParameters): void
+    {
+        if (!is_array($displayParameters) || !array_is_list($displayParameters)) {
+            return;
+        }
+        $statement = null;
+        foreach ($displayParameters as $ordinal => $display) {
+            if (!is_array($display) || !is_int($display['measure'] ?? null) || !is_int($display['columns'] ?? null) || !is_int($display['alignment'] ?? null)) {
+                continue;
+            }
+            $statement ??= $this->requiredStatement(
+                'INSERT INTO variable_display_metadata (dataset_name, variable_ordinal, measurement_level, display_width, alignment) VALUES (?, ?, ?, ?, ?)',
+                'variable display metadata',
+            );
+            $statement->execute([$datasetName, $ordinal + 1, $display['measure'], $display['columns'], $display['alignment']]);
+        }
+    }
+
+    /**
+     * @param list<array<string, mixed>> $sourceVariables
+     * @param mixed $sourceValueLabels
+     */
+    private function storeDictionaryMetadata(string $datasetName, array $sourceVariables, mixed $sourceValueLabels): void
+    {
+        $missing = null;
+        $missingValue = null;
+        foreach ($sourceVariables as $index => $variable) {
+            $format = $variable['missingFormat'] ?? 0;
+            if (!is_int($format) || $format === 0) {
+                continue;
+            }
+            $values = $variable['missingValues'] ?? [];
+            if (!is_array($values) || !array_is_list($values)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS user-missing values must be an ordered list.');
+            }
+            $missing ??= $this->requiredStatement(
+                'INSERT INTO missing_rules (dataset_name, variable_ordinal, missing_format) VALUES (?, ?, ?)',
+                'missing-rule metadata',
+            );
+            $missingValue ??= $this->requiredStatement(
+                'INSERT INTO missing_rule_values (dataset_name, variable_ordinal, ordinal, value_kind, numeric_value, text_value) VALUES (?, ?, ?, ?, ?, ?)',
+                'missing-rule-value metadata',
+            );
+            $missing->execute([$datasetName, $index + 1, $format]);
+            foreach ($values as $ordinal => $value) {
+                [$kind, $numeric, $text] = $this->dictionaryValue($value);
+                $missingValue->execute([$datasetName, $index + 1, $ordinal + 1, $kind, $numeric, $text]);
+            }
+        }
+
+        if (!is_array($sourceValueLabels) || !array_is_list($sourceValueLabels)) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS value-label records must be an ordered list.');
+        }
+        $valueLabel = null;
+        foreach ($sourceValueLabels as $record) {
+            if (!is_array($record)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Every SPSS value-label record must be an array.');
+            }
+            $indexes = $record['indexes'] ?? null;
+            $labels = $record['labels'] ?? null;
+            if (!is_array($indexes) || !array_is_list($indexes) || !is_array($labels) || !array_is_list($labels)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS value-label records must contain ordered indexes and labels.');
+            }
+            foreach ($indexes as $index) {
+                if (!is_int($index) || !array_key_exists($index, $sourceVariables)) {
+                    throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS value-label indexes must refer to a source variable.');
+                }
+                foreach ($labels as $ordinal => $label) {
+                    if (!is_array($label) || !is_string($label['label'] ?? null) || !array_key_exists('value', $label)) {
+                        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Every SPSS value label must contain a typed value and string label.');
+                    }
+                    $valueLabel ??= $this->requiredStatement(
+                        'INSERT INTO value_labels (dataset_name, variable_ordinal, ordinal, value_kind, numeric_value, text_value, label) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        'value-label metadata',
+                    );
+                    [$kind, $numeric, $text] = $this->dictionaryValue($label['value']);
+                    $valueLabel->execute([$datasetName, $index + 1, $ordinal + 1, $kind, $numeric, $text, $label['label']]);
+                }
+            }
+        }
+    }
+
+    /** @return array{string, float|null, string|null} */
+    private function dictionaryValue(mixed $value): array
+    {
+        if (is_string($value)) {
+            return ['text', null, $value];
+        }
+        if (is_int($value) || is_float($value)) {
+            return ['numeric', (float) $value, null];
+        }
+        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS dictionary values must be strings or binary64 numbers.');
+    }
+
+    private function technicalString(mixed $value): ?string
+    {
+        return is_string($value) ? $value : null;
+    }
+
+    private function technicalInt(mixed $value): ?int
+    {
+        return is_int($value) ? $value : null;
+    }
+
+    private function technicalFloat(mixed $value): ?float
+    {
+        return is_float($value) || is_int($value) ? (float) $value : null;
+    }
+
     private function compensateFailure(string $datasetName, MySqlWideTableDefinition $definition): void
     {
         try {
-            $variables = $this->pdo->prepare('DELETE FROM variables WHERE dataset_name = ?');
-            if ($variables !== false) {
-                $variables->execute([$datasetName]);
-            }
-            $datasets = $this->pdo->prepare('DELETE FROM datasets WHERE dataset_name = ?');
-            if ($datasets !== false) {
-                $datasets->execute([$datasetName]);
+            // MySQL DDL implicitly commits. Delete all catalogue rows that may
+            // have been inserted before the failing statement, in dependency
+            // order, then remove the dedicated wide table.
+            foreach ([
+                'multiple_response_set_members',
+                'multiple_response_sets',
+                'variable_set_members',
+                'variable_sets',
+                'variable_attributes',
+                'file_attributes',
+                'variable_roles',
+                'variable_display_metadata',
+                'missing_rule_values',
+                'missing_rules',
+                'value_labels',
+                'documents',
+                'file_technical_metadata',
+                'dataset_metadata',
+                'variables',
+                'datasets',
+            ] as $table) {
+                $statement = $this->pdo->prepare('DELETE FROM ' . $table . ' WHERE dataset_name = ?');
+                if ($statement !== false) {
+                    $statement->execute([$datasetName]);
+                }
             }
             $quote = chr(96);
             $this->pdo->exec(
