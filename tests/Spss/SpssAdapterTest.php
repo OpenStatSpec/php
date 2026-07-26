@@ -291,6 +291,27 @@ final class SpssAdapterTest extends TestCase
         );
     }
 
+    public function testExportRestoresCataloguedTechnicalMetadataWhileTargetDeterminesContainer(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $engine = new FakeSpssEngine($this->fixture());
+        $adapter = new SpssAdapter(new PDO('sqlite::memory:'), $engine);
+        $adapter->import('fixture.zsav', 'technical fixture');
+        $adapter->export('technical fixture', 'technical-roundtrip.sav');
+
+        $technical = $engine->lastWrite()['dataset']->technicalMetadata;
+        self::assertSame('sav', $technical->sourceFormat);
+        self::assertSame('$FL2', $technical->recordType);
+        self::assertSame(1, $technical->compression);
+        self::assertSame('OpenStatSpec 0.1', $technical->sourceVersion);
+        self::assertSame("P\u{00E4}ritolu: k\u{00FC}sitlus", $technical->provenance);
+        self::assertSame('UTF-8', $technical->encoding);
+        self::assertSame("OpenStatSpec t\u{00F6}\u{00F6}riist", $technical->productName);
+    }
+
     private function fixture(): Dataset
     {
         return new Dataset(

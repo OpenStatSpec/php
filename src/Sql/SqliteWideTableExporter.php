@@ -107,10 +107,7 @@ final readonly class SqliteWideTableExporter
                 new VariableDictionary($typedVariables),
                 $rows,
                 $metadata,
-                new FileTechnicalMetadata(
-                    sourceFormat: $targetFormat,
-                    compression: $targetFormat === 'zsav' ? 2 : 1,
-                ),
+                $this->technicalMetadata($datasetName, $targetFormat),
             ),
             'caseCount' => count($rows),
             'diagnostics' => [],
@@ -225,6 +222,27 @@ final readonly class SqliteWideTableExporter
         $label = $statement->fetchColumn();
 
         return is_string($label) ? $label : null;
+    }
+
+    /** Rebuild the V3 fields whose file representation the writer supports. */
+    private function technicalMetadata(string $datasetName, string $targetFormat): FileTechnicalMetadata
+    {
+        $statement = $this->statement(
+            'SELECT source_version, provenance, encoding, product_name FROM file_technical_metadata WHERE dataset_name = ?',
+        );
+        $statement->execute([$datasetName]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        $targetIsZsav = $targetFormat === 'zsav';
+
+        return new FileTechnicalMetadata(
+            sourceFormat: $targetFormat,
+            recordType: $targetIsZsav ? '$FL3' : '$FL2',
+            sourceVersion: is_array($row) && is_string($row['source_version'] ?? null) && $row['source_version'] !== '' ? $row['source_version'] : null,
+            provenance: is_array($row) && is_string($row['provenance'] ?? null) && $row['provenance'] !== '' ? $row['provenance'] : null,
+            encoding: is_array($row) && is_string($row['encoding'] ?? null) && $row['encoding'] !== '' ? $row['encoding'] : 'UTF-8',
+            productName: is_array($row) && is_string($row['product_name'] ?? null) && $row['product_name'] !== '' ? $row['product_name'] : null,
+            compression: $targetIsZsav ? 2 : 1,
+        );
     }
 
     /** @return list<string> */
