@@ -32,6 +32,13 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
         $display = $this->createMock(PDOStatement::class);
+        $roles = $this->createMock(PDOStatement::class);
+        $variableAttributes = $this->createMock(PDOStatement::class);
+        $fileAttributes = $this->createMock(PDOStatement::class);
+        $variableSets = $this->createMock(PDOStatement::class);
+        $variableSetMembers = $this->createMock(PDOStatement::class);
+        $multipleResponseSets = $this->createMock(PDOStatement::class);
+        $multipleResponseSetMembers = $this->createMock(PDOStatement::class);
         $cases = $this->createMock(PDOStatement::class);
         $engine = $this->createMock(SpssEngine::class);
 
@@ -45,9 +52,21 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
         $pdo->expects(self::exactly(17))->method('exec')->willReturn(0);
-        $pdo->expects(self::exactly(4))
+        $pdo->expects(self::exactly(11))
             ->method('prepare')
-            ->willReturnOnConsecutiveCalls($dataset, $variables, $display, $cases);
+            ->willReturnOnConsecutiveCalls(
+                $dataset,
+                $variables,
+                $display,
+                $roles,
+                $variableAttributes,
+                $fileAttributes,
+                $variableSets,
+                $variableSetMembers,
+                $multipleResponseSets,
+                $multipleResponseSetMembers,
+                $cases,
+            );
         $dataset->expects(self::once())
             ->method('execute')
             ->with(['fixture', 'dataset_fixture'])
@@ -59,6 +78,10 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $display->expects(self::once())
             ->method('execute')
             ->with(['fixture', 1, 0, 8, 0])
+            ->willReturn(true);
+        $roles->expects(self::once())
+            ->method('execute')
+            ->with(['fixture', 1, 0])
             ->willReturn(true);
         $cases->expects(self::once())
             ->method('execute')

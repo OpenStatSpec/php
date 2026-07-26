@@ -78,6 +78,9 @@ final readonly class PostgreSqlWideTableImporter
             $this->storeCatalogue($datasetName, $variables, $definition);
             $this->storeDisplayMetadata($datasetName, $source['displayParameters'] ?? []);
             $this->storeDictionaryMetadata($datasetName, $variables, $source['valueLabels'] ?? []);
+            if (is_array($variables[0] ?? null) && array_key_exists('role', $variables[0])) {
+                (new SqliteV3MetadataImporter($this->pdo))->store($datasetName, $source);
+            }
             $this->insertCases($definition, $rows);
             $this->pdo->commit();
         } catch (Throwable $exception) {
