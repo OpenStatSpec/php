@@ -78,6 +78,64 @@ final class PostgreSqlWideTableImporterTest extends TestCase
         ], $caseRows);
     }
 
+    public function testImportsValueLabelsAndOrderedUserMissingRulesThroughPdoTransaction(): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $dataset = $this->createMock(PDOStatement::class);
+        $variables = $this->createMock(PDOStatement::class);
+        $missing = $this->createMock(PDOStatement::class);
+        $missingValues = $this->createMock(PDOStatement::class);
+        $labels = $this->createMock(PDOStatement::class);
+        $cases = $this->createMock(PDOStatement::class);
+        $missingRows = [];
+        $labelRows = [];
+
+        $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
+        $pdo->expects(self::once())->method('commit')->willReturn(true);
+        $pdo->expects(self::never())->method('rollBack');
+        $pdo->expects(self::exactly(17))->method('exec')->willReturn(0);
+        $pdo->expects(self::exactly(6))->method('prepare')->willReturnOnConsecutiveCalls($dataset, $variables, $missing, $missingValues, $labels, $cases);
+        $dataset->expects(self::once())->method('execute')->willReturn(true);
+        $variables->expects(self::once())->method('execute')->willReturn(true);
+        $missing->expects(self::once())->method('execute')->with(['customer survey', 1, 3])->willReturn(true);
+        $missingValues->expects(self::exactly(3))->method('execute')->willReturnCallback(function ($row) use (&$missingRows): bool {
+            $missingRows[] = $row;
+            return true;
+        });
+        $labels->expects(self::exactly(2))->method('execute')->willReturnCallback(function ($row) use (&$labelRows): bool {
+            $labelRows[] = $row;
+            return true;
+        });
+        $cases->expects(self::once())->method('execute')->willReturn(true);
+
+        (new PostgreSqlWideTableImporter($pdo))->import([
+            'variables' => [[
+                'name' => 'Score',
+                'type' => 'numeric',
+                'missingFormat' => 3,
+                'missingValues' => [-99.0, 99.0, -1.0],
+            ]],
+            'data' => [[1.0]],
+            'valueLabels' => [[
+                'indexes' => [0],
+                'labels' => [
+                    ['value' => 1.0, 'label' => 'Yes'],
+                    ['value' => 2.0, 'label' => 'No'],
+                ],
+            ]],
+        ], 'customer survey');
+
+        self::assertSame([
+            ['customer survey', 1, 1, 'numeric', -99.0, null],
+            ['customer survey', 1, 2, 'numeric', 99.0, null],
+            ['customer survey', 1, 3, 'numeric', -1.0, null],
+        ], $missingRows);
+        self::assertSame([
+            ['customer survey', 1, 1, 'numeric', 1.0, null, 'Yes'],
+            ['customer survey', 1, 2, 'numeric', 2.0, null, 'No'],
+        ], $labelRows);
+    }
+
     public function testRejectsNullStringBeforeCommitAndRollsBack(): void
     {
         $pdo = $this->createMock(PDO::class);

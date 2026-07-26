@@ -7,6 +7,7 @@ namespace OpenStatSpec\Sql;
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use PDO;
+use PDOStatement;
 use Throwable;
 
 /**
@@ -75,6 +76,7 @@ final readonly class PostgreSqlWideTableImporter
             $schema->createCatalog();
             $this->pdo->exec($definition->createSql);
             $this->storeCatalogue($datasetName, $variables, $definition);
+            $this->storeDictionaryMetadata($datasetName, $variables, $source['valueLabels'] ?? []);
             $this->insertCases($definition, $rows);
             $this->pdo->commit();
         } catch (Throwable $exception) {
@@ -112,6 +114,96 @@ final readonly class PostgreSqlWideTableImporter
                 is_string($source['label'] ?? null) ? $source['label'] : null,
             ]);
         }
+    }
+
+    /**
+     * @param list<array<string, mixed>> $sourceVariables
+     * @param mixed $sourceValueLabels
+     */
+    private function storeDictionaryMetadata(string $datasetName, array $sourceVariables, mixed $sourceValueLabels): void
+    {
+        $missing = null;
+        $missingValue = null;
+        foreach ($sourceVariables as $index => $variable) {
+            $format = $variable['missingFormat'] ?? 0;
+            if (!is_int($format) || $format === 0) {
+                continue;
+            }
+
+            $values = $variable['missingValues'] ?? [];
+            if (!is_array($values) || !array_is_list($values)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS user-missing values must be an ordered list.');
+            }
+            $missing ??= $this->requiredStatement(
+                'INSERT INTO missing_rules (dataset_name, variable_ordinal, missing_format) VALUES (?, ?, ?)',
+                'missing-rule',
+            );
+            $missingValue ??= $this->requiredStatement(
+                'INSERT INTO missing_rule_values (dataset_name, variable_ordinal, ordinal, value_kind, numeric_value, text_value) VALUES (?, ?, ?, ?, ?, ?)',
+                'missing-rule-value',
+            );
+            $missing->execute([$datasetName, $index + 1, $format]);
+            foreach ($values as $ordinal => $value) {
+                [$kind, $numeric, $text] = $this->dictionaryValue($value);
+                $missingValue->execute([$datasetName, $index + 1, $ordinal + 1, $kind, $numeric, $text]);
+            }
+        }
+
+        if (!is_array($sourceValueLabels) || !array_is_list($sourceValueLabels)) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS value-label records must be an ordered list.');
+        }
+
+        $valueLabel = null;
+        foreach ($sourceValueLabels as $record) {
+            if (!is_array($record)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Every SPSS value-label record must be an array.');
+            }
+            $indexes = $record['indexes'] ?? null;
+            $labels = $record['labels'] ?? null;
+            if (!is_array($indexes) || !array_is_list($indexes) || !is_array($labels) || !array_is_list($labels)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS value-label records must contain ordered indexes and labels.');
+            }
+
+            foreach ($indexes as $index) {
+                if (!is_int($index) || !array_key_exists($index, $sourceVariables)) {
+                    throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS value-label indexes must refer to a source variable.');
+                }
+                foreach ($labels as $ordinal => $label) {
+                    if (!is_array($label) || !is_string($label['label'] ?? null) || !array_key_exists('value', $label)) {
+                        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Every SPSS value label must contain a typed value and string label.');
+                    }
+                    $valueLabel ??= $this->requiredStatement(
+                        'INSERT INTO value_labels (dataset_name, variable_ordinal, ordinal, value_kind, numeric_value, text_value, label) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        'value-label',
+                    );
+                    [$kind, $numeric, $text] = $this->dictionaryValue($label['value']);
+                    $valueLabel->execute([$datasetName, $index + 1, $ordinal + 1, $kind, $numeric, $text, $label['label']]);
+                }
+            }
+        }
+    }
+
+    private function requiredStatement(string $sql, string $description): PDOStatement
+    {
+        $statement = $this->pdo->prepare($sql);
+        if ($statement === false) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL profile could not prepare the ' . $description . ' catalogue statement.');
+        }
+
+        return $statement;
+    }
+
+    /** @return array{string, float|null, string|null} */
+    private function dictionaryValue(mixed $value): array
+    {
+        if (is_string($value)) {
+            return ['text', null, $value];
+        }
+        if (is_int($value) || is_float($value)) {
+            return ['numeric', (float) $value, null];
+        }
+
+        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS dictionary values must be strings or binary64 numbers.');
     }
 
     /** @param list<mixed> $rows */
