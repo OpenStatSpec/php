@@ -7,6 +7,7 @@ namespace OpenStatSpec\Spss;
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\Connection;
+use OpenStatSpec\Sql\PostgreSqlWideTableExporter;
 use OpenStatSpec\Sql\PostgreSqlWideTableImporter;
 use OpenStatSpec\Sql\SqliteWideTableExporter;
 use OpenStatSpec\Sql\SqliteWideTableImporter;
@@ -55,11 +56,9 @@ final readonly class SpssAdapter
                 'This adapter profile exports SAV and ZSAV files only.',
             );
         }
-        if ($this->connection->profile->driverName() === 'pgsql') {
-            $this->throwProfileOperationUnavailable('export');
-        }
-
-        $export = (new SqliteWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat);
+        $export = $this->connection->profile->driverName() === 'pgsql'
+            ? (new PostgreSqlWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat)
+            : (new SqliteWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat);
         $this->engine->write($targetPath, $export['dataset']);
 
         return new SpssExportResult($datasetName, $targetPath, $export['caseCount'], $export['diagnostics']);
@@ -70,14 +69,4 @@ final readonly class SpssAdapter
         return strtolower(pathinfo($path, PATHINFO_EXTENSION));
     }
 
-    private function throwProfileOperationUnavailable(string $operation): never
-    {
-        throw new UnsupportedOperation(
-            DiagnosticCode::SqlProfileOperationUnavailable,
-            sprintf(
-                'The PostgreSQL profile is selected, but %s is unavailable until the PostgreSQL wide-table implementation is complete. No tables were created.',
-                $operation,
-            ),
-        );
-    }
 }

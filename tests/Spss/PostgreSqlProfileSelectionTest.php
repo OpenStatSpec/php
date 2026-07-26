@@ -64,19 +64,45 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         (new SpssAdapter($pdo, $engine))->import('fixture.sav', 'fixture');
     }
 
-    public function testPostgreSqlDriverSelectsProfileAndFailsExportBeforeWritingTarget(): void
+    public function testPostgreSqlDriverSelectsProfileAndExportsStrictWideDatasetThroughPublicAdapter(): void
     {
         $pdo = $this->pdoWithDriver('pgsql');
+        $dataset = $this->createMock(PDOStatement::class);
+        $variables = $this->createMock(PDOStatement::class);
+        $cases = $this->createMock(PDOStatement::class);
         $engine = $this->createMock(SpssEngine::class);
-        $engine->expects($this->never())->method('write');
 
-        $adapter = new SpssAdapter($pdo, $engine);
-        $this->expectExceptionObject(new UnsupportedOperation(
-            DiagnosticCode::SqlProfileOperationUnavailable,
-            'The PostgreSQL profile is selected, but export is unavailable until the PostgreSQL wide-table implementation is complete. No tables were created.',
-        ));
+        $pdo->expects(self::exactly(3))
+            ->method('prepare')
+            ->willReturnOnConsecutiveCalls($dataset, $variables, $cases);
+        $dataset->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
+        $dataset->expects(self::once())->method('fetch')->willReturn(['table_name' => 'dataset_fixture']);
+        $variables->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
+        $variables->expects(self::once())->method('fetchAll')->willReturn([
+            ['ordinal' => 1, 'source_name' => 'Score', 'column_name' => 'score', 'storage_kind' => 'numeric', 'source_width' => 0, 'format_family' => 5, 'format_width' => 8, 'format_decimals' => 0, 'label' => 'Result'],
+            ['ordinal' => 2, 'source_name' => 'Comment', 'column_name' => 'comment', 'storage_kind' => 'string', 'source_width' => 12, 'format_family' => 1, 'format_width' => 12, 'format_decimals' => 0, 'label' => null],
+        ]);
+        $cases->expects(self::once())->method('execute')->with()->willReturn(true);
+        $cases->expects(self::exactly(3))->method('fetch')->willReturnOnConsecutiveCalls(
+            ['score' => '1.5', 'comment' => 'blue'],
+            ['score' => null, 'comment' => 'green'],
+            false,
+        );
+        $engine->expects(self::once())
+            ->method('write')
+            ->with('fixture.zsav', self::callback(static function (Dataset $written): bool {
+                self::assertSame([[1.5, 'blue'], [null, 'green']], $written->rows());
+                self::assertSame('Score', $written->variables()[0]->name);
+                self::assertSame('Comment', $written->variables()[1]->name);
+                self::assertSame('zsav', $written->technicalMetadata->sourceFormat);
 
-        $adapter->export('fixture', 'fixture.zsav');
+                return true;
+            }));
+
+        $result = (new SpssAdapter($pdo, $engine))->export('fixture', 'fixture.zsav');
+
+        self::assertSame(2, $result->caseCount);
+        self::assertSame('postgresql_dictionary_metadata_deferred', $result->diagnostics[0]->code);
     }
 
     /** @return PDO&MockObject */
