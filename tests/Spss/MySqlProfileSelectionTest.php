@@ -82,11 +82,23 @@ final class MySqlProfileSelectionTest extends TestCase
             ['score' => '1.5', 'name' => 'Ada'],
             ['score' => null, 'name' => 'Bea'],
         ]);
-        $pdo->method('prepare')->willReturnCallback(static function (string $sql) use ($datasets, $variables, $cases): PDOStatement {
+        $labels = $this->statement();
+        $missing = $this->statement([], [], false);
+        $display = $this->statement();
+        $fileLabel = $this->statement([], [], false);
+        $documents = $this->statement();
+        $technical = $this->statement();
+        $pdo->method('prepare')->willReturnCallback(static function (string $sql) use ($datasets, $variables, $cases, $labels, $missing, $display, $fileLabel, $documents, $technical): PDOStatement {
             return match (true) {
                 str_contains($sql, 'FROM datasets') => $datasets,
                 str_contains($sql, 'SELECT ordinal, source_name') => $variables,
-                str_starts_with($sql, 'SELECT ') => $cases,
+                str_starts_with($sql, 'SELECT `score`') => $cases,
+                str_contains($sql, 'FROM value_labels') => $labels,
+                str_contains($sql, 'FROM missing_rules') => $missing,
+                str_contains($sql, 'FROM variable_display_metadata') => $display,
+                str_contains($sql, 'FROM dataset_metadata') => $fileLabel,
+                str_contains($sql, 'FROM documents') => $documents,
+                str_contains($sql, 'FROM file_technical_metadata') => $technical,
                 default => throw new \LogicException('Unexpected MySQL export query: ' . $sql),
             };
         });
@@ -99,7 +111,7 @@ final class MySqlProfileSelectionTest extends TestCase
         self::assertSame(['Score', 'Name'], array_map(static fn(VariableMetadata $variable): string => $variable->name, $written->variables()));
         self::assertSame(2, $result->caseCount);
         self::assertSame(
-            ['deferred_dictionary_metadata', 'deferred_variable_extensions', 'deferred_file_metadata'],
+            ['deferred_variable_extensions'],
             array_map(static fn($diagnostic): string => $diagnostic->code, $result->diagnostics),
         );
     }
@@ -108,11 +120,12 @@ final class MySqlProfileSelectionTest extends TestCase
      * @param list<array<string, mixed>> $rows
      * @param list<array<string, mixed>> $all
      */
-    private function statement(array $rows = [], array $all = []): PDOStatement
+    private function statement(array $rows = [], array $all = [], mixed $column = false): PDOStatement
     {
         $statement = $this->createStub(PDOStatement::class);
         $statement->method('execute')->willReturn(true);
         $statement->method('fetchAll')->willReturn($all);
+        $statement->method('fetchColumn')->willReturn($column);
         $index = 0;
         $statement->method('fetch')->willReturnCallback(static function () use ($rows, &$index): array|false {
             return $rows[$index++] ?? false;
