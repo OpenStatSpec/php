@@ -29,6 +29,7 @@ final class PostgreSqlProfileSelectionTest extends TestCase
     public function testPostgreSqlDriverSelectsProfileAndImportsThroughPublicAdapter(): void
     {
         $pdo = $this->pdoWithDriver('pgsql');
+        $technical = $this->createMock(PDOStatement::class);
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
         $display = $this->createMock(PDOStatement::class);
@@ -53,10 +54,11 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
         $pdo->expects(self::exactly(19))->method('exec')->willReturn(0);
-        $pdo->expects(self::exactly(13))
+        $pdo->expects(self::exactly(14))
             ->method('prepare')
             ->willReturnOnConsecutiveCalls(
                 $journal,
+                $technical,
                 $dataset,
                 $variables,
                 $display,
@@ -77,6 +79,10 @@ final class PostgreSqlProfileSelectionTest extends TestCase
 
             return $values[0] === 'succeeded' && $values[1] === 'fixture' && is_string($values[2] ?? null);
         });
+        $technical->expects(self::once())
+            ->method('execute')
+            ->with(['fixture', 'sav', null, null, null, 'UTF-8', null, null, null, null, null, null, null, null, null, null, null, null])
+            ->willReturn(true);
         $dataset->expects(self::once())
             ->method('execute')
             ->with(['fixture', 'dataset_fixture'])
