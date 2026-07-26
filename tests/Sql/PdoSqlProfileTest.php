@@ -38,4 +38,17 @@ final class PdoSqlProfileTest extends TestCase
 
         (new MySqlProfile())->assertCanRepresent(1017);
     }
+    public function testPostgreSqlMapsLongCollidingSourceNamesWithinIdentifierLimit(): void
+    {
+        $profile = new PostgreSqlProfile();
+        $source = str_repeat('Very long source variable name ', 4);
+        $first = $profile->physicalIdentifier($source, ['__case_ordinal' => true]);
+        $second = $profile->physicalIdentifier($source, ['__case_ordinal' => true, $first => true]);
+
+        self::assertSame(63, strlen($first));
+        self::assertSame(63, strlen($second));
+        self::assertNotSame($first, $second);
+        self::assertStringEndsWith('_2', $second);
+        self::assertSame('data', $profile->physicalIdentifier('###'));
+    }
 }

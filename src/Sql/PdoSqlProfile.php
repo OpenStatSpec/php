@@ -18,5 +18,13 @@ interface PdoSqlProfile
 
     public function textType(): string;
 
+    /**
+     * Creates a deterministic, dialect-safe physical identifier. The source name
+     * itself remains authoritative in the variables catalogue.
+     *
+     * @param array<string, true> $used
+     */
+    public function physicalIdentifier(string $source, array $used = []): string;
+
     public function assertCanRepresent(int $sourceVariableCount): void;
 }
