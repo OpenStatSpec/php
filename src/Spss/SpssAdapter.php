@@ -29,16 +29,10 @@ final readonly class SpssAdapter
 
     public function import(string $sourcePath, string $datasetName): void
     {
-        if (strtolower(pathinfo($sourcePath, PATHINFO_EXTENSION)) === 'zsav') {
+        if (!in_array($this->spssFormat($sourcePath), ['sav', 'zsav'], true)) {
             throw new UnsupportedOperation(
                 DiagnosticCode::UnsupportedSourceFormat,
-                'ZSAV import is not supported by this adapter profile yet; no data was changed.',
-            );
-        }
-        if (strtolower(pathinfo($sourcePath, PATHINFO_EXTENSION)) !== 'sav') {
-            throw new UnsupportedOperation(
-                DiagnosticCode::UnsupportedSourceFormat,
-                'Only unencrypted SAV files are supported by this adapter profile.',
+                'This adapter profile supports SAV and ZSAV files only.',
             );
         }
         if ($this->connection->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
@@ -50,25 +44,25 @@ final readonly class SpssAdapter
 
     public function export(string $datasetName, string $targetPath): SpssExportResult
     {
-        if (strtolower(pathinfo($targetPath, PATHINFO_EXTENSION)) === 'zsav') {
+        $targetFormat = $this->spssFormat($targetPath);
+        if (!in_array($targetFormat, ['sav', 'zsav'], true)) {
             throw new UnsupportedOperation(
                 DiagnosticCode::UnsupportedSourceFormat,
-                'ZSAV export is not supported by this adapter profile yet; no file was written.',
-            );
-        }
-        if (strtolower(pathinfo($targetPath, PATHINFO_EXTENSION)) !== 'sav') {
-            throw new UnsupportedOperation(
-                DiagnosticCode::UnsupportedSourceFormat,
-                'This adapter profile exports unencrypted SAV files only.',
+                'This adapter profile exports SAV and ZSAV files only.',
             );
         }
         if ($this->connection->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
             throw new UnsupportedOperation(DiagnosticCode::UnsupportedSqlDriver, 'This export slice currently supports SQLite only.');
         }
 
-        $export = (new SqliteWideTableExporter($this->connection->pdo))->export($datasetName);
+        $export = (new SqliteWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat);
         $this->engine->write($targetPath, $export['dataset']);
 
         return new SpssExportResult($datasetName, $targetPath, $export['caseCount'], $export['diagnostics']);
+    }
+
+    private function spssFormat(string $path): string
+    {
+        return strtolower(pathinfo($path, PATHINFO_EXTENSION));
     }
 }

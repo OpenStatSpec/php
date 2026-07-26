@@ -2,7 +2,7 @@
 
 `openstatspec/php` is the PHP reference adapter for the [OpenStatSpec specification](https://github.com/OpenStatSpec/specification).
 
-The current implemented profile imports an unencrypted SPSS `.sav` dataset into SQLite as one source-faithful wide data table plus a metadata catalogue. It reconstructs a typed php-spss V3 `Dataset` from that catalogue for SAV export.
+The current implemented profile imports an SPSS `.sav` or `.zsav` dataset into SQLite as one source-faithful wide data table plus a metadata catalogue. It reconstructs a typed php-spss V3 `Dataset` from that catalogue for SAV or ZSAV export.
 
 ## Status
 

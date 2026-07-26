@@ -14,6 +14,7 @@ use RuntimeException;
 use SPSS\Sav\Alignment;
 use SPSS\Sav\Dataset;
 use SPSS\Sav\FileMetadata;
+use SPSS\Sav\FileTechnicalMetadata;
 use SPSS\Sav\FileAttribute;
 use SPSS\Sav\MultipleResponseCategoryLabels;
 use SPSS\Sav\MultipleResponseLabelSource;
@@ -167,7 +168,7 @@ final class SpssAdapterTest extends TestCase
         }
     }
 
-    public function testImportRejectsZsavBeforeReadingOrChangingTheDatabase(): void
+    public function testImportAllowsZsav(): void
     {
         if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
             self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
@@ -176,14 +177,83 @@ final class SpssAdapterTest extends TestCase
         $pdo = new PDO('sqlite::memory:');
         $adapter = new SpssAdapter($pdo, new FakeSpssEngine($this->fixture()));
 
-        $this->expectException(UnsupportedOperation::class);
-        $this->expectExceptionMessage('ZSAV import is not supported');
+        $adapter->import('fixture.zsav', 'fixture');
 
-        try {
-            $adapter->import('fixture.zsav', 'fixture');
-        } finally {
-            self::assertSame([], self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table'"));
+        self::assertSame(
+            [['name' => 'dataset_fixture']],
+            self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dataset_fixture'"),
+        );
+    }
+
+    public function testRealEngineRoundTripsSavAndZsavLongUtf8StringsAndAllMissingRules(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
         }
+
+        $engine = new PhpSpssEngine();
+        foreach (['sav' => ['$FL2', 1], 'zsav' => ['$FL3', 2]] as $format => [$header, $compression]) {
+            $source = sys_get_temp_dir() . '/openstatspec-v3-source-' . uniqid('', true) . '.' . $format;
+            $target = sys_get_temp_dir() . '/openstatspec-v3-target-' . uniqid('', true) . '.' . $format;
+            try {
+                $fixture = $this->longStringAndMissingValuesFixture($format);
+                $engine->write($source, $fixture);
+                self::assertSame($header, self::fileHeader($source));
+                self::assertSame($format, $engine->read($source)->technicalMetadata->sourceFormat);
+                self::assertSame($compression, $engine->read($source)->technicalMetadata->compression);
+
+                $adapter = new SpssAdapter(new PDO('sqlite::memory:'), $engine);
+                $adapter->import($source, 'roundtrip_' . $format);
+                $result = $adapter->export('roundtrip_' . $format, $target);
+
+                self::assertSame([], $result->diagnostics);
+                self::assertSame($header, self::fileHeader($target));
+
+                $readBack = $engine->read($target);
+                self::assertSame($format, $readBack->technicalMetadata->sourceFormat);
+                self::assertSame($compression, $readBack->technicalMetadata->compression);
+                self::assertSame($fixture->rows(), $readBack->rows());
+                self::assertSame(400, $readBack->variables()[4]->width);
+                $longString = $readBack->rows()[0][4];
+                self::assertIsString($longString);
+                self::assertSame(340, strlen($longString));
+                self::assertEquals(MissingValues::none(), $readBack->variables()[0]->missingValues);
+                self::assertEquals(MissingValues::discrete(-1.0, -2.0), $readBack->variables()[1]->missingValues);
+                self::assertEquals(MissingValues::range(1.0, 3.0), $readBack->variables()[2]->missingValues);
+                self::assertEquals(MissingValues::rangeAndValue(10.0, 20.0, 99.0), $readBack->variables()[3]->missingValues);
+            } finally {
+                @unlink($source);
+                @unlink($target);
+            }
+        }
+    }
+
+    public function testImportRejectsStringMissingValueRanges(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $source = new Dataset(
+            new VariableDictionary([
+                new VariableMetadata(
+                    name: 'Text_value',
+                    type: VariableType::STRING,
+                    width: 12,
+                    printFormat: new VariableFormat(1, 12),
+                    writeFormat: new VariableFormat(1, 12),
+                    missingValues: MissingValues::range(1.0, 2.0),
+                    dictionaryIndex: 1,
+                ),
+            ]),
+            [['present']],
+        );
+        $adapter = new SpssAdapter(new PDO('sqlite::memory:'), new FakeSpssEngine($source));
+
+        $this->expectException(UnsupportedOperation::class);
+        $this->expectExceptionMessage('string variables may have discrete user-missing values only');
+
+        $adapter->import('malformed.sav', 'malformed');
     }
 
     private function fixture(): Dataset
@@ -277,6 +347,77 @@ final class SpssAdapterTest extends TestCase
             [[7.0, 'blue'], [8.0, 'green']],
             new FileMetadata('Customer survey source', documents: ['First document line', 'Second document line']),
         );
+    }
+
+    private function longStringAndMissingValuesFixture(string $format): Dataset
+    {
+        $longValue = str_repeat("\xC3\xB5", 170);
+
+        return new Dataset(
+            new VariableDictionary([
+                new VariableMetadata(
+                    name: 'No_missing',
+                    type: VariableType::NUMERIC,
+                    width: 0,
+                    printFormat: new VariableFormat(5, 8),
+                    writeFormat: new VariableFormat(5, 8),
+                    missingValues: MissingValues::none(),
+                    dictionaryIndex: 1,
+                ),
+                new VariableMetadata(
+                    name: 'Discrete_missing',
+                    type: VariableType::NUMERIC,
+                    width: 0,
+                    printFormat: new VariableFormat(5, 8),
+                    writeFormat: new VariableFormat(5, 8),
+                    missingValues: MissingValues::discrete(-1.0, -2.0),
+                    dictionaryIndex: 2,
+                ),
+                new VariableMetadata(
+                    name: 'Range_missing',
+                    type: VariableType::NUMERIC,
+                    width: 0,
+                    printFormat: new VariableFormat(5, 8),
+                    writeFormat: new VariableFormat(5, 8),
+                    missingValues: MissingValues::range(1.0, 3.0),
+                    dictionaryIndex: 3,
+                ),
+                new VariableMetadata(
+                    name: 'Range_and_value_missing',
+                    type: VariableType::NUMERIC,
+                    width: 0,
+                    printFormat: new VariableFormat(5, 8),
+                    writeFormat: new VariableFormat(5, 8),
+                    missingValues: MissingValues::rangeAndValue(10.0, 20.0, 99.0),
+                    dictionaryIndex: 4,
+                ),
+                new VariableMetadata(
+                    name: 'Long_utf8',
+                    type: VariableType::STRING,
+                    width: 400,
+                    printFormat: new VariableFormat(1, 255),
+                    writeFormat: new VariableFormat(1, 255),
+                    missingValues: MissingValues::discrete('MISSING'),
+                    dictionaryIndex: 5,
+                ),
+            ]),
+            [[10.0, 2.0, 4.0, 9.0, $longValue]],
+            new FileMetadata('Long UTF-8 and missing-values fixture'),
+            new FileTechnicalMetadata(
+                sourceFormat: $format,
+                compression: $format === 'zsav' ? 2 : 1,
+            ),
+        );
+    }
+
+    private static function fileHeader(string $path): string
+    {
+        $header = file_get_contents($path, false, null, 0, 4);
+        if (!is_string($header)) {
+            throw new RuntimeException('Could not read the SPSS file header.');
+        }
+
+        return $header;
     }
 
     /** @return list<array<string, mixed>> */

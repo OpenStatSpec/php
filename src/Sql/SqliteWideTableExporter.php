@@ -13,6 +13,7 @@ use SPSS\Sav\Alignment;
 use SPSS\Sav\Dataset;
 use SPSS\Sav\FileAttribute;
 use SPSS\Sav\FileMetadata;
+use SPSS\Sav\FileTechnicalMetadata;
 use SPSS\Sav\Measure;
 use SPSS\Sav\MissingValues;
 use SPSS\Sav\MultipleResponseCategoryLabels;
@@ -37,8 +38,11 @@ final readonly class SqliteWideTableExporter
     /**
      * @return array{dataset: Dataset, caseCount: int, diagnostics: list<FidelityDiagnostic>}
      */
-    public function export(string $datasetName): array
+    public function export(string $datasetName, string $targetFormat = 'sav'): array
     {
+        if (!in_array($targetFormat, ['sav', 'zsav'], true)) {
+            throw new UnsupportedOperation(DiagnosticCode::UnsupportedSourceFormat, 'The SQLite profile can only construct SAV or ZSAV datasets.');
+        }
         $datasetStatement = $this->statement('SELECT table_name FROM datasets WHERE dataset_name = ?');
         $datasetStatement->execute([$datasetName]);
         $dataset = $datasetStatement->fetch(PDO::FETCH_ASSOC);
@@ -76,7 +80,9 @@ final readonly class SqliteWideTableExporter
             $isString = $variable['storage_kind'] === 'string';
             $type = $isString ? VariableType::STRING : VariableType::NUMERIC;
             $width = $isString ? $variable['source_width'] : 0;
-            $formatWidth = $isString ? min($width, 255) : $variable['format_width'];
+            // SPSS stores format widths in one byte, but long-string storage widths are
+            // separate and may be up to 32767 bytes. Do not cap the storage width.
+            $formatWidth = $isString ? min($variable['format_width'], 255) : $variable['format_width'];
 
             $typedVariables[] = new VariableMetadata(
                 name: $variable['source_name'],
@@ -97,7 +103,15 @@ final readonly class SqliteWideTableExporter
         }
 
         return [
-            'dataset' => new Dataset(new VariableDictionary($typedVariables), $rows, $metadata),
+            'dataset' => new Dataset(
+                new VariableDictionary($typedVariables),
+                $rows,
+                $metadata,
+                new FileTechnicalMetadata(
+                    sourceFormat: $targetFormat,
+                    compression: $targetFormat === 'zsav' ? 2 : 1,
+                ),
+            ),
             'caseCount' => count($rows),
             'diagnostics' => [],
         ];

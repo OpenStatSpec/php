@@ -9,6 +9,7 @@ use OpenStatSpec\Core\UnsupportedOperation;
 use SPSS\Sav\Dataset;
 use SPSS\Sav\MissingValues;
 use SPSS\Sav\MissingValuesKind;
+use SPSS\Sav\VariableType;
 
 /** Converts php-spss V3 Dataset objects to the adapter's strict SQL source model. */
 final class SpssSourceNormalizer
@@ -21,6 +22,15 @@ final class SpssSourceNormalizer
         foreach ($source->variables() as $index => $variable) {
             if ($variable->name === '') {
                 throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Every source variable must have a non-empty name.');
+            }
+            if (
+                $variable->type === VariableType::STRING
+                && in_array($variable->missingValues->kind, [MissingValuesKind::RANGE, MissingValuesKind::RANGE_AND_VALUE], true)
+            ) {
+                throw new UnsupportedOperation(
+                    DiagnosticCode::InvalidSourceDataset,
+                    'SPSS string variables may have discrete user-missing values only; missing-value ranges are numeric only.',
+                );
             }
 
             $variables[] = [
