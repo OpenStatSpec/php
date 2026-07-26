@@ -39,6 +39,7 @@ use SPSS\Sav\VariableType;
  */
 abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
 {
+    use VariableCatalogAssertions;
     public function testRealEngineRoundTripsSavAndZsavThroughMySqlFamily(): void
     {
         $pdo = $this->mysql();
@@ -66,12 +67,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
                     throw new RuntimeException('Could not count imported MySQL/MariaDB cases.');
                 }
                 self::assertSame(2, (int) $caseCount->fetchColumn());
-                self::assertSame(
-                    [
-                        ['ordinal' => '1', 'source_name' => 'Score', 'storage_kind' => 'numeric'],
-                        ['ordinal' => '2', 'source_name' => 'Reason', 'storage_kind' => 'string'],
-                        ['ordinal' => '3', 'source_name' => 'LongText', 'storage_kind' => 'string'],
-                    ],
+                $this->assertVariableCatalog(
                     $this->rows($pdo, 'SELECT ordinal, source_name, storage_kind FROM variables WHERE dataset_name = ? ORDER BY ordinal', [$datasetName]),
                 );
                 self::assertSame(2, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM documents WHERE dataset_name = ?', [$datasetName]));
