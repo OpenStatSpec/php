@@ -8,6 +8,7 @@ use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\MySqlWideTableImporter;
+use OpenStatSpec\Sql\MySqlWideTableExporter;
 use OpenStatSpec\Sql\PostgreSqlWideTableExporter;
 use OpenStatSpec\Sql\PostgreSqlWideTableImporter;
 use OpenStatSpec\Sql\SqliteWideTableExporter;
@@ -57,10 +58,7 @@ final readonly class SpssAdapter
         }
         $export = match ($this->connection->profile->driverName()) {
             'pgsql' => (new PostgreSqlWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat),
-            'mysql' => throw new UnsupportedOperation(
-                DiagnosticCode::SqlProfileOperationUnavailable,
-                'MySQL/MariaDB export is not implemented; refusing to fall back to another SQL profile.',
-            ),
+            'mysql' => (new MySqlWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat),
             default => (new SqliteWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat),
         };
         $this->engine->write($targetPath, $export['dataset']);
