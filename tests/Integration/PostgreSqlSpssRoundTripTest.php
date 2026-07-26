@@ -7,6 +7,7 @@ namespace OpenStatSpec\Tests\Integration;
 use OpenStatSpec\Spss\PhpSpssEngine;
 use OpenStatSpec\Spss\SpssAdapter;
 use PDO;
+use PDOException;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 use SPSS\Sav\Alignment;
@@ -69,7 +70,7 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
                     [
                         ['ordinal' => '1', 'source_name' => 'Score', 'storage_kind' => 'numeric'],
                         ['ordinal' => '2', 'source_name' => 'Reason', 'storage_kind' => 'string'],
-                        ['ordinal' => '3', 'source_name' => 'Long text', 'storage_kind' => 'string'],
+                        ['ordinal' => '3', 'source_name' => 'LongText', 'storage_kind' => 'string'],
                     ],
                     $this->rows($pdo, 'SELECT ordinal, source_name, storage_kind FROM variables WHERE dataset_name = ? ORDER BY ordinal', [$datasetName]),
                 );
@@ -175,7 +176,7 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
                     dictionaryIndex: 2,
                 ),
                 new VariableMetadata(
-                    name: 'Long text',
+                    name: 'LongText',
                     type: VariableType::STRING,
                     width: 400,
                     printFormat: new VariableFormat(1, 255),
@@ -260,8 +261,23 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
             'variables',
             'datasets',
         ] as $catalogue) {
+            if (!$this->catalogueTableExists($pdo, $catalogue)) {
+                continue;
+            }
+
             $statement = $pdo->prepare('DELETE FROM ' . $catalogue . ' WHERE dataset_name = ?');
             $statement->execute([$datasetName]);
+        }
+    }
+
+    private function catalogueTableExists(PDO $pdo, string $catalogue): bool
+    {
+        try {
+            $pdo->query('SELECT 1 FROM ' . $catalogue . ' WHERE 1 = 0');
+
+            return true;
+        } catch (PDOException) {
+            return false;
         }
     }
 

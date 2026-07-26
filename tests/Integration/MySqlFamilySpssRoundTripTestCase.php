@@ -7,6 +7,7 @@ namespace OpenStatSpec\Tests\Integration;
 use OpenStatSpec\Spss\PhpSpssEngine;
 use OpenStatSpec\Spss\SpssAdapter;
 use PDO;
+use PDOException;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 use SPSS\Sav\Alignment;
@@ -69,7 +70,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
                     [
                         ['ordinal' => '1', 'source_name' => 'Score', 'storage_kind' => 'numeric'],
                         ['ordinal' => '2', 'source_name' => 'Reason', 'storage_kind' => 'string'],
-                        ['ordinal' => '3', 'source_name' => 'Long text', 'storage_kind' => 'string'],
+                        ['ordinal' => '3', 'source_name' => 'LongText', 'storage_kind' => 'string'],
                     ],
                     $this->rows($pdo, 'SELECT ordinal, source_name, storage_kind FROM variables WHERE dataset_name = ? ORDER BY ordinal', [$datasetName]),
                 );
@@ -89,7 +90,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
                 $wideRows = $this->rows(
                     $pdo,
                     'SELECT ' . $this->quote('__case_ordinal') . ', ' . $this->quote($columns['Score']) . ', '
-                    . $this->quote($columns['Reason']) . ', ' . $this->quote($columns['Long text'])
+                    . $this->quote($columns['Reason']) . ', ' . $this->quote($columns['LongText'])
                     . ' FROM ' . $this->quote($tableName) . ' ORDER BY ' . $this->quote('__case_ordinal'),
                     [],
                 );
@@ -97,7 +98,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
                 self::assertSame('1', (string) $wideRows[0]['__case_ordinal']);
                 self::assertEquals(7.5, (float) $wideRows[0][$columns['Score']]);
                 self::assertSame('present', $wideRows[0][$columns['Reason']]);
-                self::assertSame(340, strlen((string) $wideRows[0][$columns['Long text']]));
+                self::assertSame(340, strlen((string) $wideRows[0][$columns['LongText']]));
                 self::assertSame('2', (string) $wideRows[1]['__case_ordinal']);
                 self::assertNull($wideRows[1][$columns['Score']], 'SPSS numeric system-missing must persist as SQL NULL.');
                 self::assertSame('MISSING', $wideRows[1][$columns['Reason']], 'SPSS user-missing values must remain raw SQL values.');
@@ -209,7 +210,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
                     dictionaryIndex: 2,
                 ),
                 new VariableMetadata(
-                    name: 'Long text',
+                    name: 'LongText',
                     type: VariableType::STRING,
                     width: 400,
                     printFormat: new VariableFormat(1, 255),
@@ -294,8 +295,23 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
             'variables',
             'datasets',
         ] as $catalogue) {
+            if (!$this->catalogueTableExists($pdo, $catalogue)) {
+                continue;
+            }
+
             $statement = $pdo->prepare('DELETE FROM ' . $catalogue . ' WHERE dataset_name = ?');
             $statement->execute([$datasetName]);
+        }
+    }
+
+    private function catalogueTableExists(PDO $pdo, string $catalogue): bool
+    {
+        try {
+            $pdo->query('SELECT 1 FROM ' . $catalogue . ' WHERE 1 = 0');
+
+            return true;
+        } catch (PDOException) {
+            return false;
         }
     }
 
