@@ -2,7 +2,7 @@
 
 `openstatspec/php` is the PHP reference adapter for the [OpenStatSpec specification](https://github.com/OpenStatSpec/specification).
 
-The current implemented profile imports an unencrypted SPSS `.sav` dataset into SQLite as one source-faithful wide data table plus a metadata catalogue. It can reconstruct a `.sav` writer payload from that SQLite catalogue and write it through a compatible external SPSS engine.
+The current implemented profile imports an unencrypted SPSS `.sav` dataset into SQLite as one source-faithful wide data table plus a metadata catalogue. It can reconstruct a `.sav` writer payload from that SQLite catalogue and pass it to the bundled php-spss V3 engine.
 
 ## Status
 
@@ -11,18 +11,17 @@ This is an early reference implementation, not a release-ready full-fidelity con
 - **Implemented and tested with SQLite:** unencrypted SAV import and export, one data table per dataset, ordered cases, source variable names and physical-column mapping, value labels, ordinary user-missing values, formats, string widths, file labels, document records, and selected display metadata in the catalogue.
 - **Explicitly rejected:** ZSAV, non-SAV inputs and outputs, and non-SQLite PDO connections. Rejections occur before the adapter changes the target database or writes a target file.
 - **Declared but not live-server tested:** MySQL/MariaDB and PostgreSQL capability profiles. They describe identifiers, SQL types and wide-table limits; they do not yet implement imports or exports.
-- **Known export boundaries:** the selected writer does not restore file labels, documents, display metadata, or range-plus-discrete user-missing rules; these produce fidelity diagnostics in the export result. A string variable or value wider than 255 bytes stops export before a file is written.
+- **Current V3 integration boundary:** php-spss V3 is now an official Composer dependency, but this adapter still uses its pre-V3 array payload bridge. The next implementation step is to map V3 `Dataset` and `Variable` objects plus their expanded metadata into the catalogue and back. Until then the adapter remains SAV-only and does not claim V3-level round-trip fidelity for long strings, ZSAV, attributes, sets, or display metadata.
 
-An export diagnostic is information about a known loss boundary; the current PHP API still writes the SAV file when the external writer can do so. Consumers that require lossless output must inspect `SpssExportResult::$diagnostics` and reject a non-empty result themselves.
+An export diagnostic is information about a known loss boundary; the current PHP API still writes a SAV file when the transition bridge can do so. Consumers that require lossless output must inspect `SpssExportResult::$diagnostics` and reject a non-empty result themselves.
 
 ## Requirements
 
-- PHP 8.3 or later
-- PHP PDO with the SQLite driver for the current import/export profile
-- A compatible SAV engine for real file conversion. The package does not currently declare that engine as a Composer dependency.
+- PHP 8.4.1 or later
+- PHP PDO; the current implemented profile also needs the SQLite PDO driver
+- `tiamo/spss` 3.x, installed automatically by Composer from the maintained php-spss V3 repository. Its engine requirements are `ext-bcmath`, `ext-mbstring`, and `ext-zlib`.
 
 ## Current API
-
 ```php
 use OpenStatSpec\Spss\SpssAdapter;
 
@@ -54,13 +53,7 @@ composer check
 
 `composer check` is the required local verification gate before every commit or push. It validates Composer configuration, checks PHP syntax, checks coding style, runs PHPStan static analysis, and runs the test suite. To apply safe code-style fixes locally, run `composer fix` and then run `composer check` again.
 
-The regular test suite uses SQLite in memory; no database service or Docker setup is required. The optional real-engine integration test is skipped unless `OPENSTATSPEC_PHP_SPSS_PATH` points to a compatible checkout of [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss):
-
-```bash
-OPENSTATSPEC_PHP_SPSS_PATH=/path/to/php-spss composer test
-```
-
-That optional test imports the engine's fixture into SQLite, exports it, and reads the written SAV file back.
+The regular test suite uses SQLite in memory; no database service or Docker setup is required. php-spss V3 is installed through Composer. The adapter’s V3 typed-object bridge and its real-engine semantic round-trip suite are the next implementation step; they are not yet claimed as part of the current profile.
 
 ## Contributing
 
@@ -74,12 +67,9 @@ The package is framework-neutral and has no Yii2 or Laravel dependency. A consum
 
 ## SPSS engine
 
-The selected external SAV engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss). It is intentionally not a Composer dependency because its published Composer identity remains `tiamo/spss` and OpenStatSpec must not add a VCS-only public dependency.
+The selected engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss), consumed as the official Composer dependency `tiamo/spss` version 3.x through its V3 source repository. It is not maintained by OpenStatSpec.
 
-`PhpSpssEngine` detects whether compatible reader and writer classes are available at runtime. If the needed class is missing, the operation stops with an `external_engine_unavailable` diagnostic. `SpssEngine` is an internal boundary around that engine, not a stable public extension API.
-
-The adapter does not claim ZSAV capability because the selected engine's ZLIB path is not verified. It rejects `.zsav` before attempting to read it.
+The present `PhpSpssEngine` is a temporary array-payload boundary around the V3 reader and writer. A dedicated follow-up converts the expanded V3 typed `Dataset`/`Variable` model and its metadata into the OpenStatSpec catalogue. The current adapter deliberately continues to reject ZSAV until that mapping and its conformance tests land.
 
 ## CI feedback loop
-
 Treat a failing CI run as a development task: diagnose the cause, make the focused fix, run `composer check` locally, then commit and push the correction. Do not merely report a failure.

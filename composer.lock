@@ -4,8 +4,158 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "4931e60fdd4c815ae15a00c81bb30972",
-    "packages": [],
+    "content-hash": "c112e0f537f6f33704cfc44daf538bab",
+    "packages": [
+        {
+            "name": "tiamo/spss",
+            "version": "3.0.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/TonisOrmisson/php-spss.git",
+                "reference": "cf6f017ad2ce4b3d76a63eda88b9b3e84e525af5"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/TonisOrmisson/php-spss/zipball/cf6f017ad2ce4b3d76a63eda88b9b3e84e525af5",
+                "reference": "cf6f017ad2ce4b3d76a63eda88b9b3e84e525af5",
+                "shasum": ""
+            },
+            "require": {
+                "ext-bcmath": "*",
+                "ext-mbstring": "*",
+                "ext-zlib": "*",
+                "php": "^8.4.1"
+            },
+            "require-dev": {
+                "friendsofphp/php-cs-fixer": "^3.95",
+                "infection/infection": "^0.34",
+                "php-parallel-lint/php-parallel-lint": "^1.4",
+                "phpstan/phpstan": "^2.2",
+                "phpstan/phpstan-phpunit": "^2.0",
+                "phpstan/phpstan-strict-rules": "^2.0",
+                "phpunit/phpunit": "^13.2",
+                "rector/rector": "^2.5"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "SPSS\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "SPSS\\Tests\\": "tests/"
+                }
+            },
+            "scripts": {
+                "fix": [
+                    "rector process",
+                    "php-cs-fixer fix --verbose"
+                ],
+                "hooks:install": [
+                    "git config core.hooksPath .githooks"
+                ],
+                "post-install-cmd": [
+                    "@hooks:install"
+                ],
+                "post-update-cmd": [
+                    "@hooks:install"
+                ],
+                "qa": [
+                    "@test:composer",
+                    "@qa:code"
+                ],
+                "qa:code": [
+                    "@test:syntax",
+                    "@test:style",
+                    "@test:rector",
+                    "@test:types",
+                    "@test:unit"
+                ],
+                "qa:lowest": [
+                    "@composer validate --strict",
+                    "@qa:code"
+                ],
+                "qa:release": [
+                    "@qa",
+                    "@test:coverage",
+                    "@test:coverage:branch",
+                    "@test:mutation",
+                    "@test:interop"
+                ],
+                "test:composer": [
+                    "@composer validate --strict",
+                    "@composer audit --locked"
+                ],
+                "test:coverage": [
+                    "@php tools/prepare-qa-directories.php",
+                    "@php -d xdebug.mode=coverage vendor/bin/phpunit --coverage-clover build/coverage/clover.xml",
+                    "@php tools/check-coverage.php line build/coverage/clover.xml 85"
+                ],
+                "test:coverage:branch": [
+                    "@php tools/run-branch-coverage.php"
+                ],
+                "test:interop": [
+                    "@php tools/interop/haven-roundtrip.php"
+                ],
+                "test:mutation": [
+                    "Composer\\Config::disableProcessTimeout",
+                    "@php -d xdebug.mode=coverage vendor/bin/infection --configuration=infection.json5.dist --only-covering-test-cases --no-progress --no-interaction"
+                ],
+                "test:rector": [
+                    "rector process --dry-run"
+                ],
+                "test:style": [
+                    "php-cs-fixer check --diff --verbose"
+                ],
+                "test:syntax": [
+                    "parallel-lint --exclude vendor .php-cs-fixer.dist.php rector.php src tests examples tools"
+                ],
+                "test:types": [
+                    "phpstan analyse --no-progress --memory-limit=1G"
+                ],
+                "test:unit": [
+                    "phpunit --no-coverage"
+                ],
+                "test": [
+                    "@qa"
+                ]
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Korniienko Vladyslav",
+                    "email": "vk.tiamo@gmail.com"
+                }
+            ],
+            "description": "SPSS is a php-based implementation of IBM SPSS Statistics Standard",
+            "keywords": [
+                "DataSet",
+                "IBM",
+                "PSPP",
+                "SPSS",
+                "Statistics",
+                "cli",
+                "cli-app",
+                "por",
+                "reader",
+                "sav",
+                "writer"
+            ],
+            "support": {
+                "source": "https://github.com/TonisOrmisson/php-spss/tree/3.0.0"
+            },
+            "funding": [
+                {
+                    "type": "custom",
+                    "url": "https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=9UFPH5MGUD7LS&source=url"
+                }
+            ],
+            "time": "2026-07-26T12:11:35+00:00"
+        }
+    ],
     "packages-dev": [
         {
             "name": "clue/ndjson-react",
@@ -4517,11 +4667,12 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.3"
+        "ext-pdo": "*",
+        "php": "^8.4.1"
     },
     "platform-dev": {},
     "platform-overrides": {
-        "php": "8.3.0"
+        "php": "8.4.1"
     },
     "plugin-api-version": "2.9.0"
 }

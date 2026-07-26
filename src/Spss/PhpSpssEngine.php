@@ -8,9 +8,9 @@ use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 
 /**
- * Narrow boundary around the externally installed TonisOrmisson/php-spss engine.
+ * Transition boundary around the Composer-installed TonisOrmisson/php-spss V3 engine.
  *
- * This package deliberately does not declare a VCS-only Composer dependency.
+ * Typed V3 Dataset/Variable catalogue mapping is implemented separately.
  */
 final class PhpSpssEngine implements SpssEngine
 {
@@ -31,7 +31,7 @@ final class PhpSpssEngine implements SpssEngine
         if (!$this->isAvailable()) {
             throw new UnsupportedOperation(
                 DiagnosticCode::ExternalEngineUnavailable,
-                'The selected SPSS engine is not installed. Install a compatible TonisOrmisson/php-spss checkout before importing SAV data.',
+                'The selected SPSS engine is not installed. Install Composer dependencies including tiamo/spss before importing SAV data.',
             );
         }
 
@@ -53,7 +53,7 @@ final class PhpSpssEngine implements SpssEngine
         if (!class_exists(self::WRITER_CLASS)) {
             throw new UnsupportedOperation(
                 DiagnosticCode::ExternalEngineUnavailable,
-                'The selected SPSS engine is not installed. Install a compatible TonisOrmisson/php-spss checkout before exporting SAV data.',
+                'The selected SPSS engine is not installed. Install Composer dependencies including tiamo/spss before exporting SAV data.',
             );
         }
 
