@@ -4,6 +4,8 @@
 
 This package is a reference implementation of OpenStatSpec. The [specification repository](https://github.com/OpenStatSpec/specification) is authoritative for the data model and conformance rules.
 
+It provides a narrow, source-faithful mapping of unencrypted SPSS SAV and ZSAV datasets to PDO-backed relational databases and back. It is not a statistics engine, survey system, EAV store or data-harmonisation layer.
+
 ## Strict source-faithful contract
 
 For one imported SPSS source dataset:
@@ -11,49 +13,72 @@ For one imported SPSS source dataset:
 1. One source dataset maps to exactly one dedicated SQL data table.
 2. One SPSS case maps to exactly one SQL row.
 3. One SPSS variable maps to exactly one physical SQL column, preserving source order.
-4. A reserved technical `__case_ordinal` column preserves source order and is not exported as an SPSS variable.
-5. The SQLite catalogue currently records dataset labels and documents; variable names, labels, storage kind, source width and print format; value labels; user-missing rules; and measurement level, display width and alignment.
+4. Reserved technical `__case_ordinal` preserves case order and is not exported as an SPSS variable.
+5. The source variable name remains authoritative; the catalogue maps it losslessly to a deterministic, dialect-safe physical identifier.
+6. Dictionary metadata remains in catalogue relations, not data cells.
 
-The adapter must not create EAV/cell tables, long views, chunked tables, reshaped data, automatic harmonisation, or inferred respondent keys. Unsupported source features and target capabilities produce explicit diagnostics.
+The adapter must not create EAV/cell tables, long views, chunked tables, reshaped data, automatic harmonisation or inferred respondent keys.
 
-## Implemented profile
+Numeric SPSS system-missing values map to SQL `NULL`. User-missing values remain raw numeric or string values, with discrete/range semantics in the catalogue. String columns are non-null; blank strings are values. SPSS date/time/currency values stay numeric with SPSS format metadata rather than being coerced to SQL temporal or decimal types.
 
-The only end-to-end profile is SQLite with unencrypted SAV files.
+## Profiles and coverage
 
-- `SpssAdapter::import(string $sourcePath, string $datasetName): void` accepts only `.sav`, normalises the external engine's source dictionary, and creates a `dataset_<normalised-name>` table plus its catalogue entries in one transaction.
-- `SpssAdapter::export(string $datasetName, string $targetPath): SpssExportResult` accepts only a `.sav` target. It orders cases by `__case_ordinal`, reconstructs a typed php-spss V3 `Dataset`, writes through the external engine, and returns fidelity diagnostics.
-- The typed slice preserves values, labels, all supported user-missing rules (including range-plus-value), file labels, documents, formats and measurement/display metadata.
-- ZSAV is rejected before reading or writing. No claim is made about compressed SPSS data.
-- SQLite strings are stored as non-null `TEXT`; numeric system-missing values are stored as `NULL`.
+The public `SpssAdapter` chooses a profile from the PDO driver:
 
-File and variable attributes, variable sets, multiple-response sets and variable roles are not yet catalogued by this adapter. They are deliberately outside this implementation slice and must not be represented as preserved output.
+| PDO driver | Profile | Current coverage |
+| --- | --- | --- |
+| `sqlite` | SQLite | in-memory unit and round-trip suite |
+| `pgsql` | PostgreSQL | live PostgreSQL 17 SAV/ZSAV CI round trips |
+| `mysql` | MySQL/MariaDB | live MySQL 8.4 and MariaDB 11.4 SAV/ZSAV CI round trips |
 
-## SQL capability profiles
+Every profile creates the same logical strict-wide layout and metadata catalogue. Physical SQL types, identifier limits and capability preflight are profile-specific. A source that cannot be represented must be rejected before an incomplete substitute is created.
 
-`SqliteProfile`, `MySqlProfile`, and `PostgreSqlProfile` define driver names, identifier quoting, numeric/text types, identifier limits, and maximum wide-table variable counts.
+## Catalogue and recovery
 
-Only SQLite has an importer and exporter, and only SQLite is exercised through a PDO connection. MySQL/MariaDB and PostgreSQL profiles are declarations of planned capabilities, not supported conversion targets.
+The catalogue is the semantic dictionary for the physical data table. It records, as applicable:
+
+- dataset and physical table identity;
+- source ordering, source/physical variable mapping, storage kind, widths and labels;
+- print/write formats, measurement level and display properties;
+- typed ordered value labels and all supported user-missing forms;
+- documents and technical file metadata;
+- file/variable attributes, variable sets, multiple-response sets and roles; and
+- import/export operation records and fidelity events.
+
+`SpssImportResult` carries an operation ID, dataset name, case count and diagnostics. `SpssExportResult` carries the same operational evidence plus explicitly accepted loss codes.
+
+## Round trip and fidelity policy
+
+The objective is semantic equivalence for represented features, not byte identity. Original compression blocks, product-specific bytes, timestamps and other incidental writer representation are not promised.
+
+An exporter may emit machine-readable `FidelityDiagnostic` values for a known loss boundary. Export is fail-closed: it refuses to write until each emitted diagnostic code is present in the caller's `allowLoss` list. That makes intentional lossy conversion explicit rather than silently producing a downgraded file.
+
+`operation_catalog` records every import/export attempt independently of dataset metadata. `fidelity_event_catalog` records diagnostics. A failed preflight can therefore remain auditable with a null dataset reference and without a partially created dataset.
+
+## SAV/ZSAV boundary
+
+The adapter accepts and writes unencrypted `.sav` and `.zsav` only. php-spss V3 parses and writes the file; OpenStatSpec owns normalization, profile mapping, catalogue persistence, reconstruction and fidelity enforcement.
+
+Encrypted files, Portable (`.por`) files and arbitrary external-engine formats are rejected. A future source adapter must follow the same strict-wide and diagnostic contract and must not silently reshape data.
 
 ## Package layers
 
 ### Core
 
-Core contains diagnostic codes, fidelity diagnostics and explicit unsupported-operation errors.
+`src/Core` contains diagnostic codes, operation/fidelity policy and explicit unsupported-operation errors.
 
 ### SQL
 
-SQL owns the supplied PDO connection, profile capability checks, the SQLite wide-table importer/exporter, and the SQLite catalogue.
+`src/Sql` owns PDO profile selection, dialect-safe strict-wide DDL, catalogue persistence, import/export reconstruction, capability preflight and the operation journal.
 
 ### SPSS
 
-SPSS owns SAV-only format gating, normalisation, and the bridge to the selected external engine. `SpssEngine` is an internal bridge, not a stable public extension API.
+`src/Spss` owns SAV/ZSAV extension gating, external-engine normalization, typed php-spss V3 bridging and the public `SpssAdapter` API.
 
 ## External engine
 
-The selected engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss), declared as the Composer dependency `tiamo/spss` 3.x. `PhpSpssEngine` reports an `external_engine_unavailable` diagnostic when its compatible reader or writer class is absent.
-
-The regular suite exercises the typed V3 engine with a SAV write/read round trip. It does not claim ZSAV or unimplemented catalogue metadata support.
+The selected engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss), Composer dependency `tiamo/spss` 3.x. It is external. If a compatible reader or writer is unavailable, the adapter produces an explicit `external_engine_unavailable` diagnostic rather than pretending conversion succeeded.
 
 ## Framework boundary
 
-This package remains framework-neutral and does not require Yii2 or Laravel. Applications supply PDO directly. A future framework-specific package may integrate a framework connection or CLI, but must call this package rather than reimplement the mapping.
+This package requires neither Yii2 nor Laravel. Applications supply a PDO connection. A framework integration may provide connection wiring, migrations or CLI commands, but must call this adapter rather than reimplement the mapping.

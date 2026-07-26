@@ -2,74 +2,93 @@
 
 `openstatspec/php` is the PHP reference adapter for the [OpenStatSpec specification](https://github.com/OpenStatSpec/specification).
 
-The current implemented profile imports an SPSS `.sav` or `.zsav` dataset into SQLite as one source-faithful wide data table plus a metadata catalogue. It reconstructs a typed php-spss V3 `Dataset` from that catalogue for SAV or ZSAV export.
+It imports an unencrypted SPSS `.sav` or `.zsav` dataset into a relational database as one source-faithful wide SQL table plus a metadata catalogue. It reconstructs that catalogue as a typed php-spss V3 `Dataset` and exports SAV or ZSAV.
 
 ## Status
 
-This is an early reference implementation, not a release-ready full-fidelity converter.
+This is an early reference implementation. Its round-trip contract is **semantic**, not byte-identical: supported cases, order, variables, values, dictionary metadata and technical metadata are preserved; compression layout, timestamps and other writer-specific bytes are not promised.
 
-- **Implemented and tested with SQLite:** unencrypted SAV import and export, one data table per dataset, ordered cases, source variable names and physical-column mapping, value labels, ordinary user-missing values, formats, string widths, file labels, document records, and selected display metadata in the catalogue.
-- **Explicitly rejected:** ZSAV, non-SAV inputs and outputs, and non-SQLite PDO connections. Rejections occur before the adapter changes the target database or writes a target file.
-- **Declared but not live-server tested:** MySQL/MariaDB and PostgreSQL capability profiles. They describe identifiers, SQL types and wide-table limits; they do not yet implement imports or exports.
-- **Current V3 integration boundary:** the adapter uses php-spss V3 typed `Dataset` and `VariableMetadata` objects end to end for its implemented SQLite/SAV slice. It preserves values, labels, all supported user-missing rule shapes, file labels, documents, formats and display metadata. ZSAV, file/variable attributes, variable sets, multiple-response sets, variable roles and non-SQLite conversion remain unimplemented and are not claimed.
+SQLite, PostgreSQL, MySQL 8.4 and MariaDB 11.4 are implemented PDO profiles. Each follows one strict-wide contract:
 
-An export diagnostic is information about a known loss boundary; the current PHP API still writes a SAV file when the transition bridge can do so. Consumers that require lossless output must inspect `SpssExportResult::$diagnostics` and reject a non-empty result themselves.
+1. One source dataset becomes one dedicated SQL data table.
+2. One SPSS case becomes one SQL row.
+3. One SPSS variable becomes one physical SQL column in source order.
+4. `__case_ordinal` is the technical primary key that preserves case order and is never exported as an SPSS variable.
+5. Separate catalogue tables preserve dictionary and operation metadata.
+
+The catalogue retains source and physical variable names, storage kind and widths, labels, print/write formats, measurement/display metadata, typed value labels, user-missing rules, documents, technical file metadata, attributes, variable sets, multiple-response sets and roles. Numeric system-missing values are SQL `NULL`; user-missing values remain ordinary stored values and are described by metadata. Strings are non-null and an empty string remains a value.
+
+Only unencrypted SAV and ZSAV are supported. Encrypted files, Portable (`.por`) files, EAV/cell tables, reshaping, automatic harmonisation, inferred respondent IDs and byte-identical reproduction are out of scope.
 
 ## Requirements
 
 - PHP 8.4.1 or later
-- PHP PDO; the current implemented profile also needs the SQLite PDO driver
-- `tiamo/spss` 3.x, installed automatically by Composer from the maintained php-spss V3 repository. Its engine requirements are `ext-bcmath`, `ext-mbstring`, and `ext-zlib`.
+- `ext-pdo`
+- Selected PDO driver: `pdo_sqlite`, `pdo_pgsql`, or `pdo_mysql`
+- `tiamo/spss` 3.x, installed by Composer. The php-spss V3 engine needs `ext-bcmath`, `ext-mbstring` and `ext-zlib`.
 
-## Current API
+Composer resolves dependencies against PHP 8.4.1, the package minimum.
+
+## API
+
 ```php
 use OpenStatSpec\Spss\SpssAdapter;
 
-$adapter = new SpssAdapter($pdo); // SQLite PDO
-$adapter->import('/data/survey.sav', 'survey_2026');
-$result = $adapter->export('survey_2026', '/data/survey-export.sav');
+$pdo = new PDO('pgsql:host=localhost;dbname=statistics', $user, $password);
+$adapter = new SpssAdapter($pdo);
 
-if ($result->diagnostics !== []) {
-    // The file was written, but the result identifies known fidelity limits.
-}
+$import = $adapter->import('/data/survey.zsav', 'survey_2026');
+// SpssImportResult: operationId, datasetName, caseCount, diagnostics
+
+$export = $adapter->export('survey_2026', '/data/survey-export.sav');
+// SpssExportResult: operationId, datasetName, caseCount, diagnostics, allowLoss
 ```
 
-`import()` currently returns `void`; `export()` returns `SpssExportResult` with the dataset name, target path, case count and fidelity diagnostics.
+### Fidelity policy
+
+Export is fail-closed. If an exporter reports a known fidelity diagnostic, it does **not** write a file until the caller explicitly accepts its code:
+
+```php
+$export = $adapter->export(
+    'survey_2026',
+    '/data/survey-export.sav',
+    allowLoss: ['example_diagnostic_code'],
+);
+```
+
+Pass only loss codes consciously accepted for that conversion. `operation_catalog` records successful and failed imports/exports; `fidelity_event_catalog` records emitted diagnostics. A failed preflight is therefore auditable even when it created no dataset.
 
 ## Architecture
 
-- `src/Core` — specification identities, validation and explicit diagnostics.
-- `src/Sql` — PDO-backed profile boundary; SQLite is implemented, while MySQL/MariaDB and PostgreSQL are capability declarations only.
-- `src/Spss` — SAV-only import/export adapter boundary and the internal external-engine bridge.
+- `src/Core` - diagnostics and fail-closed fidelity policy.
+- `src/Sql` - PDO profiles, strict-wide DDL, import/export and catalogues.
+- `src/Spss` - SAV/ZSAV gating, typed V3 engine bridge and public adapter API.
 
-The package implements the specification; it does not define it. See [docs/architecture.md](docs/architecture.md) for the strict relational contract.
+See [docs/architecture.md](docs/architecture.md) for the complete relational contract.
 
-## Development
+## Testing and CI
+
+Run the local gate before committing:
 
 ```bash
 composer install
 composer check
 ```
 
-`composer check` is the required local verification gate before every commit or push. It validates Composer configuration, checks PHP syntax, checks coding style, runs PHPStan static analysis, and runs the test suite. To apply safe code-style fixes locally, run `composer fix` and then run `composer check` again.
+`composer check` validates Composer configuration, lints PHP, checks style, runs PHPStan and runs PHPUnit. Use `composer fix` for safe style fixes, then rerun `composer check`.
 
-The regular test suite uses SQLite in memory; no database service or Docker setup is required. php-spss V3 is installed through Composer, and the suite covers a typed engine SAV write/read round trip plus the SQLite catalogue round trip.
+GitHub Actions runs the regular suite on PHP 8.4 and 8.5. It also runs real SAV and ZSAV integration round trips against PostgreSQL 17, MySQL 8.4 and MariaDB 11.4. Those profile checks use their PDO drivers and php-spss V3 read/write paths, not only DDL snapshots.
 
 ## Contributing
 
-This is the PHP implementation of OpenStatSpec; the normative model lives in the [specification repository](https://github.com/OpenStatSpec/specification).
+The normative model lives in the [OpenStatSpec specification repository](https://github.com/OpenStatSpec/specification). Contributions are welcome for strict-scope adapters, database profiles, SAV/ZSAV fixtures, conformance tests and documentation.
 
-Contributions are welcome for strict-scope adapters, SQL dialect profiles, SAV/ZSAV fixtures, conformance tests, and documentation. New work must preserve the source-faithful wide-table contract and must report unsupported conversions explicitly.
+New work must preserve the source-faithful wide-table contract, retain supported SPSS semantics in catalogue metadata and emit explicit diagnostics for unsupported conversion or capability limits. Include focused tests and run `composer check` before opening a pull request.
 
 ## Framework use
 
-The package is framework-neutral and has no Yii2 or Laravel dependency. A consuming application may pass its own PDO connection to `SpssAdapter`. SQLite is the only current end-to-end profile; using a Yii2, Laravel, MySQL/MariaDB or PostgreSQL application connection is not yet supported for conversion.
+The package is framework-neutral and has no Yii2 or Laravel dependency. Applications supply their own PDO connection; a framework integration may wrap that connection but must not replace the OpenStatSpec mapping.
 
 ## SPSS engine
 
-The selected engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss), consumed as the official Composer dependency `tiamo/spss` version 3.x through its V3 source repository. It is not maintained by OpenStatSpec.
-
-`PhpSpssEngine` is a typed V3 `Dataset` boundary. The adapter deliberately continues to reject ZSAV, and it does not yet map attributes, variable sets, multiple-response sets or roles into the OpenStatSpec catalogue.
-
-## CI feedback loop
-Treat a failing CI run as a development task: diagnose the cause, make the focused fix, run `composer check` locally, then commit and push the correction. Do not merely report a failure.
+The selected engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss), consumed as Composer dependency `tiamo/spss` 3.x. It is an external dependency, not an OpenStatSpec-maintained codebase.
