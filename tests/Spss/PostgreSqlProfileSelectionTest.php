@@ -106,11 +106,20 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $commentMissing = $this->createMock(PDOStatement::class);
         $scoreDisplay = $this->createMock(PDOStatement::class);
         $commentDisplay = $this->createMock(PDOStatement::class);
+        $roleOne = $this->emptyCatalogueStatement(0);
+        $attributesOne = $this->emptyCatalogueStatement();
+        $roleTwo = $this->emptyCatalogueStatement(0);
+        $attributesTwo = $this->emptyCatalogueStatement();
+        $fileAttributes = $this->emptyCatalogueStatement();
+        $variableSets = $this->emptyCatalogueStatement();
+        $variableSetMembers = $this->emptyCatalogueStatement();
+        $multipleResponseSets = $this->emptyCatalogueStatement();
+        $multipleResponseSetMembers = $this->emptyCatalogueStatement();
         $engine = $this->createMock(SpssEngine::class);
 
-        $pdo->expects(self::exactly(12))
+        $pdo->expects(self::exactly(21))
             ->method('prepare')
-            ->willReturnOnConsecutiveCalls($dataset, $variables, $cases, $scoreLabels, $scoreMissing, $scoreDisplay, $commentLabels, $commentMissing, $commentDisplay, $fileLabel, $documents, $technical);
+            ->willReturnOnConsecutiveCalls($dataset, $variables, $cases, $scoreLabels, $scoreMissing, $scoreDisplay, $roleOne, $attributesOne, $commentLabels, $commentMissing, $commentDisplay, $roleTwo, $attributesTwo, $fileLabel, $documents, $fileAttributes, $variableSets, $variableSetMembers, $multipleResponseSets, $multipleResponseSetMembers, $technical);
         $dataset->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
         $dataset->expects(self::once())->method('fetch')->willReturn(['table_name' => 'dataset_fixture']);
         $variables->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
@@ -173,10 +182,7 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $result = (new SpssAdapter($pdo, $engine))->export('fixture', 'fixture.zsav');
 
         self::assertSame(2, $result->caseCount);
-        self::assertSame('postgresql_dictionary_metadata_deferred', $result->diagnostics[0]->code);
-        self::assertStringContainsString('display settings', $result->diagnostics[0]->message);
-        self::assertStringContainsString('file label, ordered documents, and file technical metadata', $result->diagnostics[0]->message);
-        self::assertStringNotContainsString('File-level metadata', $result->diagnostics[0]->message);
+        self::assertSame([], $result->diagnostics);
     }
 
     public function testPostgreSqlExportRestoresOrderedTypedLabelsAndAllUserMissingRuleForms(): void
@@ -196,9 +202,18 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $textRule = $this->createMock(PDOStatement::class);
         $textValues = $this->createMock(PDOStatement::class);
         $textDisplay = $this->createMock(PDOStatement::class);
+        $roleOne = $this->emptyCatalogueStatement(0);
+        $attributesOne = $this->emptyCatalogueStatement();
+        $roleTwo = $this->emptyCatalogueStatement(0);
+        $attributesTwo = $this->emptyCatalogueStatement();
+        $fileAttributes = $this->emptyCatalogueStatement();
+        $variableSets = $this->emptyCatalogueStatement();
+        $variableSetMembers = $this->emptyCatalogueStatement();
+        $multipleResponseSets = $this->emptyCatalogueStatement();
+        $multipleResponseSetMembers = $this->emptyCatalogueStatement();
         $engine = $this->createMock(SpssEngine::class);
 
-        $pdo->expects(self::exactly(14))
+        $pdo->expects(self::exactly(23))
             ->method('prepare')
             ->willReturnOnConsecutiveCalls(
                 $dataset,
@@ -208,12 +223,21 @@ final class PostgreSqlProfileSelectionTest extends TestCase
                 $numericRule,
                 $numericValues,
                 $numericDisplay,
+                $roleOne,
+                $attributesOne,
                 $textLabels,
                 $textRule,
                 $textValues,
                 $textDisplay,
+                $roleTwo,
+                $attributesTwo,
                 $fileLabel,
                 $documents,
+                $fileAttributes,
+                $variableSets,
+                $variableSetMembers,
+                $multipleResponseSets,
+                $multipleResponseSetMembers,
                 $technical,
             );
         $dataset->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
@@ -292,9 +316,17 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $result = (new SpssAdapter($pdo, $engine))->export('fixture', 'fixture.sav');
 
         self::assertSame(1, $result->caseCount);
-        self::assertSame('postgresql_dictionary_metadata_deferred', $result->diagnostics[0]->code);
-        self::assertStringContainsString('value labels, user-missing rules, display settings', $result->diagnostics[0]->message);
-        self::assertStringContainsString('display settings', $result->diagnostics[0]->message);
+        self::assertSame([], $result->diagnostics);
+    }
+
+    private function emptyCatalogueStatement(int|bool $column = false): PDOStatement
+    {
+        $statement = $this->createStub(PDOStatement::class);
+        $statement->method('execute')->willReturn(true);
+        $statement->method('fetch')->willReturn(false);
+        $statement->method('fetchColumn')->willReturn($column);
+
+        return $statement;
     }
 
     /** @return PDO&MockObject */

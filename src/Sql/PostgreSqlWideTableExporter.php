@@ -11,15 +11,23 @@ use PDO;
 use PDOStatement;
 use SPSS\Sav\Alignment;
 use SPSS\Sav\Dataset;
+use SPSS\Sav\FileAttribute;
 use SPSS\Sav\FileMetadata;
 use SPSS\Sav\FileTechnicalMetadata;
 use SPSS\Sav\Measure;
 use SPSS\Sav\MissingValues;
+use SPSS\Sav\MultipleResponseCategoryLabels;
+use SPSS\Sav\MultipleResponseLabelSource;
+use SPSS\Sav\MultipleResponseSet;
+use SPSS\Sav\MultipleResponseSetType;
 use SPSS\Sav\ValueLabel;
 use SPSS\Sav\ValueLabelSet;
 use SPSS\Sav\VariableDictionary;
 use SPSS\Sav\VariableFormat;
+use SPSS\Sav\VariableAttribute;
 use SPSS\Sav\VariableMetadata;
+use SPSS\Sav\VariableRole;
+use SPSS\Sav\VariableSet;
 use SPSS\Sav\VariableType;
 
 /** Reconstructs the strict-wide portion of a V3 Dataset from PostgreSQL. */
@@ -65,6 +73,8 @@ final readonly class PostgreSqlWideTableExporter
                 measure: $display['measure'],
                 alignment: $display['alignment'],
                 columns: $display['columns'],
+                role: $this->role($datasetName, $variable['ordinal']),
+                attributes: $this->variableAttributes($datasetName, $variable['ordinal'], $variable['source_name']),
                 dictionaryIndex: $variable['ordinal'],
             );
         }
@@ -72,6 +82,9 @@ final readonly class PostgreSqlWideTableExporter
         $metadata = new FileMetadata(
             label: $this->fileLabel($datasetName),
             documents: $this->documents($datasetName),
+            attributes: $this->fileAttributes($datasetName),
+            variableSets: $this->variableSets($datasetName),
+            multipleResponseSets: $this->multipleResponseSets($datasetName),
         );
 
         return [
@@ -82,10 +95,7 @@ final readonly class PostgreSqlWideTableExporter
                 $this->technicalMetadata($datasetName, $targetFormat),
             ),
             'caseCount' => count($rows),
-            'diagnostics' => [new FidelityDiagnostic(
-                'postgresql_dictionary_metadata_deferred',
-                'PostgreSQL export preserves strict-wide case values, core variable definitions, value labels, user-missing rules, display settings, file label, ordered documents, and file technical metadata. File attributes, variable attributes, variable sets, and multiple-response sets require later catalogue-export work.',
-            )],
+            'diagnostics' => [],
         ];
     }
 
@@ -258,6 +268,146 @@ final readonly class PostgreSqlWideTableExporter
         }
 
         throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS missing-value ranges require numeric endpoints.');
+    }
+
+    private function role(string $datasetName, int $ordinal): VariableRole
+    {
+        $statement = $this->statement('SELECT role FROM variable_roles WHERE dataset_name = ? AND variable_ordinal = ?');
+        $statement->execute([$datasetName, $ordinal]);
+        $role = $this->integer($statement->fetchColumn());
+        if ($role === null || ($typed = VariableRole::tryFrom($role)) === null) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL variable role catalogue is malformed.');
+        }
+
+        return $typed;
+    }
+
+    /** @return list<VariableAttribute> */
+    private function variableAttributes(string $datasetName, int $ordinal, string $variableName): array
+    {
+        $statement = $this->statement('SELECT attribute_name, ordinal, value FROM variable_attributes WHERE dataset_name = ? AND variable_ordinal = ? ORDER BY attribute_name, ordinal');
+        $statement->execute([$datasetName, $ordinal]);
+
+        $attributes = [];
+        foreach ($this->attributeValues($statement) as $name => $values) {
+            $attributes[] = new VariableAttribute($variableName, $name, $values);
+        }
+
+        return $attributes;
+    }
+
+    /** @return list<FileAttribute> */
+    private function fileAttributes(string $datasetName): array
+    {
+        $statement = $this->statement('SELECT attribute_name, ordinal, value FROM file_attributes WHERE dataset_name = ? ORDER BY attribute_name, ordinal');
+        $statement->execute([$datasetName]);
+
+        $attributes = [];
+        foreach ($this->attributeValues($statement) as $name => $values) {
+            $attributes[] = new FileAttribute($name, $values);
+        }
+
+        return $attributes;
+    }
+
+    /** @return array<string, list<string>> */
+    private function attributeValues(PDOStatement $statement): array
+    {
+        /** @var array<string, list<string>> $grouped */
+        $grouped = [];
+        while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $name = $row['attribute_name'] ?? null;
+            $value = $row['value'] ?? null;
+            if (!is_string($name) || $name === '' || !is_string($value)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL attribute catalogue is malformed.');
+            }
+            $grouped[$name][] = $value;
+        }
+
+        return $grouped;
+    }
+
+    /** @return list<VariableSet> */
+    private function variableSets(string $datasetName): array
+    {
+        $sets = $this->statement('SELECT set_ordinal, name FROM variable_sets WHERE dataset_name = ? ORDER BY set_ordinal');
+        $sets->execute([$datasetName]);
+        $members = $this->statement('SELECT member.member_ordinal, variable.source_name FROM variable_set_members member LEFT JOIN variables variable ON variable.dataset_name = member.dataset_name AND variable.ordinal = member.variable_ordinal WHERE member.dataset_name = ? AND member.set_ordinal = ? ORDER BY member.member_ordinal');
+        $result = [];
+        while (($set = $sets->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $ordinal = $this->integer($set['set_ordinal'] ?? null);
+            $name = $set['name'] ?? null;
+            if ($ordinal === null || !is_string($name) || $name === '') {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL variable-set catalogue is malformed.');
+            }
+            $members->execute([$datasetName, $ordinal]);
+            $names = [];
+            while (($member = $members->fetch(PDO::FETCH_ASSOC)) !== false) {
+                $sourceName = $member['source_name'] ?? null;
+                if (!is_string($sourceName) || $sourceName === '') {
+                    throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A PostgreSQL variable set references an unknown variable.');
+                }
+                $names[] = $sourceName;
+            }
+            $result[] = new VariableSet($name, $names);
+        }
+
+        return $result;
+    }
+
+    /** @return list<MultipleResponseSet> */
+    private function multipleResponseSets(string $datasetName): array
+    {
+        $sets = $this->statement('SELECT set_ordinal, name, set_type, label, counted_value_kind, counted_numeric_value, counted_text_value, category_labels, label_source FROM multiple_response_sets WHERE dataset_name = ? ORDER BY set_ordinal');
+        $sets->execute([$datasetName]);
+        $members = $this->statement('SELECT member.member_ordinal, variable.source_name FROM multiple_response_set_members member LEFT JOIN variables variable ON variable.dataset_name = member.dataset_name AND variable.ordinal = member.variable_ordinal WHERE member.dataset_name = ? AND member.set_ordinal = ? ORDER BY member.member_ordinal');
+        $result = [];
+        while (($set = $sets->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $ordinal = $this->integer($set['set_ordinal'] ?? null);
+            $name = $set['name'] ?? null;
+            $type = is_string($set['set_type'] ?? null) ? MultipleResponseSetType::tryFrom($set['set_type']) : null;
+            $categoryLabels = is_string($set['category_labels'] ?? null) ? MultipleResponseCategoryLabels::tryFrom($set['category_labels']) : null;
+            $labelSource = is_string($set['label_source'] ?? null) ? MultipleResponseLabelSource::tryFrom($set['label_source']) : null;
+            $label = $set['label'] ?? null;
+            if ($ordinal === null || !is_string($name) || $name === '' || $type === null || $categoryLabels === null || $labelSource === null || ($label !== null && !is_string($label))) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL multiple-response-set catalogue is malformed.');
+            }
+            $countedValue = $this->countedValue($set);
+            $members->execute([$datasetName, $ordinal]);
+            $names = [];
+            while (($member = $members->fetch(PDO::FETCH_ASSOC)) !== false) {
+                $sourceName = $member['source_name'] ?? null;
+                if (!is_string($sourceName) || $sourceName === '') {
+                    throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A PostgreSQL multiple-response set references an unknown variable.');
+                }
+                $names[] = $sourceName;
+            }
+            try {
+                $result[] = new MultipleResponseSet($name, $type, $names, $label, $countedValue, $categoryLabels, $labelSource);
+            } catch (\InvalidArgumentException $exception) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL multiple-response-set catalogue is inconsistent: ' . $exception->getMessage());
+            }
+        }
+
+        return $result;
+    }
+
+    /** @param array<string, mixed> $set */
+    private function countedValue(array $set): int|string|null
+    {
+        $kind = $set['counted_value_kind'] ?? null;
+        if ($kind === null) {
+            return null;
+        }
+        if ($kind === 'text' && is_string($set['counted_text_value'] ?? null)) {
+            return $set['counted_text_value'];
+        }
+        $value = $set['counted_numeric_value'] ?? null;
+        if ($kind === 'numeric' && (is_int($value) || is_float($value) || (is_string($value) && is_numeric($value))) && floor((float) $value) === (float) $value) {
+            return (int) $value;
+        }
+
+        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A PostgreSQL multiple-response set has an invalid counted value.');
     }
 
     private function fileLabel(string $datasetName): ?string
