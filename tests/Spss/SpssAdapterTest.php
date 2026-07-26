@@ -119,6 +119,33 @@ final class SpssAdapterTest extends TestCase
         self::assertSame(Measure::SCALE, $first->measure);
         self::assertSame(Alignment::RIGHT, $first->alignment);
         self::assertSame(10, $first->columns);
+        self::assertSame(VariableRole::TARGET, $first->role);
+        self::assertEquals(
+            [new VariableAttribute('Respondent ID', 'Origin', ['customer', 'identifier'])],
+            $first->attributes(),
+        );
+        self::assertSame(VariableRole::INPUT, $written->variables()[1]->role);
+        self::assertEquals(
+            [new FileAttribute('Data source', ['CRM', 'verified'])],
+            $written->metadata->attributes(),
+        );
+        self::assertEquals(
+            [new VariableSet('Core', ['Respondent ID', 'Favourite colour'])],
+            $written->metadata->variableSets(),
+        );
+        $multipleResponseSets = $written->metadata->multipleResponseSets();
+        self::assertCount(2, $multipleResponseSets);
+        self::assertSame('$Colour', $multipleResponseSets[0]->name);
+        self::assertSame(MultipleResponseSetType::DICHOTOMY, $multipleResponseSets[0]->type);
+        self::assertSame(['Favourite colour'], $multipleResponseSets[0]->variableNames());
+        self::assertSame('Selected colours', $multipleResponseSets[0]->label);
+        self::assertSame('yes', $multipleResponseSets[0]->countedValue);
+        self::assertSame(MultipleResponseCategoryLabels::COUNTED_VALUES, $multipleResponseSets[0]->categoryLabels);
+        self::assertSame(MultipleResponseLabelSource::VARIABLE_LABEL, $multipleResponseSets[0]->labelSource);
+        self::assertSame('$Profile', $multipleResponseSets[1]->name);
+        self::assertSame(MultipleResponseSetType::CATEGORY, $multipleResponseSets[1]->type);
+        self::assertSame(['Respondent ID', 'Favourite colour'], $multipleResponseSets[1]->variableNames());
+        self::assertNull($multipleResponseSets[1]->countedValue);
     }
 
     public function testPhpSpssEngineWritesAndReadsTypedDataset(): void
