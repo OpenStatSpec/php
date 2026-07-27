@@ -97,6 +97,7 @@ final readonly class MySqlWideTableExporter
                 $rows,
                 new FileMetadata(
                     label: $this->fileLabel($datasetName),
+                    weightVariableName: $this->weightVariableName($datasetName),
                     documents: $this->documents($datasetName),
                     attributes: $this->fileAttributes($datasetName),
                     variableSets: $this->variableSets($datasetName),
@@ -441,6 +442,25 @@ final readonly class MySqlWideTableExporter
 
         return is_string($label) ? $label : null;
     }
+    private function weightVariableName(string $datasetName): ?string
+    {
+        $statement = $this->statement(
+            'SELECT variable.source_name FROM dataset_weight_variables weight '
+            . 'INNER JOIN variables variable ON variable.dataset_name = weight.dataset_name '
+            . 'AND variable.ordinal = weight.variable_ordinal WHERE weight.dataset_name = ?',
+        );
+        $statement->execute([$datasetName]);
+        $name = $statement->fetchColumn();
+        if ($name === false) {
+            return null;
+        }
+        if (!is_string($name) || $name === '') {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB weight-variable catalogue references an unknown source variable.');
+        }
+
+        return $name;
+    }
+
 
     /** @return list<string> */
     private function documents(string $datasetName): array

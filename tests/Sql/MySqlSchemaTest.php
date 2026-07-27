@@ -17,7 +17,8 @@ final class MySqlSchemaTest extends TestCase
         $schema = new MySqlSchema($this->createMock(PDO::class));
         $catalog = implode("\n", $schema->catalogStatements());
 
-        self::assertCount(16, $schema->catalogStatements());
+        self::assertCount(17, $schema->catalogStatements());
+        self::assertStringContainsString('dataset_weight_variables', $catalog);
         self::assertStringContainsString('dataset_name VARCHAR(94) NOT NULL', $catalog);
         self::assertStringContainsString('meta_key VARCHAR(94) NOT NULL', $catalog);
         self::assertStringContainsString('attribute_name VARCHAR(94) NOT NULL', $catalog);
@@ -66,7 +67,7 @@ final class MySqlSchemaTest extends TestCase
     {
         $pdo = $this->createMock(PDO::class);
         $schema = new MySqlSchema($pdo);
-        $pdo->expects(self::exactly(17))->method('exec')->willReturn(0);
+        $pdo->expects(self::exactly(18))->method('exec')->willReturn(0);
         $schema->createCatalog();
         $schema->createWideTable('fixture', [['name' => 'score', 'type' => 'numeric']]);
     }

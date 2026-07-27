@@ -14,7 +14,8 @@ final class PostgreSqlSchemaTest extends TestCase
     {
         $schema = new PostgreSqlSchema($this->createMock(PDO::class));
         $catalog = implode("\n", $schema->catalogStatements());
-        self::assertCount(16, $schema->catalogStatements());
+        self::assertCount(17, $schema->catalogStatements());
+        self::assertStringContainsString('dataset_weight_variables', $catalog);
         self::assertStringContainsString('ordinal BIGINT NOT NULL', $catalog);
         self::assertStringContainsString('numeric_value DOUBLE PRECISION NULL', $catalog);
         self::assertStringContainsString('PRIMARY KEY (dataset_name, meta_key)', $catalog);
@@ -40,7 +41,7 @@ final class PostgreSqlSchemaTest extends TestCase
     {
         $pdo = $this->createMock(PDO::class);
         $schema = new PostgreSqlSchema($pdo);
-        $pdo->expects(self::exactly(17))->method('exec')->willReturn(0);
+        $pdo->expects(self::exactly(18))->method('exec')->willReturn(0);
         $schema->createCatalog();
         $schema->createWideTable('fixture', [['name' => 'score', 'type' => 'numeric']]);
     }

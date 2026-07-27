@@ -51,6 +51,7 @@ final readonly class MySqlWideTableImporter
             $this->storeDatasetMetadata($datasetName, $source);
             $this->storeTechnicalMetadata($datasetName, $source);
             $this->storeCatalogue($datasetName, $variables, $definition);
+            $this->storeWeightVariable($datasetName, $source['weightVariableName'] ?? null, $definition);
             $this->storeDisplayMetadata($datasetName, $source['displayParameters'] ?? []);
             $this->storeDictionaryMetadata($datasetName, $variables, $source['valueLabels'] ?? []);
             if (is_array($variables[0] ?? null) && array_key_exists('role', $variables[0])) {
@@ -109,6 +110,31 @@ final readonly class MySqlWideTableImporter
             ]);
         }
     }
+    private function storeWeightVariable(
+        string $datasetName,
+        mixed $weightVariableName,
+        MySqlWideTableDefinition $definition,
+    ): void {
+        if ($weightVariableName === null) {
+            return;
+        }
+        if (!is_string($weightVariableName) || $weightVariableName === '') {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The SPSS weight-variable reference must be a non-empty source variable name.');
+        }
+        foreach ($definition->columns as $index => $column) {
+            if ($column['sourceName'] === $weightVariableName) {
+                $this->requiredStatement(
+                    'INSERT INTO dataset_weight_variables (dataset_name, variable_ordinal) VALUES (?, ?)',
+                    'weight-variable catalogue',
+                )->execute([$datasetName, $index + 1]);
+
+                return;
+            }
+        }
+
+        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The SPSS weight-variable reference must name a source variable.');
+    }
+
 
     /**
      * @param list<mixed> $rows
@@ -343,6 +369,7 @@ final readonly class MySqlWideTableImporter
                 'documents',
                 'file_technical_metadata',
                 'dataset_metadata',
+                'dataset_weight_variables',
                 'variables',
                 'datasets',
             ] as $table) {

@@ -77,6 +77,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
                 self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM file_attributes WHERE dataset_name = ?', [$datasetName]));
                 self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable_sets WHERE dataset_name = ?', [$datasetName]));
                 self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM multiple_response_sets WHERE dataset_name = ?', [$datasetName]));
+                self::assertSame(1, (int) $this->scalar($pdo, 'SELECT variable_ordinal FROM dataset_weight_variables WHERE dataset_name = ?', [$datasetName]));
 
                 $columnRows = $this->rows($pdo, 'SELECT source_name, column_name FROM variables WHERE dataset_name = ? ORDER BY ordinal', [$datasetName]);
                 $columns = [];
@@ -117,6 +118,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
                 self::assertSame($format, $roundTrip->technicalMetadata->sourceFormat);
                 self::assertSame($compression, $roundTrip->technicalMetadata->compression);
                 self::assertSame('MySQL/MariaDB integration fixture', $roundTrip->metadata->label);
+                self::assertSame('Score', $roundTrip->metadata->weightVariableName);
                 self::assertSame(['First document line', 'Second document line'], $roundTrip->metadata->documents());
                 self::assertCount(3, $roundTrip->variables());
                 self::assertSame('Score', $roundTrip->variables()[0]->name);
@@ -217,6 +219,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
             [[7.5, 'present', $longText], [null, 'MISSING', '']],
             new FileMetadata(
                 'MySQL/MariaDB integration fixture',
+                weightVariableName: 'Score',
                 documents: ['First document line', 'Second document line'],
                 attributes: [new FileAttribute('Source', ['MySQL/MariaDB integration'])],
                 variableSets: [new VariableSet('Core', ['Score', 'Reason'])],

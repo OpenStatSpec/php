@@ -114,6 +114,7 @@ final class PostgreSqlWideTableExporterTest extends TestCase
         $pdo = $this->createMock(PDO::class);
         $statements = [
             'datasets' => $this->statement([['table_name' => 'dataset_fixture']]),
+            'weight' => $this->statement([], [], false),
             'variables' => $this->statement([], $catalog['variables']),
             'cases' => $this->statement(),
             'labels' => $this->statement(),
@@ -133,6 +134,7 @@ final class PostgreSqlWideTableExporterTest extends TestCase
         $pdo->method('prepare')->willReturnCallback(static function (string $sql) use ($statements): PDOStatement {
             return match (true) {
                 str_contains($sql, 'FROM datasets') => $statements['datasets'],
+                str_contains($sql, 'FROM dataset_weight_variables') => $statements['weight'],
                 str_contains($sql, 'SELECT ordinal, source_name') => $statements['variables'],
                 str_starts_with($sql, 'SELECT "') => $statements['cases'],
                 str_contains($sql, 'FROM value_labels') => $statements['labels'],

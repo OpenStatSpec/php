@@ -53,7 +53,7 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
-        $pdo->expects(self::exactly(19))->method('exec')->willReturn(0);
+        $pdo->expects(self::exactly(20))->method('exec')->willReturn(0);
         $pdo->expects(self::exactly(14))
             ->method('prepare')
             ->willReturnOnConsecutiveCalls(
@@ -131,12 +131,13 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $variableSetMembers = $this->emptyCatalogueStatement();
         $multipleResponseSets = $this->emptyCatalogueStatement();
         $multipleResponseSetMembers = $this->emptyCatalogueStatement();
+        $weight = $this->emptyCatalogueStatement(false);
         $journal = $this->emptyCatalogueStatement();
         $engine = $this->createMock(SpssEngine::class);
 
-        $pdo->expects(self::exactly(23))
+        $pdo->expects(self::exactly(24))
             ->method('prepare')
-            ->willReturnOnConsecutiveCalls($journal, $dataset, $variables, $cases, $scoreLabels, $scoreMissing, $scoreDisplay, $roleOne, $attributesOne, $commentLabels, $commentMissing, $commentDisplay, $roleTwo, $attributesTwo, $fileLabel, $documents, $fileAttributes, $variableSets, $variableSetMembers, $multipleResponseSets, $multipleResponseSetMembers, $technical, $journal);
+            ->willReturnOnConsecutiveCalls($journal, $dataset, $variables, $cases, $scoreLabels, $scoreMissing, $scoreDisplay, $roleOne, $attributesOne, $commentLabels, $commentMissing, $commentDisplay, $roleTwo, $attributesTwo, $fileLabel, $weight, $documents, $fileAttributes, $variableSets, $variableSetMembers, $multipleResponseSets, $multipleResponseSetMembers, $technical, $journal);
         $dataset->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
         $dataset->expects(self::once())->method('fetch')->willReturn(['table_name' => 'dataset_fixture']);
         $variables->expects(self::once())->method('execute')->with(['fixture'])->willReturn(true);
@@ -228,10 +229,11 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $variableSetMembers = $this->emptyCatalogueStatement();
         $multipleResponseSets = $this->emptyCatalogueStatement();
         $multipleResponseSetMembers = $this->emptyCatalogueStatement();
+        $weight = $this->emptyCatalogueStatement(false);
         $journal = $this->emptyCatalogueStatement();
         $engine = $this->createMock(SpssEngine::class);
 
-        $pdo->expects(self::exactly(25))
+        $pdo->expects(self::exactly(26))
             ->method('prepare')
             ->willReturnOnConsecutiveCalls(
                 $journal,
@@ -251,6 +253,7 @@ final class PostgreSqlProfileSelectionTest extends TestCase
                 $roleTwo,
                 $attributesTwo,
                 $fileLabel,
+                $weight,
                 $documents,
                 $fileAttributes,
                 $variableSets,

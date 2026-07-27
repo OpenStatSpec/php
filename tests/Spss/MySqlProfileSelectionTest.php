@@ -48,7 +48,7 @@ final class MySqlProfileSelectionTest extends TestCase
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
-        $pdo->expects(self::exactly(19))->method('exec')->willReturn(0);
+        $pdo->expects(self::exactly(20))->method('exec')->willReturn(0);
         $pdo->expects(self::exactly(14))->method('prepare')->willReturnOnConsecutiveCalls(
             $journalStart,
             $technical,
@@ -103,14 +103,16 @@ final class MySqlProfileSelectionTest extends TestCase
         $multipleResponseSets = $this->statement();
         $multipleResponseSetMembers = $this->statement();
         $fileLabel = $this->statement([], [], false);
+        $weight = $this->statement([], [], false);
         $documents = $this->statement();
         $technical = $this->statement();
         $journal = $this->statement();
-        $pdo->method('prepare')->willReturnCallback(static function (string $sql) use ($datasets, $variables, $cases, $labels, $missing, $display, $roles, $variableAttributes, $fileAttributes, $variableSets, $variableSetMembers, $multipleResponseSets, $multipleResponseSetMembers, $fileLabel, $documents, $technical, $journal): PDOStatement {
+        $pdo->method('prepare')->willReturnCallback(static function (string $sql) use ($datasets, $variables, $cases, $labels, $missing, $display, $roles, $variableAttributes, $fileAttributes, $variableSets, $variableSetMembers, $multipleResponseSets, $multipleResponseSetMembers, $fileLabel, $weight, $documents, $technical, $journal): PDOStatement {
             return match (true) {
                 str_contains($sql, 'operation_catalog') => $journal,
                 str_contains($sql, 'fidelity_event_catalog') => $journal,
                 str_contains($sql, 'FROM datasets') => $datasets,
+                str_contains($sql, 'FROM dataset_weight_variables') => $weight,
                 str_contains($sql, 'SELECT ordinal, source_name') => $variables,
                 str_starts_with($sql, 'SELECT `score`') => $cases,
                 str_contains($sql, 'FROM value_labels') => $labels,
