@@ -7,6 +7,7 @@ namespace OpenStatSpec\Sql;
 use OpenStatSpec\Core\FidelityDiagnostic;
 use OpenStatSpec\Core\UnsupportedOperation;
 use PDO;
+use PDOException;
 use Throwable;
 
 /**
@@ -19,16 +20,18 @@ use Throwable;
 final readonly class OperationJournal
 {
     public function __construct(private PDO $pdo) {}
-
-    /** @param list<string> $allowLoss */
-    public function start(string $direction, ?string $datasetName, ?string $targetPath, array $allowLoss = []): string
+    /**
+     * @param list<string> $allowLoss
+     * @param array<string, string|null> $engineDetails
+     */
+    public function start(string $direction, ?string $datasetName, ?string $targetPath, array $allowLoss = [], array $engineDetails = []): string
     {
         $this->createTables();
         $operationId = $this->operationId();
         $statement = $this->pdo->prepare(
-            'INSERT INTO operation_catalog (operation_id, direction, status, dataset_name, target_path, allow_loss, failure_code, failure_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO operation_catalog (operation_id, direction, status, dataset_name, target_path, allow_loss, engine_details, failure_code, failure_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         );
-        $statement->execute([$operationId, $direction, 'running', $datasetName, $targetPath, $this->json($allowLoss), null, null]);
+        $statement->execute([$operationId, $direction, 'running', $datasetName, $targetPath, $this->json($allowLoss), $this->json($engineDetails), null, null]);
 
         return $operationId;
     }
@@ -52,7 +55,12 @@ final readonly class OperationJournal
 
     private function createTables(): void
     {
-        $this->pdo->exec('CREATE TABLE IF NOT EXISTS operation_catalog (operation_id VARCHAR(36) NOT NULL PRIMARY KEY, direction VARCHAR(16) NOT NULL, status VARCHAR(16) NOT NULL, dataset_name TEXT NULL, target_path TEXT NULL, allow_loss TEXT NOT NULL, failure_code VARCHAR(96) NULL, failure_message TEXT NULL)');
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS operation_catalog (operation_id VARCHAR(36) NOT NULL PRIMARY KEY, direction VARCHAR(16) NOT NULL, status VARCHAR(16) NOT NULL, dataset_name TEXT NULL, target_path TEXT NULL, allow_loss TEXT NOT NULL, engine_details TEXT NOT NULL DEFAULT '{}', failure_code VARCHAR(96) NULL, failure_message TEXT NULL)");
+        try {
+            $this->pdo->query('SELECT engine_details FROM operation_catalog WHERE 1 = 0');
+        } catch (PDOException) {
+            $this->pdo->exec("ALTER TABLE operation_catalog ADD COLUMN engine_details TEXT NOT NULL DEFAULT '{}'");
+        }
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS fidelity_event_catalog (operation_id VARCHAR(36) NOT NULL, ordinal BIGINT NOT NULL, dataset_name TEXT NULL, severity VARCHAR(16) NOT NULL, code VARCHAR(96) NOT NULL, message TEXT NOT NULL, details TEXT NOT NULL, PRIMARY KEY (operation_id, ordinal))');
     }
 

@@ -41,6 +41,7 @@ final class MySqlProfileSelectionTest extends TestCase
         $journalStart = $this->createMock(PDOStatement::class);
         $journalSucceed = $this->createMock(PDOStatement::class);
         $engine = $this->createMock(SpssEngine::class);
+        $engine->method('identity')->willReturn(['package' => 'mock-spss-engine', 'version' => 'test']);
 
         self::assertInstanceOf(MySqlProfile::class, (new Connection($pdo))->profile);
 
@@ -66,7 +67,7 @@ final class MySqlProfileSelectionTest extends TestCase
             $journalSucceed,
         );
         $journalStart->expects(self::once())->method('execute')->with(self::callback(static function (array $values): bool {
-            return count($values) === 8 && $values[1] === 'import' && $values[2] === 'running' && $values[3] === null && $values[4] === 'fixture.sav';
+            return count($values) === 9 && $values[1] === 'import' && $values[2] === 'running' && $values[3] === null && $values[4] === 'fixture.sav' && $values[6] === '{"package":"mock-spss-engine","version":"test"}';
         }))->willReturn(true);
         $journalSucceed->expects(self::once())->method('execute')->with(self::callback(static function (array $values): bool {
             return $values[0] === 'succeeded' && $values[1] === 'fixture' && is_string($values[2]);

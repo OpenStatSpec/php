@@ -56,7 +56,7 @@ $export = $adapter->export(
 );
 ```
 
-Pass only loss codes consciously accepted for that conversion. `operation_catalog` records successful and failed imports/exports; `fidelity_event_catalog` records emitted diagnostics. A failed preflight is therefore auditable even when it created no dataset.
+Pass only loss codes consciously accepted for that conversion. `operation_catalog` records successful and failed imports/exports; `fidelity_event_catalog` records emitted diagnostics. A failed preflight is therefore auditable even when it created no dataset. Each operation also records the selected SPSS engine package and Composer version in engine_details.
 
 ## Architecture
 

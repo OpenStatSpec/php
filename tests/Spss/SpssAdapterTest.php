@@ -38,6 +38,7 @@ final class SpssAdapterTest extends TestCase
     {
         self::assertTrue((new PhpSpssEngine())->isAvailable());
         self::assertTrue(class_exists(Dataset::class));
+        self::assertSame(["package" => "tiamo/spss", "version" => "3.0.0"], (new PhpSpssEngine())->identity());
     }
 
     public function testTypedDatasetImportCreatesWideTableAndExportPreservesSupportedMetadata(): void
@@ -125,6 +126,7 @@ final class SpssAdapterTest extends TestCase
             ],
             self::rows($pdo, 'SELECT direction, status, dataset_name, target_path, allow_loss, failure_code FROM operation_catalog ORDER BY rowid'),
         );
+        self::assertSame(["{\"package\":\"fake-spss-engine\",\"version\":\"test\"}", "{\"package\":\"fake-spss-engine\",\"version\":\"test\"}"], array_column(self::rows($pdo, 'SELECT engine_details FROM operation_catalog ORDER BY rowid'), 'engine_details'));
         self::assertSame('Customer survey source', $written->metadata->label);
         self::assertSame('Respondent ID', $written->metadata->weightVariableName);
         self::assertSame(['First document line', 'Second document line'], $written->metadata->documents());

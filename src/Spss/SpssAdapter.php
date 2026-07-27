@@ -37,7 +37,7 @@ final readonly class SpssAdapter
     public function import(string $sourcePath, string $datasetName): SpssImportResult
     {
         $journal = new OperationJournal($this->connection->pdo);
-        $operationId = $journal->start('import', null, $sourcePath);
+        $operationId = $journal->start("import", null, $sourcePath, engineDetails: $this->engine->identity());
         try {
             if (!in_array($this->spssFormat($sourcePath), ['sav', 'zsav'], true)) {
                 throw new UnsupportedOperation(
@@ -65,7 +65,7 @@ final readonly class SpssAdapter
     public function export(string $datasetName, string $targetPath, array $allowLoss = []): SpssExportResult
     {
         $journal = new OperationJournal($this->connection->pdo);
-        $operationId = $journal->start('export', $datasetName, $targetPath, $allowLoss);
+        $operationId = $journal->start("export", $datasetName, $targetPath, $allowLoss, $this->engine->identity());
         $diagnostics = [];
         try {
             $targetFormat = $this->spssFormat($targetPath);

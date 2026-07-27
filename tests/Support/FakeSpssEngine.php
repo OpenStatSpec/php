@@ -14,6 +14,11 @@ final class FakeSpssEngine implements SpssEngine
 
     public function __construct(private Dataset $dataset) {}
 
+    public function identity(): array
+    {
+        return ["package" => "fake-spss-engine", "version" => "test"];
+    }
+
     public function read(string $sourcePath): Dataset
     {
         return $this->dataset;

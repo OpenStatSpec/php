@@ -22,6 +22,16 @@ final class PhpSpssEngine implements SpssEngine
         return class_exists(self::READER_CLASS);
     }
 
+    public function identity(): array
+    {
+        return [
+            "package" => self::PACKAGE,
+            "version" => class_exists(\Composer\InstalledVersions::class)
+                ? \Composer\InstalledVersions::getPrettyVersion(self::PACKAGE)
+                : null,
+        ];
+    }
+
     public function read(string $sourcePath): Dataset
     {
         if (!$this->isAvailable()) {

@@ -9,6 +9,8 @@ use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\MySqlProfile;
 use OpenStatSpec\Sql\PostgreSqlProfile;
 use OpenStatSpec\Sql\SqliteProfile;
+use OpenStatSpec\Sql\OperationJournal;
+use PDO;
 use PHPUnit\Framework\TestCase;
 
 final class PdoSqlProfileTest extends TestCase
@@ -51,4 +53,20 @@ final class PdoSqlProfileTest extends TestCase
         self::assertStringEndsWith('_2', $second);
         self::assertSame('data', $profile->physicalIdentifier('###'));
     }
+    public function testOperationJournalMigratesLegacyCatalogWithEngineDetails(): void
+    {
+        if (!in_array("sqlite", PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped("PDO SQLite is not available in this PHP environment.");
+        }
+
+        $pdo = new PDO("sqlite::memory:");
+        $pdo->exec("CREATE TABLE operation_catalog (operation_id VARCHAR(36) NOT NULL PRIMARY KEY, direction VARCHAR(16) NOT NULL, status VARCHAR(16) NOT NULL, dataset_name TEXT NULL, target_path TEXT NULL, allow_loss TEXT NOT NULL, failure_code VARCHAR(96) NULL, failure_message TEXT NULL)");
+        $operationId = (new OperationJournal($pdo))->start("import", null, "legacy.sav", engineDetails: ["package" => "test-engine", "version" => "1.0"]);
+
+        $statement = $pdo->query("SELECT engine_details FROM operation_catalog WHERE operation_id = " . $pdo->quote($operationId));
+        self::assertNotFalse($statement);
+        $details = $statement->fetchColumn();
+        self::assertSame(["package" => "test-engine", "version" => "1.0"], json_decode((string) $details, true, flags: JSON_THROW_ON_ERROR));
+    }
+
 }
