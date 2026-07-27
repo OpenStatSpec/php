@@ -68,6 +68,7 @@ final class SpssSourceNormalizer
             'variables' => $variables,
             'data' => $source->rows(),
             'fileLabel' => $source->metadata->label,
+            'weightVariableName' => $source->metadata->weightVariableName,
             'documents' => $source->metadata->documents(),
             'valueLabels' => $valueLabels,
             'displayParameters' => self::displayParameters($source),

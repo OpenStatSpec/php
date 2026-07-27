@@ -70,6 +70,10 @@ final class SpssAdapterTest extends TestCase
             ],
             self::rows($pdo, 'SELECT ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals FROM variables WHERE dataset_name = "Customer survey" ORDER BY ordinal'),
         );
+        self::assertSame(
+            [['variable_ordinal' => 1]],
+            self::rows($pdo, 'SELECT variable_ordinal FROM dataset_weight_variables WHERE dataset_name = "Customer survey"'),
+        );
 
         self::assertSame(
             [
@@ -122,6 +126,7 @@ final class SpssAdapterTest extends TestCase
             self::rows($pdo, 'SELECT direction, status, dataset_name, target_path, allow_loss, failure_code FROM operation_catalog ORDER BY rowid'),
         );
         self::assertSame('Customer survey source', $written->metadata->label);
+        self::assertSame('Respondent ID', $written->metadata->weightVariableName);
         self::assertSame(['First document line', 'Second document line'], $written->metadata->documents());
         self::assertSame([[7.0, 'blue'], [8.0, 'green']], $written->rows());
 
@@ -172,6 +177,7 @@ final class SpssAdapterTest extends TestCase
 
             self::assertSame($this->engineFixture()->rows(), $readBack->rows());
             self::assertSame('Customer survey source', $readBack->metadata->label);
+            self::assertSame('Respondent_ID', $readBack->metadata->weightVariableName);
             self::assertSame(['First document line', 'Second document line'], $readBack->metadata->documents());
             self::assertSame('Respondent_ID', $readBack->variables()[0]->name);
             self::assertEquals([new ValueLabel(7.0, 'Seven')], $readBack->variables()[0]->valueLabels->labels());
@@ -260,6 +266,7 @@ final class SpssAdapterTest extends TestCase
                 self::assertSame($format, $readBack->technicalMetadata->sourceFormat);
                 self::assertSame($compression, $readBack->technicalMetadata->compression);
                 self::assertSame($fixture->rows(), $readBack->rows());
+                self::assertSame('No_missing', $readBack->metadata->weightVariableName);
                 self::assertSame(400, $readBack->variables()[4]->width);
                 $longString = $readBack->rows()[0][4];
                 self::assertIsString($longString);
@@ -397,6 +404,7 @@ final class SpssAdapterTest extends TestCase
             [[7.0, 'blue'], [8.0, 'green']],
             new FileMetadata(
                 'Customer survey source',
+                weightVariableName: 'Respondent ID',
                 documents: ['First document line', 'Second document line'],
                 attributes: [new FileAttribute('Data source', ['CRM', 'verified'])],
                 variableSets: [new VariableSet('Core', ['Respondent ID', 'Favourite colour'])],
@@ -469,7 +477,7 @@ final class SpssAdapterTest extends TestCase
                 ),
             ]),
             [[7.0, 'blue'], [8.0, 'green']],
-            new FileMetadata('Customer survey source', documents: ['First document line', 'Second document line']),
+            new FileMetadata('Customer survey source', weightVariableName: 'Respondent_ID', documents: ['First document line', 'Second document line']),
         );
     }
 
@@ -526,7 +534,7 @@ final class SpssAdapterTest extends TestCase
                 ),
             ]),
             [[10.0, 2.0, 4.0, 9.0, $longValue]],
-            new FileMetadata('Long UTF-8 and missing-values fixture'),
+            new FileMetadata('Long UTF-8 and missing-values fixture', weightVariableName: 'No_missing'),
             new FileTechnicalMetadata(
                 sourceFormat: $format,
                 compression: $format === 'zsav' ? 2 : 1,

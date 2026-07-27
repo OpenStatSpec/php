@@ -40,6 +40,7 @@ final readonly class SqliteWideTableImporter
             foreach ($variables as $variable) {
                 $catalog->execute([$datasetName, $variable['ordinal'], $variable['source'], $variable['column'], $variable['kind'], $variable['width'], $variable['formatFamily'], $variable['formatWidth'], $variable['formatDecimals'], $variable['writeFormatFamily'], $variable['writeFormatWidth'], $variable['writeFormatDecimals'], $variable['label']]);
             }
+            $this->storeWeightVariable($datasetName, $source['weightVariableName'] ?? null, $variables);
             $this->insertCases($tableName, $variables, $source['data']);
             $this->pdo->commit();
         } catch (Throwable $exception) {
@@ -53,6 +54,7 @@ final readonly class SqliteWideTableImporter
     private function createCatalog(): void
     {
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS datasets (dataset_name TEXT NOT NULL PRIMARY KEY, table_name TEXT NOT NULL UNIQUE)');
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS dataset_weight_variables (dataset_name TEXT NOT NULL PRIMARY KEY, variable_ordinal INTEGER NOT NULL)');
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS variables (dataset_name TEXT NOT NULL, ordinal INTEGER NOT NULL, source_name TEXT NOT NULL, column_name TEXT NOT NULL, storage_kind TEXT NOT NULL, source_width INTEGER NOT NULL, format_family INTEGER NOT NULL, format_width INTEGER NOT NULL, format_decimals INTEGER NOT NULL, write_format_family INTEGER NOT NULL, write_format_width INTEGER NOT NULL, write_format_decimals INTEGER NOT NULL, label TEXT NULL, PRIMARY KEY (dataset_name, ordinal), UNIQUE (dataset_name, column_name))');
         $this->migrateFormatCatalogue();
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS dataset_metadata (dataset_name TEXT NOT NULL, meta_key TEXT NOT NULL, meta_value TEXT NOT NULL, PRIMARY KEY (dataset_name, meta_key))');
@@ -144,6 +146,30 @@ final readonly class SqliteWideTableImporter
     private function technicalFloat(mixed $value): ?float
     {
         return is_float($value) || is_int($value) ? (float) $value : null;
+    }
+
+    /** @param list<array{ordinal: int, source: string}> $variables */
+    private function storeWeightVariable(string $datasetName, mixed $weightVariableName, array $variables): void
+    {
+        if ($weightVariableName === null) {
+            return;
+        }
+        if (!is_string($weightVariableName) || $weightVariableName === '') {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The SPSS weight-variable reference must be a non-empty source variable name.');
+        }
+        foreach ($variables as $variable) {
+            if ($variable['source'] === $weightVariableName) {
+                $statement = $this->pdo->prepare('INSERT INTO dataset_weight_variables (dataset_name, variable_ordinal) VALUES (?, ?)');
+                if ($statement === false) {
+                    throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The SQLite weight-variable catalogue statement could not be prepared.');
+                }
+                $statement->execute([$datasetName, $variable['ordinal']]);
+
+                return;
+            }
+        }
+
+        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The SPSS weight-variable reference must name a source variable.');
     }
 
     /**
