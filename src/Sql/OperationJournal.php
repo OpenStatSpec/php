@@ -55,11 +55,11 @@ final readonly class OperationJournal
 
     private function createTables(): void
     {
-        $this->pdo->exec("CREATE TABLE IF NOT EXISTS operation_catalog (operation_id VARCHAR(36) NOT NULL PRIMARY KEY, direction VARCHAR(16) NOT NULL, status VARCHAR(16) NOT NULL, dataset_name TEXT NULL, target_path TEXT NULL, allow_loss TEXT NOT NULL, engine_details TEXT NOT NULL DEFAULT '{}', failure_code VARCHAR(96) NULL, failure_message TEXT NULL)");
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS operation_catalog (operation_id VARCHAR(36) NOT NULL PRIMARY KEY, direction VARCHAR(16) NOT NULL, status VARCHAR(16) NOT NULL, dataset_name TEXT NULL, target_path TEXT NULL, allow_loss TEXT NOT NULL, engine_details VARCHAR(8192) NOT NULL DEFAULT '{}', failure_code VARCHAR(96) NULL, failure_message TEXT NULL)");
         try {
             $this->pdo->query('SELECT engine_details FROM operation_catalog WHERE 1 = 0');
         } catch (PDOException) {
-            $this->pdo->exec("ALTER TABLE operation_catalog ADD COLUMN engine_details TEXT NOT NULL DEFAULT '{}'");
+            $this->pdo->exec("ALTER TABLE operation_catalog ADD COLUMN engine_details VARCHAR(8192) NOT NULL DEFAULT '{}'");
         }
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS fidelity_event_catalog (operation_id VARCHAR(36) NOT NULL, ordinal BIGINT NOT NULL, dataset_name TEXT NULL, severity VARCHAR(16) NOT NULL, code VARCHAR(96) NOT NULL, message TEXT NOT NULL, details TEXT NOT NULL, PRIMARY KEY (operation_id, ordinal))');
     }
