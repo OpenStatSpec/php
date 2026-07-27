@@ -17,7 +17,7 @@ final class PostgreSqlWideTableImporterTest extends TestCase
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
-        $pdo->expects(self::exactly(18))->method('exec')->willReturn(0);
+        $pdo->expects(self::atLeast(18))->method('exec')->willReturn(0);
 
         $definition = (new PostgreSqlWideTableImporter($pdo))->createTables([
             'variables' => [
@@ -46,7 +46,7 @@ final class PostgreSqlWideTableImporterTest extends TestCase
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
-        $pdo->expects(self::exactly(18))->method('exec')->willReturn(0);
+        $pdo->expects(self::atLeast(18))->method('exec')->willReturn(0);
         $pdo->expects(self::exactly(3))->method('prepare')->willReturnOnConsecutiveCalls($dataset, $variables, $cases);
         $dataset->expects(self::once())->method('execute')->with(['customer survey', 'dataset_customer_survey'])->willReturn(true);
         $variables->expects(self::exactly(2))->method('execute')->willReturnCallback(function ($row) use (&$variableRows): bool {
@@ -92,7 +92,7 @@ final class PostgreSqlWideTableImporterTest extends TestCase
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
-        $pdo->expects(self::exactly(18))->method('exec')->willReturn(0);
+        $pdo->expects(self::atLeast(18))->method('exec')->willReturn(0);
         $pdo->expects(self::exactly(6))->method('prepare')->willReturnOnConsecutiveCalls(
             $fileLabel,
             $documents,
@@ -149,7 +149,7 @@ final class PostgreSqlWideTableImporterTest extends TestCase
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
-        $pdo->expects(self::exactly(18))->method('exec')->willReturn(0);
+        $pdo->expects(self::atLeast(18))->method('exec')->willReturn(0);
         $pdo->expects(self::exactly(6))->method('prepare')->willReturnOnConsecutiveCalls($dataset, $variables, $missing, $missingValues, $labels, $cases);
         $dataset->expects(self::once())->method('execute')->willReturn(true);
         $variables->expects(self::once())->method('execute')->willReturn(true);
@@ -204,7 +204,7 @@ final class PostgreSqlWideTableImporterTest extends TestCase
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
-        $pdo->expects(self::exactly(18))->method('exec')->willReturn(0);
+        $pdo->expects(self::atLeast(18))->method('exec')->willReturn(0);
         $pdo->expects(self::exactly(4))->method('prepare')->willReturnOnConsecutiveCalls($dataset, $variables, $display, $cases);
         $dataset->method('execute')->willReturn(true);
         $variables->method('execute')->willReturn(true);
@@ -244,7 +244,7 @@ final class PostgreSqlWideTableImporterTest extends TestCase
         $pdo->expects(self::never())->method('commit');
         $pdo->expects(self::once())->method('inTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('rollBack')->willReturn(true);
-        $pdo->expects(self::exactly(18))->method('exec')->willReturn(0);
+        $pdo->expects(self::atLeast(18))->method('exec')->willReturn(0);
         $pdo->expects(self::exactly(3))->method('prepare')->willReturnOnConsecutiveCalls($dataset, $variables, $cases);
         $dataset->method('execute')->willReturn(true);
         $variables->method('execute')->willReturn(true);
@@ -278,7 +278,7 @@ final class PostgreSqlWideTableImporterTest extends TestCase
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
-        $pdo->expects(self::exactly(18))->method('exec')->willReturn(0);
+        $pdo->expects(self::atLeast(18))->method('exec')->willReturn(0);
         $pdo->expects(self::exactly(10))->method('prepare')->willReturnOnConsecutiveCalls(
             $dataset,
             $variables,

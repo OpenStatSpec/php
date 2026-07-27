@@ -13,6 +13,7 @@ final readonly class FidelityDiagnostic
         public string $message,
         public FidelitySeverity $severity = FidelitySeverity::Warning,
         public array $details = [],
+        public ?string $sourceItem = null,
     ) {}
 
     /** @return array{code: string, message: string, severity: string, details: array<string, mixed>} */
@@ -23,6 +24,7 @@ final readonly class FidelityDiagnostic
             'message' => $this->message,
             'severity' => $this->severity->value,
             'details' => $this->details,
+            'source_item' => $this->sourceItem,
         ];
     }
 }

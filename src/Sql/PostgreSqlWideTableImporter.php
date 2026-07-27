@@ -56,7 +56,7 @@ final readonly class PostgreSqlWideTableImporter
      *
      * @param array<string, mixed> $source
      */
-    public function import(array $source, string $datasetName): PostgreSqlWideTableDefinition
+    public function import(array $source, string $datasetName, string $sourcePath = ""): PostgreSqlWideTableDefinition
     {
         $variables = $source['variables'] ?? null;
         $rows = $source['data'] ?? null;
@@ -85,6 +85,9 @@ final readonly class PostgreSqlWideTableImporter
                 (new SqliteV3MetadataImporter($this->pdo))->store($datasetName, $source);
             }
             $this->insertCases($definition, $rows);
+            if ($sourcePath !== "" && is_file($sourcePath)) {
+                (new NormativeCatalog($this->pdo))->storeImportedDataset($datasetName, $sourcePath, $source);
+            }
             $this->pdo->commit();
         } catch (Throwable $exception) {
             if ($this->pdo->inTransaction()) {

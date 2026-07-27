@@ -37,6 +37,7 @@ final class FidelityPolicyTest extends TestCase
                 'message' => 'The target engine cannot reproduce this feature.',
                 'severity' => 'warning',
                 'details' => ['feature' => 'example'],
+                'source_item' => null,
             ],
             $diagnostic->toArray(),
         );

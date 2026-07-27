@@ -53,7 +53,7 @@ The objective is semantic equivalence for represented features, not byte identit
 
 An exporter may emit machine-readable `FidelityDiagnostic` values for a known loss boundary. Export is fail-closed: it refuses to write until each emitted diagnostic code is present in the caller's `allowLoss` list. That makes intentional lossy conversion explicit rather than silently producing a downgraded file.
 
-`operation_catalog` records every import/export attempt independently of dataset metadata. `fidelity_event_catalog` records diagnostics. A failed preflight can therefore remain auditable with a null dataset reference and without a partially created dataset.
+The singular OpenStatSpec `operation` and `fidelity_event` tables are the authoritative audit record. Legacy `operation_catalog` and `fidelity_event_catalog` remain mirrored only for transition compatibility. A failed preflight creates a failed `operation` and at least one `fidelity_event` with a null dataset reference, direction, event code, source item and timestamp.
 
 ## SAV/ZSAV boundary
 
@@ -82,3 +82,29 @@ The selected engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson
 ## Framework boundary
 
 This package requires neither Yii2 nor Laravel. Applications supply a PDO connection. A framework integration may provide connection wiring, migrations or CLI commands, but must call this adapter rather than reimplement the mapping.
+
+## Standard catalogue and upgrades
+
+Every normal import writes the singular OpenStatSpec catalogue tables from the
+normative schema: `dataset`, `variable`, value-label and missing-rule tables,
+attributes, `document`, variable/multiple-response sets, `operation`, and
+`fidelity_event`. The older plural tables are a compatibility read model for
+existing exports; they are not the standard contract for a newly imported
+dataset.
+
+Before upgrading an existing database explicitly, run:
+
+```php
+$adapter = new SpssAdapter($pdo);
+$adapter->migrateCatalog();
+```
+
+The command creates and versions the canonical catalogue through
+`openstatspec_schema_migration`; it also applies the write-format migration to
+SQLite, MySQL/MariaDB and PostgreSQL compatibility catalogues. Imports invoke
+the same migration path before writing data.
+
+MySQL/MariaDB DDL has implicit commits. The adapter preflights before creating
+a table and performs compensating cleanup after a later failure. If cleanup
+itself fails, it is reported as an error requiring operator inspection rather
+than being silently ignored.

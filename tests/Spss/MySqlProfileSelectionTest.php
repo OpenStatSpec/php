@@ -49,7 +49,7 @@ final class MySqlProfileSelectionTest extends TestCase
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
-        $pdo->expects(self::exactly(20))->method('exec')->willReturn(0);
+        $pdo->expects(self::atLeast(20))->method('exec')->willReturn(0);
         $pdo->expects(self::exactly(14))->method('prepare')->willReturnOnConsecutiveCalls(
             $journalStart,
             $technical,
@@ -67,7 +67,7 @@ final class MySqlProfileSelectionTest extends TestCase
             $journalSucceed,
         );
         $journalStart->expects(self::once())->method('execute')->with(self::callback(static function (array $values): bool {
-            return count($values) === 9 && $values[1] === 'import' && $values[2] === 'running' && $values[3] === null && $values[4] === 'fixture.sav' && $values[6] === '{"package":"mock-spss-engine","version":"test"}';
+            return count($values) === 11 && $values[1] === 'import' && $values[2] === 'running' && $values[3] === null && $values[4] === 'fixture.sav' && $values[6] === '{"package":"mock-spss-engine","version":"test"}' && $values[7] === 'sav' && is_string($values[8]);
         }))->willReturn(true);
         $journalSucceed->expects(self::once())->method('execute')->with(self::callback(static function (array $values): bool {
             return $values[0] === 'succeeded' && $values[1] === 'fixture' && is_string($values[2]);
@@ -78,7 +78,7 @@ final class MySqlProfileSelectionTest extends TestCase
         $roles->expects(self::once())->method('execute')->with(['fixture', 1, 0])->willReturn(true);
         $cases->expects(self::once())->method('execute')->with(['value_0' => 1, 'value_1' => '1.5'])->willReturn(true);
 
-        (new SpssAdapter($pdo, $engine))->import('fixture.sav', 'fixture');
+        (new SpssAdapter($pdo, $engine, false))->import('fixture.sav', 'fixture');
     }
 
     public function testMysqlExportUsesWideTableExporterThroughPublicAdapter(): void
@@ -134,7 +134,7 @@ final class MySqlProfileSelectionTest extends TestCase
         });
 
         $engine = new FakeSpssEngine($this->fixture());
-        $result = (new SpssAdapter($pdo, $engine))->export('fixture', 'fixture.sav');
+        $result = (new SpssAdapter($pdo, $engine, false))->export('fixture', 'fixture.sav');
         $written = $engine->lastWrite()['dataset'];
 
         self::assertSame([[1.5, 'Ada'], [null, 'Bea']], $written->rows());

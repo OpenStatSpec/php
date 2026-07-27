@@ -20,7 +20,7 @@ final readonly class SqliteWideTableImporter
     }
 
     /** @param array<string, mixed> $source */
-    public function import(array $source, string $datasetName): void
+    public function import(array $source, string $datasetName, string $sourcePath = ""): void
     {
         $variables = $this->variables($source['variables']);
         $this->profile->assertCanRepresent(count($variables));
@@ -42,6 +42,9 @@ final readonly class SqliteWideTableImporter
             }
             $this->storeWeightVariable($datasetName, $source['weightVariableName'] ?? null, $variables);
             $this->insertCases($tableName, $variables, $source['data']);
+            if ($sourcePath !== "" && is_file($sourcePath)) {
+                (new NormativeCatalog($this->pdo))->storeImportedDataset($datasetName, $sourcePath, $source);
+            }
             $this->pdo->commit();
         } catch (Throwable $exception) {
             if ($this->pdo->inTransaction()) {
@@ -49,6 +52,11 @@ final readonly class SqliteWideTableImporter
             }
             throw $exception;
         }
+    }
+
+    public function migrateCatalog(): void
+    {
+        $this->createCatalog();
     }
 
     private function createCatalog(): void

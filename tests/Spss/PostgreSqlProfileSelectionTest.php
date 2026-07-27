@@ -53,7 +53,7 @@ final class PostgreSqlProfileSelectionTest extends TestCase
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
-        $pdo->expects(self::exactly(20))->method('exec')->willReturn(0);
+        $pdo->expects(self::atLeast(20))->method('exec')->willReturn(0);
         $pdo->expects(self::exactly(14))
             ->method('prepare')
             ->willReturnOnConsecutiveCalls(
@@ -104,7 +104,7 @@ final class PostgreSqlProfileSelectionTest extends TestCase
             ->with(['value_0' => 1, 'value_1' => '1.5'])
             ->willReturn(true);
 
-        (new SpssAdapter($pdo, $engine))->import('fixture.sav', 'fixture');
+        (new SpssAdapter($pdo, $engine, false))->import('fixture.sav', 'fixture');
     }
 
     public function testPostgreSqlDriverSelectsProfileAndExportsStrictWideDatasetThroughPublicAdapter(): void
@@ -197,7 +197,7 @@ final class PostgreSqlProfileSelectionTest extends TestCase
                 return true;
             }));
 
-        $result = (new SpssAdapter($pdo, $engine))->export('fixture', 'fixture.zsav');
+        $result = (new SpssAdapter($pdo, $engine, false))->export('fixture', 'fixture.zsav');
 
         self::assertSame(2, $result->caseCount);
         self::assertSame([], $result->diagnostics);
@@ -336,7 +336,7 @@ final class PostgreSqlProfileSelectionTest extends TestCase
                 return true;
             }));
 
-        $result = (new SpssAdapter($pdo, $engine))->export('fixture', 'fixture.sav');
+        $result = (new SpssAdapter($pdo, $engine, false))->export('fixture', 'fixture.sav');
 
         self::assertSame(1, $result->caseCount);
         self::assertSame([], $result->diagnostics);

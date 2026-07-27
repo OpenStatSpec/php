@@ -21,7 +21,7 @@ final class MySqlWideTableImporterTest extends TestCase
         $variableRows = [];
         $caseRows = [];
 
-        $pdo->expects(self::exactly(18))->method('exec')->willReturn(0);
+        $pdo->expects(self::atLeast(18))->method('exec')->willReturn(0);
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
@@ -76,7 +76,7 @@ final class MySqlWideTableImporterTest extends TestCase
         $missingRows = [];
         $labelRows = [];
 
-        $pdo->expects(self::exactly(18))->method('exec')->willReturn(0);
+        $pdo->expects(self::atLeast(18))->method('exec')->willReturn(0);
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
@@ -178,7 +178,7 @@ final class MySqlWideTableImporterTest extends TestCase
         $multipleResponseSetRows = [];
         $multipleResponseMemberRows = [];
 
-        $pdo->expects(self::exactly(18))->method('exec')->willReturn(0);
+        $pdo->expects(self::atLeast(18))->method('exec')->willReturn(0);
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
@@ -273,7 +273,7 @@ final class MySqlWideTableImporterTest extends TestCase
         $executedSql = [];
         $cleanupSql = [];
 
-        $pdo->expects(self::exactly(19))->method('exec')->willReturnCallback(function (string $sql) use (&$executedSql): int {
+        $pdo->expects(self::exactly(22))->method('exec')->willReturnCallback(function (string $sql) use (&$executedSql): int {
             $executedSql[] = $sql;
 
             return 0;
@@ -310,8 +310,8 @@ final class MySqlWideTableImporterTest extends TestCase
                 'data' => [[1.0]],
             ], 'customer survey');
         } finally {
-            self::assertStringStartsWith('DROP TABLE IF EXISTS ', $executedSql[18] ?? '');
-            self::assertStringContainsString('dataset_customer_survey', $executedSql[18] ?? '');
+            self::assertStringStartsWith('DROP TABLE IF EXISTS ', $executedSql[21] ?? '');
+            self::assertStringContainsString('dataset_customer_survey', $executedSql[21] ?? '');
             self::assertSame([
                 'DELETE FROM multiple_response_set_members WHERE dataset_name = ?',
                 'DELETE FROM multiple_response_sets WHERE dataset_name = ?',

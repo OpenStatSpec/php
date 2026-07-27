@@ -47,6 +47,7 @@ final readonly class MySqlSchema
         foreach ($this->catalogStatements() as $sql) {
             $this->pdo->exec($sql);
         }
+        $this->migrateFormatCatalogue();
     }
 
     /** Execute explicit nullable migration DDL for pre-format-fidelity catalogues. */

@@ -22,7 +22,7 @@ final readonly class MySqlWideTableImporter
     /**
      * @param array<string, mixed> $source
      */
-    public function import(array $source, string $datasetName): MySqlWideTableDefinition
+    public function import(array $source, string $datasetName, string $sourcePath = ""): MySqlWideTableDefinition
     {
         $variables = $source['variables'] ?? null;
         $rows = $source['data'] ?? null;
@@ -58,6 +58,9 @@ final readonly class MySqlWideTableImporter
                 (new SqliteV3MetadataImporter($this->pdo))->store($datasetName, $source);
             }
             $this->insertCases($definition, $rows);
+            if ($sourcePath !== "" && is_file($sourcePath)) {
+                (new NormativeCatalog($this->pdo))->storeImportedDataset($datasetName, $sourcePath, $source);
+            }
             $this->pdo->commit();
         } catch (Throwable $exception) {
             if ($this->pdo->inTransaction()) {
@@ -382,9 +385,11 @@ final readonly class MySqlWideTableImporter
             $this->pdo->exec(
                 'DROP TABLE IF EXISTS ' . $quote . str_replace($quote, $quote . $quote, $definition->tableName) . $quote,
             );
-        } catch (Throwable) {
-            // Preserve the import failure. An operator can still safely rerun
-            // after inspecting the deterministic target table name.
+        } catch (Throwable $cleanupFailure) {
+            throw new \RuntimeException(
+                "MySQL/MariaDB import cleanup failed; the target may require manual inspection: " . $definition->tableName,
+                previous: $cleanupFailure,
+            );
         }
     }
 

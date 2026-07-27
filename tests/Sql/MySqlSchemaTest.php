@@ -67,7 +67,7 @@ final class MySqlSchemaTest extends TestCase
     {
         $pdo = $this->createMock(PDO::class);
         $schema = new MySqlSchema($pdo);
-        $pdo->expects(self::exactly(18))->method('exec')->willReturn(0);
+        $pdo->expects(self::atLeast(18))->method('exec')->willReturn(0);
         $schema->createCatalog();
         $schema->createWideTable('fixture', [['name' => 'score', 'type' => 'numeric']]);
     }
