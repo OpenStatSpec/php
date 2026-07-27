@@ -50,7 +50,7 @@ jobs:
           coverage: none
           extensions: pdo_pgsql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter PostgreSqlSpssRoundTripTest
+      - run: vendor/bin/phpunit --filter "PostgreSqlSpssRoundTripTest|StrictSpssDictionaryConformanceTest"
 
   mysql-integration:
     name: MySQL 8.4 integration
@@ -82,7 +82,7 @@ jobs:
           coverage: none
           extensions: pdo_mysql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter MySqlSpssRoundTripTest
+      - run: vendor/bin/phpunit --filter "MySqlSpssRoundTripTest|StrictSpssDictionaryConformanceTest"
 
   mariadb-integration:
     name: MariaDB 11.4 integration
@@ -114,4 +114,4 @@ jobs:
           coverage: none
           extensions: pdo_mysql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter MariaDbSpssRoundTripTest
+      - run: vendor/bin/phpunit --filter "MariaDbSpssRoundTripTest|StrictSpssDictionaryConformanceTest"
