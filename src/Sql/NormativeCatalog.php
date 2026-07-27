@@ -47,6 +47,14 @@ final readonly class NormativeCatalog
             // Version 1 was already applied. The catalogue schema is idempotent.
         }
     }
+    public function hasDataset(string $datasetName): bool
+    {
+        $this->createTables();
+        $statement = $this->statement("SELECT 1 FROM dataset WHERE dataset_name = ?");
+        $statement->execute([$datasetName]);
+        return $statement->fetchColumn() !== false;
+    }
+
 
     /** @param array<string, mixed> $source */
     public function storeImportedDataset(string $datasetName, string $sourcePath, array $source): void

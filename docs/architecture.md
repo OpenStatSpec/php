@@ -101,7 +101,7 @@ $adapter->migrateCatalog();
 
 The command creates and versions the canonical catalogue through
 `openstatspec_schema_migration`; it also applies the write-format migration to
-SQLite, MySQL/MariaDB and PostgreSQL compatibility catalogues. Imports invoke
+SQLite, MySQL/MariaDB and PostgreSQL compatibility catalogues, then backfills each exportable legacy dataset into the singular standard tables. Imports invoke
 the same migration path before writing data.
 
 MySQL/MariaDB DDL has implicit commits. The adapter preflights before creating

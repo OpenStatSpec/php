@@ -47,7 +47,49 @@ final readonly class SpssAdapter
             'mysql' => (new MySqlSchema($this->connection->pdo))->createCatalog(),
             default => (new SqliteWideTableImporter($this->connection->pdo))->migrateCatalog(),
         };
-        (new NormativeCatalog($this->connection->pdo))->createTables();
+        $catalog = new NormativeCatalog($this->connection->pdo);
+        $catalog->createTables();
+        $this->backfillLegacyDatasets($catalog);
+    }
+
+    private function backfillLegacyDatasets(NormativeCatalog $catalog): void
+    {
+        $datasets = $this->connection->pdo->query('SELECT dataset_name FROM datasets ORDER BY dataset_name');
+        if ($datasets === false) {
+            return;
+        }
+        while (($datasetName = $datasets->fetchColumn()) !== false) {
+            if (!is_string($datasetName) || $catalog->hasDataset($datasetName)) {
+                continue;
+            }
+            $format = $this->legacySourceFormat($datasetName);
+            $export = match ($this->connection->profile->driverName()) {
+                'pgsql' => (new PostgreSqlWideTableExporter($this->connection->pdo))->export($datasetName, $format),
+                'mysql' => (new MySqlWideTableExporter($this->connection->pdo))->export($datasetName, $format),
+                default => (new SqliteWideTableExporter($this->connection->pdo))->export($datasetName, $format),
+            };
+            $this->connection->pdo->beginTransaction();
+            try {
+                $catalog->storeImportedDataset($datasetName, '', SpssSourceNormalizer::normalize($export['dataset']));
+                $this->connection->pdo->commit();
+            } catch (Throwable $exception) {
+                if ($this->connection->pdo->inTransaction()) {
+                    $this->connection->pdo->rollBack();
+                }
+                throw $exception;
+            }
+        }
+    }
+
+    private function legacySourceFormat(string $datasetName): string
+    {
+        $statement = $this->connection->pdo->prepare('SELECT source_format FROM file_technical_metadata WHERE dataset_name = ?');
+        if ($statement === false) {
+            return 'sav';
+        }
+        $statement->execute([$datasetName]);
+        $format = $statement->fetchColumn();
+        return in_array($format, ['sav', 'zsav'], true) ? $format : 'sav';
     }
 
     public function import(string $sourcePath, string $datasetName): SpssImportResult
