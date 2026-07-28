@@ -37,7 +37,7 @@ final readonly class SpssAdapter
     /** @return array<string, mixed> */
     public function capabilities(): array
     {
-        return (new CapabilityDeclaration($this->engine))->toArray();
+        return (new CapabilityDeclaration($this->connection->pdo, $this->engine))->toArray();
     }
 
     public function pdo(): PDO

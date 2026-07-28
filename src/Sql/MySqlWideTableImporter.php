@@ -40,7 +40,7 @@ final readonly class MySqlWideTableImporter
             );
         }
 
-        (new MySqlProfile())->assertDataset($variables, $rows);
+        (new MySqlProfile())->assertDataset($variables, $rows, $this->pdo);
 
         $schema = new MySqlSchema($this->pdo);
         // Complete physical-name and width preflight happens before any DDL.

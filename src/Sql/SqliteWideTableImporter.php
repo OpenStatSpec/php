@@ -28,7 +28,7 @@ final readonly class SqliteWideTableImporter
         if (!is_array($sourceRows) || !array_is_list($sourceRows)) {
             throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The source dataset must contain an ordered case list.');
         }
-        $this->profile->assertDataset($source['variables'], $sourceRows);
+        $this->profile->assertDataset($source['variables'], $sourceRows, $this->pdo);
         $tableName = 'dataset_' . $this->identifier($datasetName);
 
         $this->pdo->beginTransaction();

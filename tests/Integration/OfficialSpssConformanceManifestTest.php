@@ -8,6 +8,8 @@ use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Spss\PhpSpssEngine;
 use OpenStatSpec\Spss\SpssAdapter;
+use OpenStatSpec\Spss\SpssMissingValueSentinel;
+use OpenStatSpec\Sql\OperationJournal;
 use OpenStatSpec\Tests\Support\FakeSpssEngine;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -38,6 +40,7 @@ final class OfficialSpssConformanceManifestTest extends TestCase
                 $source = $fixture['source'] ?? null;
                 $directions = $fixture['directions'] ?? null;
                 $rawExpectations = $fixture['expects'] ?? null;
+                $expectedCatalog = $fixture['expected_catalog'] ?? null;
                 self::assertIsString($id);
                 self::assertIsString($source);
                 self::assertIsArray($directions);
@@ -45,6 +48,10 @@ final class OfficialSpssConformanceManifestTest extends TestCase
                 self::assertTrue(array_is_list($rawExpectations));
                 self::assertNotSame([], $directions);
                 self::assertNotSame([], $rawExpectations);
+                if ($expectedCatalog !== null) {
+                    self::assertIsArray($expectedCatalog);
+                    self::assertNotSame([], $expectedCatalog);
+                }
                 $expectations = [];
                 foreach ($rawExpectations as $expectation) {
                     self::assertIsString($expectation);
@@ -73,6 +80,9 @@ final class OfficialSpssConformanceManifestTest extends TestCase
                     $import = $adapter->import($sourcePath, $datasetName);
                     self::assertSame([], $import->diagnostics);
                     $this->assertCanonicalShape($pdo, $datasetName, $sourceDataset);
+                    if (is_array($expectedCatalog)) {
+                        $this->assertExpectedCatalog($pdo, $datasetName, $expectedCatalog, $profile . '/' . $id);
+                    }
 
                     if (in_array('export', $directions, true)) {
                         $export = $adapter->export($datasetName, $targetPath);
@@ -127,6 +137,103 @@ final class OfficialSpssConformanceManifestTest extends TestCase
             self::assertIsString($capability);
             self::assertTrue($declaration['required_capabilities'][$capability] ?? false, $profile . ': missing declared capability ' . $capability);
         }
+    }
+
+    /** @param array<string, mixed> $expected */
+    private function assertExpectedCatalog(PDO $pdo, string $datasetName, array $expected, string $context): void
+    {
+        $datasetId = (string) $this->scalar($pdo, 'SELECT dataset_id FROM dataset WHERE dataset_name = ?', [$datasetName]);
+
+        if (array_key_exists('weight_variable', $expected)) {
+            $actual = $this->scalar($pdo, 'SELECT variable.source_name FROM dataset_weight_variable weight JOIN variable ON variable.variable_id = weight.variable_id WHERE weight.dataset_id = ?', [$datasetId]);
+            self::assertSame($expected['weight_variable'], $actual, $context . ': weight variable');
+        }
+
+        if (array_key_exists('value_labels', $expected)) {
+            $actual = array_map(static function (array $row): array {
+                $string = $row['code_kind'] === 'string';
+                return [
+                    'variable' => (string) $row['source_name'],
+                    'ordinal' => (int) $row['ordinal'],
+                    'kind' => (string) $row['code_kind'],
+                    'value' => $string ? (string) $row['string_code'] : (float) $row['numeric_code'],
+                    'label' => (string) $row['label'],
+                ];
+            }, $this->rows($pdo, 'SELECT variable.source_name, label.ordinal, label.code_kind, label.numeric_code, label.string_code, label.label FROM variable JOIN variable_value_label_set link ON link.variable_id = variable.variable_id JOIN value_label label ON label.value_label_set_id = link.value_label_set_id WHERE variable.dataset_id = ? ORDER BY variable.source_ordinal, label.ordinal', [$datasetId]));
+            self::assertSame($expected['value_labels'], $actual, $context . ': typed ordered value labels');
+        }
+
+        if (array_key_exists('dataset_attributes', $expected)) {
+            $actual = [];
+            foreach ($this->rows($pdo, 'SELECT attribute_name, array_ordinal, attribute_value FROM dataset_attribute WHERE dataset_id = ? ORDER BY attribute_name, array_ordinal', [$datasetId]) as $row) {
+                $key = (string) $row['attribute_name'];
+                if (!isset($actual[$key])) {
+                    $actual[$key] = ['name' => $key, 'values' => []];
+                }
+                $actual[$key]['values'][] = (string) $row['attribute_value'];
+            }
+            self::assertSame($expected['dataset_attributes'], array_values($actual), $context . ': dataset attribute arrays');
+        }
+
+        if (array_key_exists('variable_attributes', $expected)) {
+            $actual = [];
+            foreach ($this->rows($pdo, 'SELECT variable.source_name, attribute.attribute_name, attribute.array_ordinal, attribute.attribute_value FROM variable_attribute attribute JOIN variable ON variable.variable_id = attribute.variable_id WHERE variable.dataset_id = ? ORDER BY variable.source_ordinal, attribute.attribute_name, attribute.array_ordinal', [$datasetId]) as $row) {
+                $key = (string) $row['source_name'] . "\0" . (string) $row['attribute_name'];
+                if (!isset($actual[$key])) {
+                    $actual[$key] = ['variable' => (string) $row['source_name'], 'name' => (string) $row['attribute_name'], 'values' => []];
+                }
+                $actual[$key]['values'][] = (string) $row['attribute_value'];
+            }
+            self::assertSame($expected['variable_attributes'], array_values($actual), $context . ': variable attribute arrays');
+        }
+
+        if (array_key_exists('variable_sets', $expected)) {
+            $actual = [];
+            foreach ($this->rows($pdo, 'SELECT variable_set_id, source_ordinal, set_name FROM variable_set WHERE dataset_id = ? ORDER BY source_ordinal', [$datasetId]) as $set) {
+                $members = array_map(
+                    static fn(array $row): string => (string) $row['source_name'],
+                    $this->rows($pdo, 'SELECT variable.source_name FROM variable_set_member member JOIN variable ON variable.variable_id = member.variable_id WHERE member.variable_set_id = ? ORDER BY member.source_ordinal', [(string) $set['variable_set_id']]),
+                );
+                $actual[] = ['ordinal' => (int) $set['source_ordinal'], 'name' => (string) $set['set_name'], 'members' => $members];
+            }
+            self::assertSame($expected['variable_sets'], $actual, $context . ': ordered variable sets');
+        }
+
+        if (array_key_exists('multiple_response_sets', $expected)) {
+            $actual = [];
+            foreach ($this->rows($pdo, 'SELECT multiple_response_set_id, source_ordinal, set_name, set_label, set_kind, counted_value_kind, counted_numeric_value, counted_string_value, category_label_behavior, label_source FROM multiple_response_set WHERE dataset_id = ? ORDER BY source_ordinal', [$datasetId]) as $set) {
+                $members = array_map(
+                    static fn(array $row): string => (string) $row['source_name'],
+                    $this->rows($pdo, 'SELECT variable.source_name FROM multiple_response_member member JOIN variable ON variable.variable_id = member.variable_id WHERE member.multiple_response_set_id = ? ORDER BY member.source_ordinal', [(string) $set['multiple_response_set_id']]),
+                );
+                $kind = $set['counted_value_kind'];
+                $counted = $kind === 'numeric' ? (float) $set['counted_numeric_value'] : ($kind === 'string' ? (string) $set['counted_string_value'] : null);
+                $actual[] = [
+                    'ordinal' => (int) $set['source_ordinal'],
+                    'name' => (string) $set['set_name'],
+                    'kind' => (string) $set['set_kind'],
+                    'label' => $set['set_label'],
+                    'counted_kind' => $kind,
+                    'counted_value' => $counted,
+                    'category_labels' => $set['category_label_behavior'],
+                    'label_source' => $set['label_source'],
+                    'members' => $members,
+                ];
+            }
+            self::assertSame($expected['multiple_response_sets'], $actual, $context . ': ordered multiple-response sets');
+        }
+    }
+
+    /**
+     * @param list<mixed> $parameters
+     * @return list<array<string, mixed>>
+     */
+    private function rows(PDO $pdo, string $sql, array $parameters): array
+    {
+        $statement = $pdo->prepare($sql);
+        $statement->execute($parameters);
+        $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        return array_values($rows);
     }
 
     private function assertCanonicalShape(PDO $pdo, string $datasetName, Dataset $source): void
@@ -197,7 +304,7 @@ final class OfficialSpssConformanceManifestTest extends TestCase
      */
     private function assertPreflightFailure(PDO $pdo, string $profile, array $capabilities, array $expectations): void
     {
-        $maximum = (int) $capabilities['sql_profiles'][$profile]['maximum_source_variables'];
+        $maximum = (int) $capabilities['sql_profiles'][$profile]['effective_limits']['maximum_source_variables'];
         $variables = [];
         for ($index = 1; $index <= $maximum + 1; ++$index) {
             $name = 'v' . $index;
@@ -213,6 +320,11 @@ final class OfficialSpssConformanceManifestTest extends TestCase
         }
         $source = new Dataset(new VariableDictionary($variables), [array_fill(0, $maximum + 1, 1.0)], new FileMetadata(), new FileTechnicalMetadata(sourceFormat: 'sav'));
         $adapter = new SpssAdapter($pdo, new FakeSpssEngine($source));
+        $adapter->migrateCatalog();
+        $bootstrap = new OperationJournal($pdo);
+        $bootstrapOperation = $bootstrap->start('import', null, 'conformance-bootstrap.sav', sourceFormat: 'sav');
+        $bootstrap->succeed($bootstrapOperation, null, []);
+        $tablesBefore = $this->tableNames($pdo);
         $datasetName = 'preflight_' . $profile . '_' . bin2hex(random_bytes(5));
         try {
             $adapter->import('preflight-too-wide.sav', $datasetName);
@@ -220,16 +332,53 @@ final class OfficialSpssConformanceManifestTest extends TestCase
         } catch (UnsupportedOperation $exception) {
             self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
         }
+        $operationId = $this->scalar($pdo, 'SELECT operation_id FROM operation_catalog WHERE target_path = ? ORDER BY started_at DESC LIMIT 1', ['preflight-too-wide.sav']);
+        self::assertIsString($operationId);
+        $operation = $this->rows($pdo, 'SELECT operation_kind, status, source_format, started_at, completed_at FROM operation WHERE operation_id = ?', [$operationId]);
+        self::assertCount(1, $operation);
+        self::assertSame('import', $operation[0]['operation_kind']);
+        self::assertSame('failed', $operation[0]['status']);
+        self::assertSame('sav', $operation[0]['source_format']);
+        self::assertNotSame('', (string) $operation[0]['started_at']);
+        self::assertNotSame('', (string) $operation[0]['completed_at']);
+
+        $events = $this->rows($pdo, 'SELECT dataset_id, direction, severity, event_code, source_item, detail_json, created_at FROM fidelity_event WHERE operation_id = ? ORDER BY created_at, fidelity_event_id', [$operationId]);
+        self::assertCount(1, $events);
+        self::assertNull($events[0]['dataset_id']);
+        self::assertSame('import', $events[0]['direction']);
+        self::assertSame('error', $events[0]['severity']);
+        self::assertSame(DiagnosticCode::TargetCapabilityExceeded->value, $events[0]['event_code']);
+        self::assertSame('preflight-too-wide.sav', $events[0]['source_item']);
+        self::assertIsArray(json_decode((string) $events[0]['detail_json'], true, flags: JSON_THROW_ON_ERROR));
+        self::assertNotSame('', (string) $events[0]['created_at']);
+
         foreach ($expectations as $expectation) {
             match ($expectation) {
-                'atomic_failure', 'no_dataset_row' => self::assertSame(0, $this->scalarCount($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_name = ?', [$datasetName])),
-                'no_data_table' => self::assertSame(0, $this->scalarCount($pdo, 'SELECT COUNT(*) FROM datasets WHERE dataset_name = ?', [$datasetName])),
-                'operation_record' => self::assertSame('failed', $this->scalar($pdo, 'SELECT status FROM operation WHERE operation_id = (SELECT operation_id FROM operation_catalog WHERE target_path = ? ORDER BY started_at DESC LIMIT 1)', ['preflight-too-wide.sav'])),
-                'fidelity_event_null_dataset_id' => self::assertSame(1, $this->scalarCount($pdo, 'SELECT COUNT(*) FROM fidelity_event WHERE operation_id = (SELECT operation_id FROM operation_catalog WHERE target_path = ? ORDER BY started_at DESC LIMIT 1) AND dataset_id IS NULL', ['preflight-too-wide.sav'])),
-                'target_capability_exceeded' => self::assertSame(DiagnosticCode::TargetCapabilityExceeded->value, $this->scalar($pdo, 'SELECT event_code FROM fidelity_event WHERE operation_id = (SELECT operation_id FROM operation_catalog WHERE target_path = ? ORDER BY started_at DESC LIMIT 1)', ['preflight-too-wide.sav'])),
+                'atomic_failure' => self::assertSame($tablesBefore, $this->tableNames($pdo), $profile . ': preflight changed the database schema'),
+                'no_dataset_row' => self::assertSame(0, $this->scalarCount($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_name = ?', [$datasetName])),
+                'no_data_table' => self::assertSame($tablesBefore, $this->tableNames($pdo), $profile . ': preflight left a physical table behind'),
+                'operation_record' => self::assertSame('failed', $operation[0]['status']),
+                'fidelity_event_null_dataset_id' => self::assertNull($events[0]['dataset_id']),
+                'target_capability_exceeded' => self::assertSame(DiagnosticCode::TargetCapabilityExceeded->value, $events[0]['event_code']),
                 default => throw new RuntimeException('Unimplemented preflight expectation: ' . $expectation),
             };
         }
+        self::assertSame(0, $this->scalarCount($pdo, 'SELECT COUNT(*) FROM datasets WHERE dataset_name = ?', [$datasetName]));
+    }
+
+    /** @return list<string> */
+    private function tableNames(PDO $pdo): array
+    {
+        $driver = (string) $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        $sql = match ($driver) {
+            'sqlite' => "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            'pgsql' => "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = current_schema() ORDER BY tablename",
+            'mysql' => 'SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name',
+            default => throw new RuntimeException('Unsupported conformance database driver.'),
+        };
+        $statement = $pdo->query($sql);
+        self::assertInstanceOf(\PDOStatement::class, $statement);
+        return array_values(array_map('strval', $statement->fetchAll(PDO::FETCH_COLUMN)));
     }
 
     private function assertCaseOrdinals(PDO $pdo, string $datasetId): void
@@ -321,10 +470,10 @@ final class OfficialSpssConformanceManifestTest extends TestCase
     {
         $endpoint = static function (int|float|null $value): int|float|string|null {
             if (is_int($value) || is_float($value)) {
-                if ((float) $value < -1.0e308) {
+                if (SpssMissingValueSentinel::isLowest($value)) {
                     return 'LOWEST';
                 }
-                if ((float) $value > 1.0e308) {
+                if (SpssMissingValueSentinel::isHighest($value)) {
                     return 'HIGHEST';
                 }
             }

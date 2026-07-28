@@ -6,6 +6,7 @@ namespace OpenStatSpec\Sql;
 
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
+use PDO;
 
 abstract class AbstractPdoSqlProfile implements PdoSqlProfile
 {
@@ -43,31 +44,73 @@ abstract class AbstractPdoSqlProfile implements PdoSqlProfile
      * @param list<array<string, mixed>>          $variables
      * @param list<list<int|float|string|null>> $rows
      */
-    public function assertDataset(array $variables, array $rows): void
+    public function assertDataset(array $variables, array $rows, ?PDO $pdo = null): void
     {
-        $this->assertCanRepresent(count($variables));
+        $maximumVariables = $pdo === null ? $this->maximumSourceVariables() : $this->effectiveMaximumSourceVariables($pdo);
+        if (count($variables) < 1 || count($variables) > $maximumVariables) {
+            $this->capabilityExceeded('source variable count', count($variables), $maximumVariables);
+        }
+        $maximumValueBytes = $pdo === null ? $this->maximumValueBytes() : $this->effectiveMaximumValueBytes($pdo);
+        $maximumRowBytes = $pdo === null ? $this->maximumRowBytes() : $this->effectiveMaximumRowBytes($pdo);
         $declaredRowBytes = 8;
         foreach ($variables as $variable) {
             $kind = is_string($variable['type'] ?? null) && str_contains(strtolower($variable['type']), 'string') ? 'string' : 'numeric';
             $width = $kind === 'string' && is_int($variable['width'] ?? null) ? $variable['width'] : 0;
-            if ($width < 0 || $width > $this->maximumValueBytes()) {
-                $this->capabilityExceeded('declared string width', $width, $this->maximumValueBytes());
+            if ($width < 0 || $width > $maximumValueBytes) {
+                $this->capabilityExceeded('declared string width', $width, $maximumValueBytes);
             }
             $declaredRowBytes += $this->rowStorageBytes($kind, $width);
         }
-        if ($declaredRowBytes > $this->maximumRowBytes()) {
-            $this->capabilityExceeded('declared row size', $declaredRowBytes, $this->maximumRowBytes());
+        if ($declaredRowBytes > $maximumRowBytes) {
+            $this->capabilityExceeded('declared row size', $declaredRowBytes, $maximumRowBytes);
         }
+        $maximumStatementBytes = $pdo === null ? $this->maximumRowBytes() : $this->effectiveMaximumStatementBytes($pdo);
         foreach ($rows as $row) {
             if (count($row) !== count($variables)) {
                 throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Every source case must contain exactly one value per source variable.');
             }
+            $encodedRowBytes = 8;
             foreach ($row as $value) {
-                if (is_string($value) && strlen($value) > $this->maximumValueBytes()) {
-                    $this->capabilityExceeded('encoded string value', strlen($value), $this->maximumValueBytes());
+                if (is_string($value) && strlen($value) > $maximumValueBytes) {
+                    $this->capabilityExceeded('encoded string value', strlen($value), $maximumValueBytes);
                 }
+                $encodedRowBytes += is_string($value) ? strlen($value) : 8;
+            }
+            if ($encodedRowBytes > $maximumStatementBytes) {
+                $this->capabilityExceeded('encoded case payload', $encodedRowBytes, $maximumStatementBytes);
             }
         }
+    }
+
+    public function effectiveMaximumSourceVariables(PDO $pdo): int
+    {
+        return $this->maximumSourceVariables();
+    }
+
+    public function effectiveMaximumValueBytes(PDO $pdo): int
+    {
+        return $this->maximumValueBytes();
+    }
+
+    public function effectiveMaximumRowBytes(PDO $pdo): int
+    {
+        return $this->maximumRowBytes();
+    }
+
+    public function effectiveMaximumStatementBytes(PDO $pdo): int
+    {
+        return $this->effectiveMaximumRowBytes($pdo);
+    }
+
+    public function effectiveLimitSources(PDO $pdo): array
+    {
+        return [
+            'maximum_source_variables' => 'profile_theoretical_limit',
+            'maximum_value_bytes' => 'profile_theoretical_limit',
+            'maximum_row_bytes' => 'profile_theoretical_limit',
+            'maximum_statement_bytes' => 'profile_theoretical_limit',
+            'maximum_identifier_bytes' => 'profile_theoretical_limit',
+        ];
     }
 
     protected function rowStorageBytes(string $kind, int $declaredWidth): int

@@ -11,6 +11,7 @@ use OpenStatSpec\Sql\PostgreSqlProfile;
 use OpenStatSpec\Sql\SqliteProfile;
 use OpenStatSpec\Sql\OperationJournal;
 use PDO;
+use PDOStatement;
 use PHPUnit\Framework\TestCase;
 
 final class PdoSqlProfileTest extends TestCase
@@ -40,6 +41,25 @@ final class PdoSqlProfileTest extends TestCase
 
         (new MySqlProfile())->assertCanRepresent(1017);
     }
+    public function testMySqlPreflightRejectsCombinedCasePayloadBeyondActivePacket(): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $statement = $this->createMock(PDOStatement::class);
+        $pdo->expects(self::exactly(2))->method('query')->with('SELECT @@max_allowed_packet')->willReturn($statement);
+        $statement->expects(self::exactly(2))->method('fetchColumn')->willReturn('262144');
+
+        $this->expectException(UnsupportedOperation::class);
+        $this->expectExceptionMessage('encoded case payload');
+        (new MySqlProfile())->assertDataset(
+            [
+                ['name' => 'one', 'type' => 'string', 'width' => 40_000],
+                ['name' => 'two', 'type' => 'string', 'width' => 40_000],
+            ],
+            [[str_repeat('a', 40_000), str_repeat('b', 40_000)]],
+            $pdo,
+        );
+    }
+
     public function testPostgreSqlMapsLongCollidingSourceNamesWithinIdentifierLimit(): void
     {
         $profile = new PostgreSqlProfile();

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Sql;
 
+use PDO;
+
 interface PdoSqlProfile
 {
     public function driverName(): string;
@@ -15,6 +17,17 @@ interface PdoSqlProfile
     public function maximumValueBytes(): int;
 
     public function maximumRowBytes(): int;
+
+    public function effectiveMaximumSourceVariables(PDO $pdo): int;
+
+    public function effectiveMaximumValueBytes(PDO $pdo): int;
+
+    public function effectiveMaximumRowBytes(PDO $pdo): int;
+
+    public function effectiveMaximumStatementBytes(PDO $pdo): int;
+
+    /** @return array<string, string> */
+    public function effectiveLimitSources(PDO $pdo): array;
 
     public function serverVersionRange(): string;
 
@@ -40,5 +53,5 @@ interface PdoSqlProfile
      * @param list<array<string, mixed>>          $variables
      * @param list<list<int|float|string|null>> $rows
      */
-    public function assertDataset(array $variables, array $rows): void;
+    public function assertDataset(array $variables, array $rows, ?PDO $pdo = null): void;
 }

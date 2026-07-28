@@ -7,6 +7,7 @@ namespace OpenStatSpec\Sql;
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\Binary64;
 use OpenStatSpec\Core\UnsupportedOperation;
+use OpenStatSpec\Spss\SpssMissingValueSentinel;
 use PDO;
 
 /**
@@ -51,13 +52,17 @@ final readonly class NormativeCatalog
         ] as $statement) {
             $this->pdo->exec(str_replace('__BINARY64__', $binary64, $statement));
         }
-        $this->ensureColumn('variable_set', 'source_ordinal', 'INTEGER NULL');
-        $this->ensureColumn('multiple_response_set', 'source_ordinal', 'INTEGER NULL');
-        $this->ensureColumn('multiple_response_set', 'counted_value_kind', 'VARCHAR(16) NULL');
-        $this->ensureColumn('multiple_response_set', 'counted_string_value', 'TEXT NULL');
-        $this->ensureColumn('multiple_response_set', 'label_source', 'TEXT NULL');
-        $this->backfillSetOrdinals('variable_set', 'variable_set_id');
-        $this->backfillSetOrdinals('multiple_response_set', 'multiple_response_set_id');
+        $migrationV3Required = !$this->migrationApplied(3);
+        if ($migrationV3Required) {
+            $this->ensureColumn('variable_set', 'source_ordinal', 'INTEGER NULL');
+            $this->ensureColumn('multiple_response_set', 'source_ordinal', 'INTEGER NULL');
+            $this->ensureColumn('multiple_response_set', 'counted_value_kind', 'VARCHAR(16) NULL');
+            $this->ensureColumn('multiple_response_set', 'counted_string_value', 'TEXT NULL');
+            $this->ensureColumn('multiple_response_set', 'label_source', 'TEXT NULL');
+            $this->backfillSetOrdinals('variable_set', 'variable_set_id', 'variable_sets');
+            $this->backfillSetOrdinals('multiple_response_set', 'multiple_response_set_id', 'multiple_response_sets');
+            $this->enforceSetOrdinalConstraints($driver);
+        }
 
         $migration = match ($driver) {
             'mysql' => 'INSERT IGNORE INTO openstatspec_schema_migration (version, applied_at) VALUES (?, ?)',
@@ -65,10 +70,22 @@ final readonly class NormativeCatalog
             default => null,
         };
         if ($migration !== null) {
-            $this->pdo->prepare($migration)->execute([1, self::timestamp()]);
-            $this->pdo->prepare($migration)->execute([2, self::timestamp()]);
+            foreach ([1, 2] as $version) {
+                $this->pdo->prepare($migration)->execute([$version, self::timestamp()]);
+            }
+            if ($migrationV3Required) {
+                $this->pdo->prepare($migration)->execute([3, self::timestamp()]);
+            }
         }
     }
+
+    private function migrationApplied(int $version): bool
+    {
+        $statement = $this->statement('SELECT 1 FROM openstatspec_schema_migration WHERE version = ?');
+        $statement->execute([$version]);
+        return $statement->fetchColumn() !== false;
+    }
+
     public function hasDataset(string $datasetName): bool
     {
         $this->createTables();
@@ -353,10 +370,10 @@ final readonly class NormativeCatalog
         if (!is_int($value) && !is_float($value)) {
             throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A numeric missing-value range endpoint must be numeric.');
         }
-        if ($lower && (float) $value < -1.0e308) {
+        if ($lower && SpssMissingValueSentinel::isLowest($value)) {
             return [null, 'LOWEST'];
         }
-        if (!$lower && (float) $value > 1.0e308) {
+        if (!$lower && SpssMissingValueSentinel::isHighest($value)) {
             return [null, 'HIGHEST'];
         }
         return [Binary64::encode($value), null];
@@ -408,20 +425,167 @@ final readonly class NormativeCatalog
         return is_int($value) || is_string($value) ? (string) $value : null;
     }
 
-    private function backfillSetOrdinals(string $table, string $idColumn): void
+    private function backfillSetOrdinals(string $table, string $idColumn, string $legacyTable): void
     {
-        $rows = $this->pdo->query('SELECT ' . $idColumn . ', dataset_id, source_ordinal FROM ' . $table . ' ORDER BY dataset_id, ' . $idColumn);
+        $rows = $this->pdo->query('SELECT source.' . $idColumn . ', source.dataset_id, source.set_name, dataset.dataset_name FROM ' . $table . ' source JOIN dataset ON dataset.dataset_id = source.dataset_id WHERE source.source_ordinal IS NULL ORDER BY source.dataset_id, source.set_name');
         if ($rows === false) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Could not inspect ' . $table . ' for ordinal migration.');
+        }
+        $pending = $rows->fetchAll(PDO::FETCH_ASSOC);
+        if ($pending === []) {
             return;
         }
-        $ordinals = [];
+        $legacy = $this->statement('SELECT set_ordinal FROM ' . $legacyTable . ' WHERE dataset_name = ? AND name = ?');
         $update = $this->statement('UPDATE ' . $table . ' SET source_ordinal = ? WHERE ' . $idColumn . ' = ?');
-        while (($row = $rows->fetch(PDO::FETCH_ASSOC)) !== false) {
-            $datasetId = (string) $row['dataset_id'];
-            $ordinals[$datasetId] = ($ordinals[$datasetId] ?? 0) + 1;
-            if ($row['source_ordinal'] === null) {
-                $update->execute([$ordinals[$datasetId], $row[$idColumn]]);
+        foreach ($pending as $row) {
+            $legacy->execute([$row['dataset_name'], $row['set_name']]);
+            $ordinals = $legacy->fetchAll(PDO::FETCH_COLUMN);
+            if (count($ordinals) !== 1 || (int) $ordinals[0] < 1) {
+                throw new UnsupportedOperation(
+                    DiagnosticCode::InvalidSourceDataset,
+                    'The source order for legacy ' . $table . ' entry ' . (string) $row['set_name'] . ' cannot be reconstructed unambiguously.',
+                );
             }
+            $update->execute([(int) $ordinals[0], $row[$idColumn]]);
+        }
+    }
+
+    private function enforceSetOrdinalConstraints(string $driver): void
+    {
+        foreach (['variable_set', 'multiple_response_set'] as $table) {
+            $this->validateSetOrdinals($table);
+        }
+
+        if ($driver === 'sqlite') {
+            $this->migrateSqliteSetConstraints();
+            return;
+        }
+        if ($driver === 'pgsql') {
+            $ownsTransaction = !$this->pdo->inTransaction();
+            if ($ownsTransaction) {
+                $this->pdo->beginTransaction();
+            }
+            try {
+                $this->pdo->exec('ALTER TABLE variable_set ALTER COLUMN source_ordinal SET NOT NULL');
+                $this->pdo->exec('ALTER TABLE multiple_response_set ALTER COLUMN source_ordinal SET NOT NULL');
+                $this->ensurePostgreSqlUniqueIndex('variable_set', 'uq_variable_set_dataset_ordinal');
+                $this->ensurePostgreSqlUniqueIndex('multiple_response_set', 'uq_multiple_response_set_dataset_ordinal');
+                if ($ownsTransaction) {
+                    $this->pdo->commit();
+                }
+            } catch (\Throwable $exception) {
+                if ($ownsTransaction) {
+                    $this->pdo->rollBack();
+                }
+                throw $exception;
+            }
+            return;
+        }
+        if ($driver === 'mysql') {
+            // MySQL/MariaDB DDL is not transactional. Every statement is
+            // idempotent and migration version 3 is recorded only after all
+            // constraints have been restored successfully.
+            $this->pdo->exec('ALTER TABLE variable_set MODIFY source_ordinal INTEGER NOT NULL');
+            $this->pdo->exec('ALTER TABLE multiple_response_set MODIFY source_ordinal INTEGER NOT NULL');
+            $this->ensureMySqlUniqueIndex('variable_set', 'uq_variable_set_dataset_ordinal');
+            $this->ensureMySqlUniqueIndex('multiple_response_set', 'uq_multiple_response_set_dataset_ordinal');
+        }
+    }
+
+    private function validateSetOrdinals(string $table): void
+    {
+        $invalid = $this->pdo->query('SELECT 1 FROM ' . $table . ' WHERE source_ordinal IS NULL LIMIT 1');
+        if ($invalid !== false && $invalid->fetchColumn() !== false) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, $table . ' contains a missing source ordinal and cannot be migrated.');
+        }
+        $duplicate = $this->pdo->query('SELECT 1 FROM ' . $table . ' GROUP BY dataset_id, source_ordinal HAVING COUNT(*) > 1 LIMIT 1');
+        if ($duplicate !== false && $duplicate->fetchColumn() !== false) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, $table . ' contains duplicate source ordinals and cannot be migrated.');
+        }
+    }
+
+    private function migrateSqliteSetConstraints(): void
+    {
+        $tables = array_values(array_filter(
+            ['variable_set', 'multiple_response_set'],
+            fn(string $table): bool => $this->sqliteSetTableRequiresRebuild($table),
+        ));
+        if ($tables === []) {
+            return;
+        }
+        if ($this->pdo->inTransaction()) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Run migrateCatalog() before importing into a legacy SQLite catalog.');
+        }
+
+        $foreignKeyStatement = $this->pdo->query('PRAGMA foreign_keys');
+        if ($foreignKeyStatement === false) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Could not inspect SQLite foreign-key mode.');
+        }
+        $foreignKeys = (int) $foreignKeyStatement->fetchColumn();
+        $this->pdo->exec('PRAGMA foreign_keys = OFF');
+        $this->pdo->beginTransaction();
+        try {
+            foreach ($tables as $table) {
+                $this->rebuildSqliteSetTable($table);
+            }
+            $this->pdo->commit();
+        } catch (\Throwable $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $exception;
+        } finally {
+            $this->pdo->exec('PRAGMA foreign_keys = ' . ($foreignKeys === 1 ? 'ON' : 'OFF'));
+        }
+
+        $violations = $this->pdo->query('PRAGMA foreign_key_check');
+        if ($violations === false || $violations->fetchColumn() !== false) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SQLite set migration produced a foreign-key violation.');
+        }
+    }
+
+    private function sqliteSetTableRequiresRebuild(string $table): bool
+    {
+        $columns = $this->pdo->query('PRAGMA table_info(' . $table . ')');
+        if ($columns === false) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Could not inspect ' . $table . ' for migration.');
+        }
+        foreach ($columns->fetchAll(PDO::FETCH_ASSOC) as $column) {
+            if (($column['name'] ?? null) === 'source_ordinal') {
+                return (int) ($column['notnull'] ?? 0) !== 1;
+            }
+        }
+        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, $table . ' has no source ordinal after migration preparation.');
+    }
+
+    private function rebuildSqliteSetTable(string $table): void
+    {
+        if ($table === 'variable_set') {
+            $this->pdo->exec('CREATE TABLE variable_set_v3 (variable_set_id VARCHAR(36) NOT NULL PRIMARY KEY, dataset_id VARCHAR(36) NOT NULL, source_ordinal INTEGER NOT NULL, set_name VARCHAR(255) NOT NULL, UNIQUE (dataset_id, source_ordinal), UNIQUE (dataset_id, set_name), FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id))');
+            $this->pdo->exec('INSERT INTO variable_set_v3 (variable_set_id, dataset_id, source_ordinal, set_name) SELECT variable_set_id, dataset_id, source_ordinal, set_name FROM variable_set');
+        } else {
+            $this->pdo->exec('CREATE TABLE multiple_response_set_v3 (multiple_response_set_id VARCHAR(36) NOT NULL PRIMARY KEY, dataset_id VARCHAR(36) NOT NULL, source_ordinal INTEGER NOT NULL, set_name VARCHAR(255) NOT NULL, set_label TEXT NULL, set_kind VARCHAR(4) NOT NULL, counted_value_kind VARCHAR(16) NULL, counted_numeric_value DOUBLE NULL, counted_string_value TEXT NULL, category_label_behavior TEXT NULL, label_source TEXT NULL, UNIQUE (dataset_id, source_ordinal), UNIQUE (dataset_id, set_name), FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id))');
+            $this->pdo->exec('INSERT INTO multiple_response_set_v3 (multiple_response_set_id, dataset_id, source_ordinal, set_name, set_label, set_kind, counted_value_kind, counted_numeric_value, counted_string_value, category_label_behavior, label_source) SELECT multiple_response_set_id, dataset_id, source_ordinal, set_name, set_label, set_kind, counted_value_kind, counted_numeric_value, counted_string_value, category_label_behavior, label_source FROM multiple_response_set');
+        }
+        $this->pdo->exec('DROP TABLE ' . $table);
+        $this->pdo->exec('ALTER TABLE ' . $table . '_v3 RENAME TO ' . $table);
+    }
+
+    private function ensurePostgreSqlUniqueIndex(string $table, string $index): void
+    {
+        $statement = $this->statement("SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND tablename = ? AND indexdef LIKE 'CREATE UNIQUE INDEX%' AND REPLACE(indexdef, '\"', '') LIKE '%(dataset_id, source_ordinal)%' LIMIT 1");
+        $statement->execute([$table]);
+        if ($statement->fetchColumn() === false) {
+            $this->pdo->exec('CREATE UNIQUE INDEX ' . $index . ' ON ' . $table . ' (dataset_id, source_ordinal)');
+        }
+    }
+
+    private function ensureMySqlUniqueIndex(string $table, string $index): void
+    {
+        $statement = $this->statement("SELECT index_name FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? GROUP BY index_name HAVING MIN(non_unique) = 0 AND GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') = 'dataset_id,source_ordinal' LIMIT 1");
+        $statement->execute([$table]);
+        if ($statement->fetchColumn() === false) {
+            $this->pdo->exec('CREATE UNIQUE INDEX ' . $index . ' ON ' . $table . ' (dataset_id, source_ordinal)');
         }
     }
 

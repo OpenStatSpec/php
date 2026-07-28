@@ -12,6 +12,9 @@ interface SpssEngine
     /** @return array<string, string|null> */
     public function identity(): array;
 
+    /** @return array<string, bool> */
+    public function capabilities(): array;
+
     public function read(string $sourcePath): Dataset;
 
     public function write(string $targetPath, Dataset $dataset): void;

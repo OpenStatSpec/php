@@ -438,7 +438,7 @@ final class SpssAdapterTest extends TestCase
             self::rows($pdo, 'SELECT spec_version, source_format, physical_table_name, dataset_name, source_case_count FROM dataset'),
         );
         self::assertSame(
-            [['version' => 1], ['version' => 2]],
+            [['version' => 1], ['version' => 2], ['version' => 3]],
             self::rows($pdo, 'SELECT version FROM openstatspec_schema_migration ORDER BY version'),
         );
         self::assertSame(
@@ -449,6 +449,48 @@ final class SpssAdapterTest extends TestCase
         $export = $adapter->export('Legacy survey', 'legacy-roundtrip.sav');
         self::assertSame(2, $export->caseCount);
         self::assertSame([[7.0, 'blue'], [8.0, 'green']], $engine->lastWrite()['dataset']->rows());
+    }
+
+    public function testV3MigrationRestoresSetOrdinalConstraints(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $catalog = new \OpenStatSpec\Sql\NormativeCatalog($pdo);
+        $catalog->createTables();
+        $pdo->exec('PRAGMA foreign_keys = OFF');
+        $pdo->exec('DROP TABLE variable_set');
+        $pdo->exec('DROP TABLE multiple_response_set');
+        $pdo->exec('CREATE TABLE variable_set (variable_set_id VARCHAR(36) PRIMARY KEY, dataset_id VARCHAR(36) NOT NULL, set_name VARCHAR(255) NOT NULL)');
+        $pdo->exec('CREATE TABLE multiple_response_set (multiple_response_set_id VARCHAR(36) PRIMARY KEY, dataset_id VARCHAR(36) NOT NULL, set_name VARCHAR(255) NOT NULL, set_label TEXT NULL, set_kind VARCHAR(4) NOT NULL, counted_numeric_value DOUBLE NULL, category_label_behavior TEXT NULL)');
+        $pdo->exec("INSERT INTO dataset (dataset_id, spec_version, source_format, physical_table_name, dataset_name, source_case_count, imported_at) VALUES ('dataset-v3', '1.0', 'sav', 'data_v3', 'dataset-v3', 0, '2026-07-28 00:00:00')");
+        $pdo->exec("INSERT INTO variable_set VALUES ('vs-b', 'dataset-v3', 'Second'), ('vs-a', 'dataset-v3', 'First')");
+        $pdo->exec("INSERT INTO multiple_response_set VALUES ('mr-b', 'dataset-v3', 'Second MR', NULL, 'MC', NULL, NULL), ('mr-a', 'dataset-v3', 'First MR', NULL, 'MC', NULL, NULL)");
+        $pdo->exec('CREATE TABLE IF NOT EXISTS variable_sets (dataset_name TEXT NOT NULL, set_ordinal INTEGER NOT NULL, name TEXT NOT NULL, PRIMARY KEY (dataset_name, set_ordinal), UNIQUE (dataset_name, name))');
+        $pdo->exec('CREATE TABLE IF NOT EXISTS multiple_response_sets (dataset_name TEXT NOT NULL, set_ordinal INTEGER NOT NULL, name TEXT NOT NULL, set_type TEXT NOT NULL, label TEXT NULL, counted_value_kind TEXT NULL, counted_numeric_value REAL NULL, counted_text_value TEXT NULL, category_labels TEXT NOT NULL, label_source TEXT NOT NULL, PRIMARY KEY (dataset_name, set_ordinal), UNIQUE (dataset_name, name))');
+        $pdo->exec("INSERT INTO variable_sets (dataset_name, set_ordinal, name) VALUES ('dataset-v3', 1, 'Second'), ('dataset-v3', 2, 'First')");
+        $pdo->exec("INSERT INTO multiple_response_sets (dataset_name, set_ordinal, name, set_type, category_labels, label_source) VALUES ('dataset-v3', 1, 'Second MR', 'category', 'variable_labels', 'set_label'), ('dataset-v3', 2, 'First MR', 'category', 'variable_labels', 'set_label')");
+        $pdo->exec('DELETE FROM openstatspec_schema_migration WHERE version = 3');
+
+        $catalog->createTables();
+
+        self::assertSame([[1], [2]], array_map('array_values', self::rows($pdo, 'SELECT source_ordinal FROM variable_set ORDER BY source_ordinal')));
+        self::assertSame([[1], [2]], array_map('array_values', self::rows($pdo, 'SELECT source_ordinal FROM multiple_response_set ORDER BY source_ordinal')));
+        $variableColumns = self::rows($pdo, 'PRAGMA table_info(variable_set)');
+        $mrColumns = self::rows($pdo, 'PRAGMA table_info(multiple_response_set)');
+        self::assertSame(1, (int) array_values(array_filter($variableColumns, static fn(array $column): bool => $column['name'] === 'source_ordinal'))[0]['notnull']);
+        self::assertSame(1, (int) array_values(array_filter($mrColumns, static fn(array $column): bool => $column['name'] === 'source_ordinal'))[0]['notnull']);
+        self::assertSame([], self::rows($pdo, 'PRAGMA foreign_key_check'));
+        self::assertSame([['set_name' => 'Second MR'], ['set_name' => 'First MR']], self::rows($pdo, 'SELECT set_name FROM multiple_response_set ORDER BY source_ordinal'));
+        $schema = self::rows($pdo, "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name IN ('variable_set', 'multiple_response_set') ORDER BY name");
+        $catalog->createTables();
+        self::assertSame($schema, self::rows($pdo, "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name IN ('variable_set', 'multiple_response_set') ORDER BY name"));
+        self::assertSame([['version' => 3]], self::rows($pdo, 'SELECT version FROM openstatspec_schema_migration WHERE version = 3'));
+
+        $this->expectException(\PDOException::class);
+        $pdo->exec("INSERT INTO variable_set (variable_set_id, dataset_id, source_ordinal, set_name) VALUES ('vs-duplicate', 'dataset-v3', 1, 'Duplicate')");
     }
 
     private function fixture(): Dataset

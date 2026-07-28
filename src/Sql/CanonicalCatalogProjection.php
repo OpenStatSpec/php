@@ -7,6 +7,7 @@ namespace OpenStatSpec\Sql;
 use OpenStatSpec\Core\Binary64;
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
+use OpenStatSpec\Spss\SpssMissingValueSentinel;
 use PDO;
 use PDOStatement;
 use Throwable;
@@ -152,8 +153,8 @@ final readonly class CanonicalCatalogProjection
             $ruleInsert->execute([$datasetName, $variableOrdinal, $format]);
             $values = [];
             if ($range) {
-                $values[] = ['numeric', $first['lower_special'] === 'LOWEST' ? Binary64::encode(-PHP_FLOAT_MAX) : $first['numeric_lower'], null];
-                $values[] = ['numeric', $first['upper_special'] === 'HIGHEST' ? Binary64::encode(PHP_FLOAT_MAX) : $first['numeric_upper'], null];
+                $values[] = ['numeric', $first['lower_special'] === 'LOWEST' ? Binary64::encode(SpssMissingValueSentinel::lowest()) : $first['numeric_lower'], null];
+                $values[] = ['numeric', $first['upper_special'] === 'HIGHEST' ? Binary64::encode(SpssMissingValueSentinel::highest()) : $first['numeric_upper'], null];
                 $rules = array_slice($rules, 1);
             }
             foreach ($rules as $rule) {

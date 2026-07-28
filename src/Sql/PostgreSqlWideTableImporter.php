@@ -68,7 +68,7 @@ final readonly class PostgreSqlWideTableImporter
             throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The source dataset must contain an ordered case list.');
         }
 
-        (new PostgreSqlProfile())->assertDataset($variables, $rows);
+        (new PostgreSqlProfile())->assertDataset($variables, $rows, $this->pdo);
 
         $schema = new PostgreSqlSchema($this->pdo);
         // Preflight the entire physical-name mapping before changing the target.
