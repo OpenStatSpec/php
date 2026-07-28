@@ -50,10 +50,13 @@ final readonly class NormativeCatalog
         ] as $statement) {
             $this->pdo->exec(str_replace('__BINARY64__', $binary64, $statement));
         }
-        try {
-            $this->pdo->prepare('INSERT INTO openstatspec_schema_migration (version, applied_at) VALUES (?, ?)')->execute([1, self::timestamp()]);
-        } catch (\Throwable) {
-            // Version 1 was already applied. The catalogue schema is idempotent.
+        $migration = match ($driver) {
+            'mysql' => 'INSERT IGNORE INTO openstatspec_schema_migration (version, applied_at) VALUES (?, ?)',
+            'pgsql', 'sqlite' => 'INSERT INTO openstatspec_schema_migration (version, applied_at) VALUES (?, ?) ON CONFLICT (version) DO NOTHING',
+            default => null,
+        };
+        if ($migration !== null) {
+            $this->pdo->prepare($migration)->execute([1, self::timestamp()]);
         }
     }
     public function hasDataset(string $datasetName): bool

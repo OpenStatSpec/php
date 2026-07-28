@@ -53,19 +53,27 @@ final readonly class MySqlSchema
     /** Execute explicit nullable migration DDL for pre-format-fidelity catalogues. */
     public function migrateFormatCatalogue(): void
     {
-        foreach ($this->formatCatalogueMigrationStatements() as $sql) {
-            $this->pdo->exec($sql);
+        // MySQL does not support ADD COLUMN IF NOT EXISTS. Introspection keeps
+        // this migration idempotent without using an exception as control flow.
+        $existing = $this->pdo->query(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'variables'",
+        );
+        $columns = $existing === false ? [] : array_fill_keys($existing->fetchAll(PDO::FETCH_COLUMN), true);
+        foreach ($this->formatCatalogueMigrationStatements() as $column => $sql) {
+            if (!isset($columns[$column])) {
+                $this->pdo->exec($sql);
+            }
         }
     }
 
-    /** @return list<string> */
+    /** @return array<string, string> */
     public function formatCatalogueMigrationStatements(): array
     {
         // Old rows cannot reveal write formats, so NULL makes loss explicit.
         return [
-            'ALTER TABLE variables ADD COLUMN IF NOT EXISTS write_format_family INTEGER NULL',
-            'ALTER TABLE variables ADD COLUMN IF NOT EXISTS write_format_width INTEGER NULL',
-            'ALTER TABLE variables ADD COLUMN IF NOT EXISTS write_format_decimals INTEGER NULL',
+            'write_format_family' => 'ALTER TABLE variables ADD COLUMN write_format_family INTEGER NULL',
+            'write_format_width' => 'ALTER TABLE variables ADD COLUMN write_format_width INTEGER NULL',
+            'write_format_decimals' => 'ALTER TABLE variables ADD COLUMN write_format_decimals INTEGER NULL',
         ];
     }
 
