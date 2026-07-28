@@ -107,9 +107,9 @@ final readonly class CapabilityDeclaration implements JsonSerializable
             'driver' => $name === 'postgresql' ? 'pgsql' : ($name === 'mariadb' ? 'mysql' : $profile->driverName()),
             'claimed_server_versions' => ServerVersionPolicy::claim($name),
             'ci_tested_server_versions' => match ($name) {
-                'mysql' => ['MySQL 8.4.x'],
-                'mariadb' => ['MariaDB 11.4.x'],
-                'postgresql' => ['PostgreSQL 17.x'],
+                'mysql' => ['MySQL 8.4.x', 'MySQL 9.7.x'],
+                'mariadb' => ['MariaDB 11.4.x', 'MariaDB 11.8.x', 'MariaDB 12.3.x'],
+                'postgresql' => ['PostgreSQL 17.x', 'PostgreSQL 18.x'],
                 default => ['active PDO SQLite version reported by CI'],
             },
             'theoretical_limits' => $theoretical,

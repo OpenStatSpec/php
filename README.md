@@ -8,7 +8,7 @@ It imports an unencrypted SPSS `.sav` or `.zsav` dataset into a relational datab
 
 This is an early reference implementation. Its round-trip contract is **semantic**, not byte-identical: supported cases, order, variables, values, dictionary metadata and technical metadata are preserved; compression layout, timestamps and other writer-specific bytes are not promised.
 
-SQLite, PostgreSQL, MySQL 8.4 and MariaDB 11.4 are implemented PDO profiles. Each follows one strict-wide contract:
+SQLite, PostgreSQL 17/18, MySQL 8.4/9.7 and MariaDB 11.4/11.8/12.3 are implemented PDO profiles. Each follows one strict-wide contract:
 
 1. One source dataset becomes one dedicated SQL data table.
 2. One SPSS case becomes one SQL row.
@@ -134,7 +134,7 @@ composer check
 
 `composer check` validates Composer configuration, lints PHP, checks style, runs PHPStan and runs PHPUnit. Use `composer fix` for safe style fixes, then rerun `composer check`.
 
-GitHub Actions runs the regular suite on PHP 8.4 and 8.5. It also runs real SAV and ZSAV integration round trips against PostgreSQL 17, MySQL 8.4 and MariaDB 11.4. Those profile checks use their PDO drivers and php-spss V3 read/write paths, not only DDL snapshots.
+GitHub Actions runs the regular suite on PHP 8.4 and 8.5. It also runs real SAV and ZSAV integration round trips against PostgreSQL 17 and 18, MySQL 8.4 and 9.7, and MariaDB 11.4, 11.8 and 12.3. Those profile checks use their PDO drivers and php-spss V3 read/write paths, not only DDL snapshots.
 
 ## Contributing
 

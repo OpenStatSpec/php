@@ -28,8 +28,8 @@ The public `SpssAdapter` chooses a profile from the PDO driver:
 | PDO driver | Profile | Current coverage |
 | --- | --- | --- |
 | `sqlite` | SQLite | in-memory unit and round-trip suite |
-| `pgsql` | PostgreSQL | live PostgreSQL 17 SAV/ZSAV CI round trips |
-| `mysql` | MySQL/MariaDB | live MySQL 8.4 and MariaDB 11.4 SAV/ZSAV CI round trips |
+| `pgsql` | PostgreSQL | live PostgreSQL 17 and 18 SAV/ZSAV CI round trips |
+| `mysql` | MySQL/MariaDB | live MySQL 8.4/9.7 and MariaDB 11.4/11.8/12.3 SAV/ZSAV CI round trips |
 
 Every profile creates the same logical strict-wide layout and metadata catalogue. Physical SQL types, identifier limits and capability preflight are profile-specific. A source that cannot be represented must be rejected before an incomplete substitute is created.
 

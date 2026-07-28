@@ -31,15 +31,16 @@ jobs:
       - run: composer check
 
   postgres-integration:
-    name: PostgreSQL integration / PHP ${{ matrix.php }}
+    name: PostgreSQL ${{ matrix.postgres }} integration / PHP ${{ matrix.php }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         php: ['8.4', '8.5']
+        postgres: ['17', '18']
     services:
       postgres:
-        image: postgres:17
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_DB: openstatspec
           POSTGRES_USER: openstatspec
@@ -72,15 +73,16 @@ jobs:
       - run: vendor/bin/phpunit --filter "PostgreSqlSpssRoundTripTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest"
 
   mysql-integration:
-    name: MySQL 8.4 integration / PHP ${{ matrix.php }}
+    name: MySQL ${{ matrix.mysql }} integration / PHP ${{ matrix.php }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         php: ['8.4', '8.5']
+        mysql: ['8.4', '9.7']
     services:
       mysql:
-        image: mysql:8.4
+        image: mysql:${{ matrix.mysql }}
         env:
           MYSQL_DATABASE: openstatspec
           MYSQL_USER: openstatspec
@@ -114,15 +116,16 @@ jobs:
       - run: vendor/bin/phpunit --filter "MySqlSpssRoundTripTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest"
 
   mariadb-integration:
-    name: MariaDB 11.4 integration / PHP ${{ matrix.php }}
+    name: MariaDB ${{ matrix.mariadb }} integration / PHP ${{ matrix.php }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         php: ['8.4', '8.5']
+        mariadb: ['11.4', '11.8', '12.3']
     services:
       mariadb:
-        image: mariadb:11.4
+        image: mariadb:${{ matrix.mariadb }}
         env:
           MARIADB_DATABASE: openstatspec
           MARIADB_USER: openstatspec

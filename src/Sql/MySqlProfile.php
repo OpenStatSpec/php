@@ -26,7 +26,7 @@ final class MySqlProfile extends AbstractPdoSqlProfile
     }
     public function serverVersionRange(): string
     {
-        return 'MySQL 8.4.x or MariaDB 11.4.x';
+        return 'MySQL 8.4.x/9.7.x or MariaDB 11.4.x/11.8.x/12.3.x';
     }
     public function ddlAtomic(): bool
     {

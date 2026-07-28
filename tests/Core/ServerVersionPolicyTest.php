@@ -17,11 +17,15 @@ final class ServerVersionPolicyTest extends TestCase
     /** @return iterable<string, array{string, string, bool, ?string}> */
     public static function versions(): iterable
     {
-        yield 'MySQL supported' => ['mysql', '8.4.3', true, 'MySQL 8.4.x'];
+        yield 'MySQL LTS supported' => ['mysql', '8.4.3', true, 'MySQL 8.4.x or 9.7.x'];
+        yield 'MySQL latest supported' => ['mysql', '9.7.1', true, 'MySQL 8.4.x or 9.7.x'];
         yield 'MySQL old' => ['mysql', '8.0.40', false, null];
-        yield 'MariaDB supported' => ['mariadb', '11.4.5-MariaDB-ubu2404', true, 'MariaDB 11.4.x'];
+        yield 'MariaDB previous LTS supported' => ['mariadb', '11.4.5-MariaDB-ubu2404', true, 'MariaDB 11.4.x, 11.8.x or 12.3.x'];
+        yield 'MariaDB LTS supported' => ['mariadb', '11.8.8-MariaDB-ubu2404', true, 'MariaDB 11.4.x, 11.8.x or 12.3.x'];
+        yield 'MariaDB latest supported' => ['mariadb', '12.3.2-MariaDB-ubu2404', true, 'MariaDB 11.4.x, 11.8.x or 12.3.x'];
         yield 'MariaDB old' => ['mariadb', '10.11.11-MariaDB', false, null];
-        yield 'PostgreSQL supported' => ['postgresql', '17.5 (Ubuntu 17.5-1)', true, 'PostgreSQL 17.x'];
+        yield 'PostgreSQL previous major supported' => ['postgresql', '17.5 (Ubuntu 17.5-1)', true, 'PostgreSQL 17.x or 18.x'];
+        yield 'PostgreSQL latest supported' => ['postgresql', '18.4 (Debian 18.4-1)', true, 'PostgreSQL 17.x or 18.x'];
         yield 'PostgreSQL old' => ['postgresql', '16.9', false, null];
         yield 'SQLite lower boundary supported' => ['sqlite', '3.24.0', true, 'SQLite >=3.24.0 <4.0.0'];
         yield 'SQLite current supported' => ['sqlite', 'SQLite 3.46.1', true, 'SQLite >=3.24.0 <4.0.0'];
@@ -56,7 +60,7 @@ final class ServerVersionPolicyTest extends TestCase
             self::fail('Unsupported server version was accepted.');
         } catch (UnsupportedOperation $exception) {
             self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
-            self::assertStringContainsString('outside the claimed profile MySQL 8.4.x', $exception->getMessage());
+            self::assertStringContainsString('outside the claimed profile MySQL 8.4.x or 9.7.x', $exception->getMessage());
         }
     }
 }

@@ -24,7 +24,7 @@ final class PostgreSqlProfile extends AbstractPdoSqlProfile
     }
     public function serverVersionRange(): string
     {
-        return 'PostgreSQL 17.x';
+        return 'PostgreSQL 17.x or 18.x';
     }
     public function ddlAtomic(): bool
     {
