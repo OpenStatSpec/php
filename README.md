@@ -66,6 +66,17 @@ Pass only loss codes consciously accepted for that conversion. `operation_catalo
 
 See [docs/architecture.md](docs/architecture.md) for the complete relational contract.
 
+## Upgrading an existing catalogue
+
+After upgrading the package, run the catalogue migration once before importing or exporting:
+
+```php
+$adapter = new SpssAdapter($pdo);
+$adapter->migrateCatalog();
+```
+
+The migration is idempotent. It upgrades the compatibility catalogue, creates the versioned normative OpenStatSpec catalogue, and backfills datasets imported by earlier adapter versions. Back up a production database before package upgrades and run this call from the application's normal deployment migration. The current catalogue migration version is recorded in `openstatspec_schema_migration`.
+
 ## Testing and CI
 
 Run the local gate before committing:

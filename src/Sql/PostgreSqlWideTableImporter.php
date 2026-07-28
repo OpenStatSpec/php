@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OpenStatSpec\Sql;
 
 use OpenStatSpec\Core\DiagnosticCode;
+use OpenStatSpec\Core\Binary64;
 use OpenStatSpec\Core\UnsupportedOperation;
 use PDO;
 use PDOStatement;
@@ -335,14 +336,14 @@ final readonly class PostgreSqlWideTableImporter
         return is_float($value) || is_int($value) ? (float) $value : null;
     }
 
-    /** @return array{string, float|null, string|null} */
+    /** @return array{string, string|null, string|null} */
     private function dictionaryValue(mixed $value): array
     {
         if (is_string($value)) {
             return ['text', null, $value];
         }
         if (is_int($value) || is_float($value)) {
-            return ['numeric', (float) $value, null];
+            return ['numeric', Binary64::encode($value), null];
         }
 
         throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS dictionary values must be strings or binary64 numbers.');

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OpenStatSpec\Sql;
 
 use OpenStatSpec\Core\DiagnosticCode;
+use OpenStatSpec\Core\Binary64;
 use OpenStatSpec\Core\UnsupportedOperation;
 use PDO;
 
@@ -174,7 +175,7 @@ final readonly class NormativeCatalog
                 }
                 $value = $label['value'];
                 $this->statement('INSERT INTO value_label (value_label_id, value_label_set_id, ordinal, code_kind, numeric_code, string_code, label) VALUES (?, ?, ?, ?, ?, ?, ?)')->execute([
-                    self::uuid(), $valueLabelSetId, $ordinal + 1, is_string($value) ? 'string' : 'numeric', is_string($value) ? null : $value, is_string($value) ? $value : null, $label['label'],
+                    self::uuid(), $valueLabelSetId, $ordinal + 1, is_string($value) ? 'string' : 'numeric', is_string($value) ? null : Binary64::encode($value), is_string($value) ? $value : null, $label['label'],
                 ]);
             }
             foreach ($this->list($set['indexes'] ?? null, 'Value-label variable indexes') as $index) {
@@ -205,7 +206,7 @@ final readonly class NormativeCatalog
             throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The source missing-value rule is malformed.');
         }
         $this->statement('INSERT INTO missing_rule (missing_rule_id, variable_id, ordinal, rule_kind, code_kind, numeric_value, string_value, numeric_lower, numeric_upper, lower_special, upper_special) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
-            self::uuid(), $variableId, 1, 'numeric_range', null, null, null, $values[0], $values[1], null, null,
+            self::uuid(), $variableId, 1, 'numeric_range', null, null, null, Binary64::encode($values[0]), Binary64::encode($values[1]), null, null,
         ]);
         if ($format === -3) {
             $this->storeDiscreteMissingRule($variableId, 2, $values[2] ?? null);
@@ -218,7 +219,7 @@ final readonly class NormativeCatalog
             throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A discrete missing value must be numeric or string.');
         }
         $this->statement('INSERT INTO missing_rule (missing_rule_id, variable_id, ordinal, rule_kind, code_kind, numeric_value, string_value, numeric_lower, numeric_upper, lower_special, upper_special) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
-            self::uuid(), $variableId, $ordinal, 'discrete', is_string($value) ? 'string' : 'numeric', is_string($value) ? null : $value, is_string($value) ? $value : null, null, null, null, null,
+            self::uuid(), $variableId, $ordinal, 'discrete', is_string($value) ? 'string' : 'numeric', is_string($value) ? null : Binary64::encode($value), is_string($value) ? $value : null, null, null, null, null,
         ]);
     }
 

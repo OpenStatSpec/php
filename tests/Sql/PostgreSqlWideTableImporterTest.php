@@ -182,13 +182,13 @@ final class PostgreSqlWideTableImporterTest extends TestCase
         ], 'customer survey');
 
         self::assertSame([
-            ['customer survey', 1, 1, 'numeric', -99.0, null],
-            ['customer survey', 1, 2, 'numeric', 99.0, null],
-            ['customer survey', 1, 3, 'numeric', -1.0, null],
+            ['customer survey', 1, 1, 'numeric', '-99.0', null],
+            ['customer survey', 1, 2, 'numeric', '99.0', null],
+            ['customer survey', 1, 3, 'numeric', '-1.0', null],
         ], $missingRows);
         self::assertSame([
-            ['customer survey', 1, 1, 'numeric', 1.0, null, 'Yes'],
-            ['customer survey', 1, 2, 'numeric', 2.0, null, 'No'],
+            ['customer survey', 1, 1, 'numeric', '1.0', null, 'Yes'],
+            ['customer survey', 1, 2, 'numeric', '2.0', null, 'No'],
         ], $labelRows);
     }
 

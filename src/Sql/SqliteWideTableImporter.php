@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OpenStatSpec\Sql;
 
 use OpenStatSpec\Core\DiagnosticCode;
+use OpenStatSpec\Core\Binary64;
 use OpenStatSpec\Core\UnsupportedOperation;
 use PDO;
 use Throwable;
@@ -211,7 +212,7 @@ final readonly class SqliteWideTableImporter
             }
             $missing->execute([$datasetName, $index + 1, $format]);
             foreach ($values as $ordinal => $value) {
-                $missingValue->execute([$datasetName, $index + 1, $ordinal + 1, is_string($value) ? 'text' : 'numeric', is_numeric($value) ? (float) $value : null, is_string($value) ? $value : null]);
+                $missingValue->execute([$datasetName, $index + 1, $ordinal + 1, is_string($value) ? 'text' : 'numeric', is_int($value) || is_float($value) ? Binary64::encode($value) : null, is_string($value) ? $value : null]);
             }
         }
         $label = $this->pdo->prepare('INSERT INTO value_labels (dataset_name, variable_ordinal, ordinal, value_kind, numeric_value, text_value, label) VALUES (?, ?, ?, ?, ?, ?, ?)');
@@ -231,7 +232,7 @@ final readonly class SqliteWideTableImporter
                     if (!is_string($text)) {
                         continue;
                     }
-                    $label->execute([$datasetName, $index + 1, $ordinal + 1, is_string($value) ? 'text' : 'numeric', is_numeric($value) ? (float) $value : null, is_string($value) ? $value : null, $text]);
+                    $label->execute([$datasetName, $index + 1, $ordinal + 1, is_string($value) ? 'text' : 'numeric', is_int($value) || is_float($value) ? Binary64::encode($value) : null, is_string($value) ? $value : null, $text]);
                 }
             }
         }

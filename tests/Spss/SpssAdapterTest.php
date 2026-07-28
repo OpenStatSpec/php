@@ -221,6 +221,27 @@ final class SpssAdapterTest extends TestCase
             [],
             self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dataset_not_created'"),
         );
+        self::assertSame(
+            [[
+                'operation_kind' => 'import',
+                'status' => 'failed',
+                'source_format' => 'por',
+                'has_started_at' => 1,
+                'has_completed_at' => 1,
+            ]],
+            self::rows($pdo, 'SELECT operation_kind, status, source_format, started_at IS NOT NULL AS has_started_at, completed_at IS NOT NULL AS has_completed_at FROM operation'),
+        );
+        self::assertSame(
+            [[
+                'direction' => 'import',
+                'severity' => 'error',
+                'event_code' => 'unsupported_source_format',
+                'source_item' => 'fixture.por',
+                'dataset_is_null' => 1,
+                'has_created_at' => 1,
+            ]],
+            self::rows($pdo, 'SELECT direction, severity, event_code, source_item, dataset_id IS NULL AS dataset_is_null, created_at IS NOT NULL AS has_created_at FROM fidelity_event'),
+        );
     }
 
     public function testImportAllowsZsav(): void
@@ -366,6 +387,46 @@ final class SpssAdapterTest extends TestCase
         self::assertSame("P\u{00E4}ritolu: k\u{00FC}sitlus", $technical->provenance);
         self::assertSame('UTF-8', $technical->encoding);
         self::assertSame("OpenStatSpec t\u{00F6}\u{00F6}riist", $technical->productName);
+    }
+
+    public function testMigrateCatalogBackfillsLegacyDatasetsAndIsIdempotent(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $pdo = new PDO('sqlite::memory:');
+        $engine = new FakeSpssEngine($this->fixture());
+        (new SpssAdapter($pdo, $engine, false))->import('legacy-fixture.sav', 'Legacy survey');
+
+        self::assertSame([], self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dataset'"));
+
+        $adapter = new SpssAdapter($pdo, $engine);
+        $adapter->migrateCatalog();
+        $adapter->migrateCatalog();
+
+        self::assertSame(
+            [[
+                'spec_version' => '1.0',
+                'source_format' => 'zsav',
+                'physical_table_name' => 'dataset_legacy_survey',
+                'dataset_name' => 'Legacy survey',
+                'source_case_count' => 2,
+            ]],
+            self::rows($pdo, 'SELECT spec_version, source_format, physical_table_name, dataset_name, source_case_count FROM dataset'),
+        );
+        self::assertSame(
+            [['version' => 1]],
+            self::rows($pdo, 'SELECT version FROM openstatspec_schema_migration ORDER BY version'),
+        );
+        self::assertSame(
+            [['variable_count' => 2]],
+            self::rows($pdo, 'SELECT COUNT(*) AS variable_count FROM variable'),
+        );
+
+        $export = $adapter->export('Legacy survey', 'legacy-roundtrip.sav');
+        self::assertSame(2, $export->caseCount);
+        self::assertSame([[7.0, 'blue'], [8.0, 'green']], $engine->lastWrite()['dataset']->rows());
     }
 
     private function fixture(): Dataset

@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+env:
+  OPENSTATSPEC_SPECIFICATION_DIR: ${{ github.workspace }}/openstatspec-specification
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -14,6 +17,12 @@ jobs:
     name: PHP ${{ matrix.php }}
     steps:
       - uses: actions/checkout@v7
+      - name: Checkout OpenStatSpec specification fixtures
+        uses: actions/checkout@v7
+        with:
+          repository: OpenStatSpec/specification
+          ref: b2c9283eb3bf7103bff324731922358672974aee
+          path: openstatspec-specification
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
@@ -44,13 +53,19 @@ jobs:
       OPENSTATSPEC_PG_PASSWORD: openstatspec
     steps:
       - uses: actions/checkout@v7
+      - name: Checkout OpenStatSpec specification fixtures
+        uses: actions/checkout@v7
+        with:
+          repository: OpenStatSpec/specification
+          ref: b2c9283eb3bf7103bff324731922358672974aee
+          path: openstatspec-specification
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
           coverage: none
           extensions: pdo_pgsql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "PostgreSqlSpssRoundTripTest|StrictSpssDictionaryConformanceTest"
+      - run: vendor/bin/phpunit --filter "PostgreSqlSpssRoundTripTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest"
 
   mysql-integration:
     name: MySQL 8.4 integration
@@ -76,13 +91,19 @@ jobs:
       OPENSTATSPEC_MYSQL_PASSWORD: openstatspec
     steps:
       - uses: actions/checkout@v7
+      - name: Checkout OpenStatSpec specification fixtures
+        uses: actions/checkout@v7
+        with:
+          repository: OpenStatSpec/specification
+          ref: b2c9283eb3bf7103bff324731922358672974aee
+          path: openstatspec-specification
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
           coverage: none
           extensions: pdo_mysql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "MySqlSpssRoundTripTest|StrictSpssDictionaryConformanceTest"
+      - run: vendor/bin/phpunit --filter "MySqlSpssRoundTripTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest"
 
   mariadb-integration:
     name: MariaDB 11.4 integration
@@ -108,10 +129,16 @@ jobs:
       OPENSTATSPEC_MARIADB_PASSWORD: openstatspec
     steps:
       - uses: actions/checkout@v7
+      - name: Checkout OpenStatSpec specification fixtures
+        uses: actions/checkout@v7
+        with:
+          repository: OpenStatSpec/specification
+          ref: b2c9283eb3bf7103bff324731922358672974aee
+          path: openstatspec-specification
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
           coverage: none
           extensions: pdo_mysql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "MariaDbSpssRoundTripTest|StrictSpssDictionaryConformanceTest"
+      - run: vendor/bin/phpunit --filter "MariaDbSpssRoundTripTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest"
