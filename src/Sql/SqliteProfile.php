@@ -14,6 +14,22 @@ final class SqliteProfile extends AbstractPdoSqlProfile
     {
         return 1999;
     }
+    public function maximumValueBytes(): int
+    {
+        return 1_000_000_000;
+    }
+    public function maximumRowBytes(): int
+    {
+        return 1_000_000_000;
+    }
+    public function serverVersionRange(): string
+    {
+        return 'SQLite 3.35+';
+    }
+    public function ddlAtomic(): bool
+    {
+        return true;
+    }
     public function identifierLimit(): int
     {
         return 255;

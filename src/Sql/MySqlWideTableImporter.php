@@ -40,6 +40,8 @@ final readonly class MySqlWideTableImporter
             );
         }
 
+        (new MySqlProfile())->assertDataset($variables, $rows);
+
         $schema = new MySqlSchema($this->pdo);
         // Complete physical-name and width preflight happens before any DDL.
         $definition = $schema->wideTableDefinition($datasetName, $variables);
@@ -59,7 +61,7 @@ final readonly class MySqlWideTableImporter
                 (new SqliteV3MetadataImporter($this->pdo))->store($datasetName, $source);
             }
             $this->insertCases($definition, $rows);
-            if ($sourcePath !== "" && is_file($sourcePath)) {
+            if ($sourcePath !== "") {
                 (new NormativeCatalog($this->pdo))->storeImportedDataset($datasetName, $sourcePath, $source);
             }
             $this->pdo->commit();

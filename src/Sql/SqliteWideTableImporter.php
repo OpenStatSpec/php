@@ -24,7 +24,11 @@ final readonly class SqliteWideTableImporter
     public function import(array $source, string $datasetName, string $sourcePath = ""): void
     {
         $variables = $this->variables($source['variables']);
-        $this->profile->assertCanRepresent(count($variables));
+        $sourceRows = $source['data'] ?? null;
+        if (!is_array($sourceRows) || !array_is_list($sourceRows)) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The source dataset must contain an ordered case list.');
+        }
+        $this->profile->assertDataset($source['variables'], $sourceRows);
         $tableName = 'dataset_' . $this->identifier($datasetName);
 
         $this->pdo->beginTransaction();
@@ -42,8 +46,8 @@ final readonly class SqliteWideTableImporter
                 $catalog->execute([$datasetName, $variable['ordinal'], $variable['source'], $variable['column'], $variable['kind'], $variable['width'], $variable['formatFamily'], $variable['formatWidth'], $variable['formatDecimals'], $variable['writeFormatFamily'], $variable['writeFormatWidth'], $variable['writeFormatDecimals'], $variable['label']]);
             }
             $this->storeWeightVariable($datasetName, $source['weightVariableName'] ?? null, $variables);
-            $this->insertCases($tableName, $variables, $source['data']);
-            if ($sourcePath !== "" && is_file($sourcePath)) {
+            $this->insertCases($tableName, $variables, $sourceRows);
+            if ($sourcePath !== "") {
                 (new NormativeCatalog($this->pdo))->storeImportedDataset($datasetName, $sourcePath, $source);
             }
             $this->pdo->commit();

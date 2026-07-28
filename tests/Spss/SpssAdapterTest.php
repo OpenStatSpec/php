@@ -7,6 +7,8 @@ namespace OpenStatSpec\Tests\Spss;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Spss\PhpSpssEngine;
 use OpenStatSpec\Spss\SpssAdapter;
+use OpenStatSpec\Spss\SpssSourceNormalizer;
+use OpenStatSpec\Sql\SqliteWideTableImporter;
 use OpenStatSpec\Tests\Support\FakeSpssEngine;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -368,6 +370,26 @@ final class SpssAdapterTest extends TestCase
         );
     }
 
+    public function testExportReadsCanonicalCatalogInsteadOfLegacyMetadata(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $pdo = new PDO('sqlite::memory:');
+        $engine = new FakeSpssEngine($this->fixture());
+        $adapter = new SpssAdapter($pdo, $engine);
+        $adapter->import('fixture.sav', 'canonical fixture');
+        $pdo->exec("UPDATE variable SET variable_label = 'Canonical label' WHERE dataset_id = (SELECT dataset_id FROM dataset WHERE dataset_name = 'canonical fixture') AND source_ordinal = 1");
+        $pdo->exec("UPDATE variables SET label = 'Legacy-only label' WHERE dataset_name = 'canonical fixture' AND ordinal = 1");
+        $adapter->export('canonical fixture', 'canonical-roundtrip.sav');
+
+        self::assertSame('Canonical label', $engine->lastWrite()['dataset']->variables()[0]->label);
+        $legacyLabel = $pdo->query("SELECT label FROM variables WHERE dataset_name = 'canonical fixture' AND ordinal = 1");
+        self::assertInstanceOf(\PDOStatement::class, $legacyLabel);
+        self::assertSame('Canonical label', $legacyLabel->fetchColumn());
+    }
+
     public function testExportRestoresCataloguedTechnicalMetadataWhileTargetDeterminesContainer(): void
     {
         if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
@@ -397,7 +419,7 @@ final class SpssAdapterTest extends TestCase
 
         $pdo = new PDO('sqlite::memory:');
         $engine = new FakeSpssEngine($this->fixture());
-        (new SpssAdapter($pdo, $engine, false))->import('legacy-fixture.sav', 'Legacy survey');
+        (new SqliteWideTableImporter($pdo))->import(SpssSourceNormalizer::normalize($this->fixture()), 'Legacy survey');
 
         self::assertSame([], self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dataset'"));
 
@@ -416,7 +438,7 @@ final class SpssAdapterTest extends TestCase
             self::rows($pdo, 'SELECT spec_version, source_format, physical_table_name, dataset_name, source_case_count FROM dataset'),
         );
         self::assertSame(
-            [['version' => 1]],
+            [['version' => 1], ['version' => 2]],
             self::rows($pdo, 'SELECT version FROM openstatspec_schema_migration ORDER BY version'),
         );
         self::assertSame(

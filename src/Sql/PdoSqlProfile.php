@@ -12,6 +12,14 @@ interface PdoSqlProfile
 
     public function identifierLimit(): int;
 
+    public function maximumValueBytes(): int;
+
+    public function maximumRowBytes(): int;
+
+    public function serverVersionRange(): string;
+
+    public function ddlAtomic(): bool;
+
     public function quoteIdentifier(string $identifier): string;
 
     public function numericType(): string;
@@ -27,4 +35,10 @@ interface PdoSqlProfile
     public function physicalIdentifier(string $source, array $used = []): string;
 
     public function assertCanRepresent(int $sourceVariableCount): void;
+
+    /**
+     * @param list<array<string, mixed>>          $variables
+     * @param list<list<int|float|string|null>> $rows
+     */
+    public function assertDataset(array $variables, array $rows): void;
 }

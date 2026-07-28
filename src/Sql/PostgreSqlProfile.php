@@ -14,6 +14,22 @@ final class PostgreSqlProfile extends AbstractPdoSqlProfile
     {
         return 1599;
     }
+    public function maximumValueBytes(): int
+    {
+        return 1_073_741_823;
+    }
+    public function maximumRowBytes(): int
+    {
+        return 1_073_741_823;
+    }
+    public function serverVersionRange(): string
+    {
+        return 'PostgreSQL 16+';
+    }
+    public function ddlAtomic(): bool
+    {
+        return true;
+    }
     public function identifierLimit(): int
     {
         return 63;

@@ -34,6 +34,7 @@ final readonly class NormativeCatalog
             'CREATE TABLE IF NOT EXISTS openstatspec_schema_migration (version INTEGER NOT NULL PRIMARY KEY, applied_at TIMESTAMP NOT NULL)',
             'CREATE TABLE IF NOT EXISTS dataset (dataset_id VARCHAR(36) NOT NULL PRIMARY KEY, spec_version VARCHAR(32) NOT NULL, source_format VARCHAR(16) NOT NULL, physical_table_schema TEXT NULL, physical_table_name TEXT NOT NULL, dataset_name TEXT NULL, dataset_label TEXT NULL, source_encoding TEXT NULL, source_hash VARCHAR(128) NULL, source_case_count BIGINT NOT NULL, imported_at TIMESTAMP NOT NULL)',
             'CREATE TABLE IF NOT EXISTS variable (variable_id VARCHAR(36) NOT NULL PRIMARY KEY, dataset_id VARCHAR(36) NOT NULL, source_ordinal INTEGER NOT NULL, source_name VARCHAR(255) NOT NULL, physical_name VARCHAR(255) NOT NULL, storage_kind VARCHAR(16) NOT NULL, declared_string_width INTEGER NULL, variable_label TEXT NULL, print_format_family TEXT NULL, print_format_width INTEGER NULL, print_format_decimals INTEGER NULL, write_format_family TEXT NULL, write_format_width INTEGER NULL, write_format_decimals INTEGER NULL, measurement_level TEXT NULL, variable_role TEXT NULL, display_width INTEGER NULL, display_alignment TEXT NULL, UNIQUE (dataset_id, source_ordinal), UNIQUE (dataset_id, source_name), UNIQUE (dataset_id, physical_name), FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id))',
+            'CREATE TABLE IF NOT EXISTS dataset_weight_variable (dataset_id VARCHAR(36) NOT NULL PRIMARY KEY, variable_id VARCHAR(36) NOT NULL UNIQUE, FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id), FOREIGN KEY (variable_id) REFERENCES variable(variable_id))',
             'CREATE TABLE IF NOT EXISTS value_label_set (value_label_set_id VARCHAR(36) NOT NULL PRIMARY KEY, dataset_id VARCHAR(36) NOT NULL, name TEXT NULL, FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id))',
             'CREATE TABLE IF NOT EXISTS value_label (value_label_id VARCHAR(36) NOT NULL PRIMARY KEY, value_label_set_id VARCHAR(36) NOT NULL, ordinal INTEGER NOT NULL, code_kind VARCHAR(16) NOT NULL, numeric_code __BINARY64__ NULL, string_code TEXT NULL, label TEXT NOT NULL, UNIQUE (value_label_set_id, ordinal), FOREIGN KEY (value_label_set_id) REFERENCES value_label_set(value_label_set_id))',
             'CREATE TABLE IF NOT EXISTS variable_value_label_set (variable_id VARCHAR(36) NOT NULL PRIMARY KEY, value_label_set_id VARCHAR(36) NOT NULL, FOREIGN KEY (variable_id) REFERENCES variable(variable_id), FOREIGN KEY (value_label_set_id) REFERENCES value_label_set(value_label_set_id))',
@@ -41,15 +42,23 @@ final readonly class NormativeCatalog
             'CREATE TABLE IF NOT EXISTS dataset_attribute (dataset_attribute_id VARCHAR(36) NOT NULL PRIMARY KEY, dataset_id VARCHAR(36) NOT NULL, attribute_name VARCHAR(255) NOT NULL, array_ordinal INTEGER NOT NULL, attribute_value TEXT NOT NULL, UNIQUE (dataset_id, attribute_name, array_ordinal), FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id))',
             'CREATE TABLE IF NOT EXISTS variable_attribute (variable_attribute_id VARCHAR(36) NOT NULL PRIMARY KEY, variable_id VARCHAR(36) NOT NULL, attribute_name VARCHAR(255) NOT NULL, array_ordinal INTEGER NOT NULL, attribute_value TEXT NOT NULL, UNIQUE (variable_id, attribute_name, array_ordinal), FOREIGN KEY (variable_id) REFERENCES variable(variable_id))',
             'CREATE TABLE IF NOT EXISTS document (document_id VARCHAR(36) NOT NULL PRIMARY KEY, dataset_id VARCHAR(36) NOT NULL, source_ordinal INTEGER NOT NULL, document_text TEXT NOT NULL, UNIQUE (dataset_id, source_ordinal), FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id))',
-            'CREATE TABLE IF NOT EXISTS variable_set (variable_set_id VARCHAR(36) NOT NULL PRIMARY KEY, dataset_id VARCHAR(36) NOT NULL, set_name VARCHAR(255) NOT NULL, UNIQUE (dataset_id, set_name), FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id))',
+            'CREATE TABLE IF NOT EXISTS variable_set (variable_set_id VARCHAR(36) NOT NULL PRIMARY KEY, dataset_id VARCHAR(36) NOT NULL, source_ordinal INTEGER NOT NULL, set_name VARCHAR(255) NOT NULL, UNIQUE (dataset_id, source_ordinal), UNIQUE (dataset_id, set_name), FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id))',
             'CREATE TABLE IF NOT EXISTS variable_set_member (variable_set_id VARCHAR(36) NOT NULL, variable_id VARCHAR(36) NOT NULL, source_ordinal INTEGER NOT NULL, PRIMARY KEY (variable_set_id, source_ordinal), UNIQUE (variable_set_id, variable_id), FOREIGN KEY (variable_set_id) REFERENCES variable_set(variable_set_id), FOREIGN KEY (variable_id) REFERENCES variable(variable_id))',
-            'CREATE TABLE IF NOT EXISTS multiple_response_set (multiple_response_set_id VARCHAR(36) NOT NULL PRIMARY KEY, dataset_id VARCHAR(36) NOT NULL, set_name VARCHAR(255) NOT NULL, set_label TEXT NULL, set_kind VARCHAR(4) NOT NULL, counted_numeric_value __BINARY64__ NULL, category_label_behavior TEXT NULL, UNIQUE (dataset_id, set_name), FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id))',
+            'CREATE TABLE IF NOT EXISTS multiple_response_set (multiple_response_set_id VARCHAR(36) NOT NULL PRIMARY KEY, dataset_id VARCHAR(36) NOT NULL, source_ordinal INTEGER NOT NULL, set_name VARCHAR(255) NOT NULL, set_label TEXT NULL, set_kind VARCHAR(4) NOT NULL, counted_value_kind VARCHAR(16) NULL, counted_numeric_value __BINARY64__ NULL, counted_string_value TEXT NULL, category_label_behavior TEXT NULL, label_source TEXT NULL, UNIQUE (dataset_id, source_ordinal), UNIQUE (dataset_id, set_name), FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id))',
             'CREATE TABLE IF NOT EXISTS multiple_response_member (multiple_response_set_id VARCHAR(36) NOT NULL, variable_id VARCHAR(36) NOT NULL, source_ordinal INTEGER NOT NULL, PRIMARY KEY (multiple_response_set_id, source_ordinal), UNIQUE (multiple_response_set_id, variable_id), FOREIGN KEY (multiple_response_set_id) REFERENCES multiple_response_set(multiple_response_set_id), FOREIGN KEY (variable_id) REFERENCES variable(variable_id))',
             'CREATE TABLE IF NOT EXISTS operation (operation_id VARCHAR(36) NOT NULL PRIMARY KEY, operation_kind VARCHAR(16) NOT NULL, status VARCHAR(16) NOT NULL, source_format VARCHAR(16) NULL, started_at TIMESTAMP NOT NULL, completed_at TIMESTAMP NULL)',
             'CREATE TABLE IF NOT EXISTS fidelity_event (fidelity_event_id VARCHAR(36) NOT NULL PRIMARY KEY, operation_id VARCHAR(36) NOT NULL, dataset_id VARCHAR(36) NULL, direction VARCHAR(16) NOT NULL, severity VARCHAR(16) NOT NULL, event_code VARCHAR(96) NOT NULL, source_item TEXT NULL, detail_json TEXT NOT NULL, created_at TIMESTAMP NOT NULL, FOREIGN KEY (operation_id) REFERENCES operation(operation_id), FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id))',
         ] as $statement) {
             $this->pdo->exec(str_replace('__BINARY64__', $binary64, $statement));
         }
+        $this->ensureColumn('variable_set', 'source_ordinal', 'INTEGER NULL');
+        $this->ensureColumn('multiple_response_set', 'source_ordinal', 'INTEGER NULL');
+        $this->ensureColumn('multiple_response_set', 'counted_value_kind', 'VARCHAR(16) NULL');
+        $this->ensureColumn('multiple_response_set', 'counted_string_value', 'TEXT NULL');
+        $this->ensureColumn('multiple_response_set', 'label_source', 'TEXT NULL');
+        $this->backfillSetOrdinals('variable_set', 'variable_set_id');
+        $this->backfillSetOrdinals('multiple_response_set', 'multiple_response_set_id');
+
         $migration = match ($driver) {
             'mysql' => 'INSERT IGNORE INTO openstatspec_schema_migration (version, applied_at) VALUES (?, ?)',
             'pgsql', 'sqlite' => 'INSERT INTO openstatspec_schema_migration (version, applied_at) VALUES (?, ?) ON CONFLICT (version) DO NOTHING',
@@ -57,6 +66,7 @@ final readonly class NormativeCatalog
         };
         if ($migration !== null) {
             $this->pdo->prepare($migration)->execute([1, self::timestamp()]);
+            $this->pdo->prepare($migration)->execute([2, self::timestamp()]);
         }
     }
     public function hasDataset(string $datasetName): bool
@@ -131,6 +141,7 @@ final readonly class NormativeCatalog
             $this->storeVariableAttributes($variableIds[$index + 1], $variable['attributes'] ?? []);
         }
 
+        $this->storeWeightVariable($datasetId, $variableIds, $source['weightVariableName'] ?? null, $variables);
         $this->storeValueLabels($datasetId, $variableIds, $this->list($source['valueLabels'] ?? [], 'Value labels'));
         $this->storeDatasetAttributes($datasetId, $this->list($source['fileAttributes'] ?? [], 'Dataset attributes'));
         $this->storeDocuments($datasetId, $this->list($source['documents'] ?? [], 'Documents'));
@@ -216,8 +227,10 @@ final readonly class NormativeCatalog
         if (!in_array($format, [-2, -3], true) || count($values) < 2) {
             throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The source missing-value rule is malformed.');
         }
+        [$lower, $lowerSpecial] = $this->rangeEndpoint($values[0], true);
+        [$upper, $upperSpecial] = $this->rangeEndpoint($values[1], false);
         $this->statement('INSERT INTO missing_rule (missing_rule_id, variable_id, ordinal, rule_kind, code_kind, numeric_value, string_value, numeric_lower, numeric_upper, lower_special, upper_special) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
-            self::uuid(), $variableId, 1, 'numeric_range', null, null, null, Binary64::encode($values[0]), Binary64::encode($values[1]), null, null,
+            self::uuid(), $variableId, 1, 'numeric_range', null, null, null, $lower, $upper, $lowerSpecial, $upperSpecial,
         ]);
         if ($format === -3) {
             $this->storeDiscreteMissingRule($variableId, 2, $values[2] ?? null);
@@ -284,12 +297,12 @@ final readonly class NormativeCatalog
      */
     private function storeVariableSets(string $datasetId, array $variableIds, array $sets, array $variables): void
     {
-        foreach ($sets as $set) {
+        foreach ($sets as $setOrdinal => $set) {
             if (!is_array($set) || !is_string($set['name'] ?? null)) {
                 throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A variable set needs a name.');
             }
             $setId = self::uuid();
-            $this->statement('INSERT INTO variable_set (variable_set_id, dataset_id, set_name) VALUES (?, ?, ?)')->execute([$setId, $datasetId, $set['name']]);
+            $this->statement('INSERT INTO variable_set (variable_set_id, dataset_id, source_ordinal, set_name) VALUES (?, ?, ?, ?)')->execute([$setId, $datasetId, $setOrdinal + 1, $set['name']]);
             foreach ($this->list($set['variableNames'] ?? null, 'Variable-set members') as $ordinal => $name) {
                 $variableOrdinal = $this->variableOrdinal($variables, $name);
                 $this->statement('INSERT INTO variable_set_member (variable_set_id, variable_id, source_ordinal) VALUES (?, ?, ?)')->execute([$setId, $variableIds[$variableOrdinal], $ordinal + 1]);
@@ -304,20 +317,49 @@ final readonly class NormativeCatalog
      */
     private function storeMultipleResponseSets(string $datasetId, array $variableIds, array $sets, array $variables): void
     {
-        foreach ($sets as $set) {
+        foreach ($sets as $setOrdinal => $set) {
             if (!is_array($set) || !is_string($set['name'] ?? null) || !is_string($set['type'] ?? null)) {
                 throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A multiple-response set needs a name and kind.');
             }
             $setId = self::uuid();
             $counted = $set['countedValue'] ?? null;
-            $this->statement('INSERT INTO multiple_response_set (multiple_response_set_id, dataset_id, set_name, set_label, set_kind, counted_numeric_value, category_label_behavior) VALUES (?, ?, ?, ?, ?, ?, ?)')->execute([
-                $setId, $datasetId, $set['name'], is_string($set['label'] ?? null) ? $set['label'] : null, $set['type'] === 'dichotomy' ? 'MD' : 'MC', is_int($counted) || is_float($counted) ? $counted : null, is_string($set['categoryLabels'] ?? null) ? $set['categoryLabels'] : null,
+            $countedKind = is_string($counted) ? 'string' : (is_int($counted) || is_float($counted) ? 'numeric' : null);
+            $this->statement('INSERT INTO multiple_response_set (multiple_response_set_id, dataset_id, source_ordinal, set_name, set_label, set_kind, counted_value_kind, counted_numeric_value, counted_string_value, category_label_behavior, label_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
+                $setId, $datasetId, $setOrdinal + 1, $set['name'], is_string($set['label'] ?? null) ? $set['label'] : null, $set['type'] === 'dichotomy' ? 'MD' : 'MC', $countedKind, is_int($counted) || is_float($counted) ? $counted : null, is_string($counted) ? $counted : null, is_string($set['categoryLabels'] ?? null) ? $set['categoryLabels'] : null, is_string($set['labelSource'] ?? null) ? $set['labelSource'] : null,
             ]);
             foreach ($this->list($set['variableNames'] ?? null, 'Multiple-response members') as $ordinal => $name) {
                 $variableOrdinal = $this->variableOrdinal($variables, $name);
                 $this->statement('INSERT INTO multiple_response_member (multiple_response_set_id, variable_id, source_ordinal) VALUES (?, ?, ?)')->execute([$setId, $variableIds[$variableOrdinal], $ordinal + 1]);
             }
         }
+    }
+
+    /**
+     * @param array<int, string> $variableIds
+     * @param list<mixed> $variables
+     */
+    private function storeWeightVariable(string $datasetId, array $variableIds, mixed $name, array $variables): void
+    {
+        if ($name === null) {
+            return;
+        }
+        $ordinal = $this->variableOrdinal($variables, $name);
+        $this->statement('INSERT INTO dataset_weight_variable (dataset_id, variable_id) VALUES (?, ?)')->execute([$datasetId, $variableIds[$ordinal]]);
+    }
+
+    /** @return array{0: ?string, 1: ?string} */
+    private function rangeEndpoint(mixed $value, bool $lower): array
+    {
+        if (!is_int($value) && !is_float($value)) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A numeric missing-value range endpoint must be numeric.');
+        }
+        if ($lower && (float) $value < -1.0e308) {
+            return [null, 'LOWEST'];
+        }
+        if (!$lower && (float) $value > 1.0e308) {
+            return [null, 'HIGHEST'];
+        }
+        return [Binary64::encode($value), null];
     }
 
     /** @param list<mixed> $variables */
@@ -364,6 +406,32 @@ final readonly class NormativeCatalog
     private function format(mixed $value): ?string
     {
         return is_int($value) || is_string($value) ? (string) $value : null;
+    }
+
+    private function backfillSetOrdinals(string $table, string $idColumn): void
+    {
+        $rows = $this->pdo->query('SELECT ' . $idColumn . ', dataset_id, source_ordinal FROM ' . $table . ' ORDER BY dataset_id, ' . $idColumn);
+        if ($rows === false) {
+            return;
+        }
+        $ordinals = [];
+        $update = $this->statement('UPDATE ' . $table . ' SET source_ordinal = ? WHERE ' . $idColumn . ' = ?');
+        while (($row = $rows->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $datasetId = (string) $row['dataset_id'];
+            $ordinals[$datasetId] = ($ordinals[$datasetId] ?? 0) + 1;
+            if ($row['source_ordinal'] === null) {
+                $update->execute([$ordinals[$datasetId], $row[$idColumn]]);
+            }
+        }
+    }
+
+    private function ensureColumn(string $table, string $column, string $definition): void
+    {
+        try {
+            $this->pdo->query('SELECT ' . $column . ' FROM ' . $table . ' WHERE 1 = 0');
+        } catch (\PDOException) {
+            $this->pdo->exec('ALTER TABLE ' . $table . ' ADD COLUMN ' . $column . ' ' . $definition);
+        }
     }
 
     private function statement(string $sql): \PDOStatement

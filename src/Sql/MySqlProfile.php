@@ -14,6 +14,26 @@ final class MySqlProfile extends AbstractPdoSqlProfile
     {
         return 1016;
     }
+    public function maximumValueBytes(): int
+    {
+        return 4_294_967_295;
+    }
+    public function maximumRowBytes(): int
+    {
+        return 65_535;
+    }
+    public function serverVersionRange(): string
+    {
+        return 'MySQL 8.0+ or MariaDB 10.6+';
+    }
+    public function ddlAtomic(): bool
+    {
+        return false;
+    }
+    protected function rowStorageBytes(string $kind, int $declaredWidth): int
+    {
+        return $kind === 'string' ? 20 : 8;
+    }
     public function identifierLimit(): int
     {
         return 64;

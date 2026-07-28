@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Spss;
 
+use OpenStatSpec\Core\CapabilityDeclaration;
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\FidelityPolicy;
 use OpenStatSpec\Core\UnsupportedOperation;
+use OpenStatSpec\Sql\CanonicalCatalogProjection;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\MySqlWideTableExporter;
 use OpenStatSpec\Sql\MySqlSchema;
@@ -25,13 +27,17 @@ final readonly class SpssAdapter
 {
     private Connection $connection;
     private SpssEngine $engine;
-    private bool $recordNormativeCatalog;
 
-    public function __construct(PDO $pdo, ?SpssEngine $engine = null, bool $recordNormativeCatalog = true)
+    public function __construct(PDO $pdo, ?SpssEngine $engine = null)
     {
         $this->connection = new Connection($pdo);
         $this->engine = $engine ?? new PhpSpssEngine();
-        $this->recordNormativeCatalog = $recordNormativeCatalog;
+    }
+
+    /** @return array<string, mixed> */
+    public function capabilities(): array
+    {
+        return (new CapabilityDeclaration($this->engine))->toArray();
     }
 
     public function pdo(): PDO
@@ -96,7 +102,7 @@ final readonly class SpssAdapter
     {
         $sourceFormat = $this->spssFormat($sourcePath);
         $journal = new OperationJournal($this->connection->pdo);
-        $operationId = $journal->start('import', null, $sourcePath, engineDetails: $this->engine->identity(), sourceFormat: $sourceFormat, recordNormative: $this->recordNormativeCatalog);
+        $operationId = $journal->start('import', null, $sourcePath, engineDetails: $this->engine->identity(), sourceFormat: $sourceFormat);
         try {
             if (!in_array($sourceFormat, ['sav', 'zsav'], true)) {
                 throw new UnsupportedOperation(
@@ -111,11 +117,11 @@ final readonly class SpssAdapter
                 default => (new SqliteWideTableImporter($this->connection->pdo))->import($source, $datasetName, $sourcePath),
             };
             $diagnostics = [];
-            $journal->succeed($operationId, $datasetName, $diagnostics, $this->recordNormativeCatalog);
+            $journal->succeed($operationId, $datasetName, $diagnostics);
 
             return new SpssImportResult($operationId, $datasetName, count($source['data']), $diagnostics);
         } catch (Throwable $exception) {
-            $journal->fail($operationId, null, $exception, sourceItem: $sourcePath, recordNormative: $this->recordNormativeCatalog);
+            $journal->fail($operationId, null, $exception, sourceItem: $sourcePath);
             throw $exception;
         }
     }
@@ -125,7 +131,7 @@ final readonly class SpssAdapter
     {
         $targetFormat = $this->spssFormat($targetPath);
         $journal = new OperationJournal($this->connection->pdo);
-        $operationId = $journal->start('export', $datasetName, $targetPath, $allowLoss, $this->engine->identity(), $targetFormat, $this->recordNormativeCatalog);
+        $operationId = $journal->start('export', $datasetName, $targetPath, $allowLoss, $this->engine->identity(), $targetFormat);
         $diagnostics = [];
         try {
             if (!in_array($targetFormat, ['sav', 'zsav'], true)) {
@@ -134,6 +140,7 @@ final readonly class SpssAdapter
                     'This adapter profile exports SAV and ZSAV files only.',
                 );
             }
+            (new CanonicalCatalogProjection($this->connection->pdo))->synchronize($datasetName);
             $export = match ($this->connection->profile->driverName()) {
                 'pgsql' => (new PostgreSqlWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat),
                 'mysql' => (new MySqlWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat),
@@ -142,11 +149,11 @@ final readonly class SpssAdapter
             $diagnostics = $export['diagnostics'];
             FidelityPolicy::assertExportAllowed($diagnostics, $allowLoss);
             $this->engine->write($targetPath, $export['dataset']);
-            $journal->succeed($operationId, $datasetName, $diagnostics, $this->recordNormativeCatalog);
+            $journal->succeed($operationId, $datasetName, $diagnostics);
 
             return new SpssExportResult($operationId, $datasetName, $targetPath, $export['caseCount'], $diagnostics, $allowLoss);
         } catch (Throwable $exception) {
-            $journal->fail($operationId, $datasetName, $exception, $diagnostics, $targetPath, $this->recordNormativeCatalog);
+            $journal->fail($operationId, $datasetName, $exception, $diagnostics, $targetPath);
             throw $exception;
         }
     }
