@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Tests\Spss;
 
+use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Spss\PhpSpssEngine;
 use OpenStatSpec\Spss\SpssAdapter;
 use OpenStatSpec\Spss\SpssSourceNormalizer;
+use OpenStatSpec\Sql\CatalogOwnership;
+use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Sql\SqliteWideTableImporter;
 use OpenStatSpec\Tests\Support\FakeSpssEngine;
 use PDO;
@@ -40,7 +43,122 @@ final class SpssAdapterTest extends TestCase
     {
         self::assertTrue((new PhpSpssEngine())->isAvailable());
         self::assertTrue(class_exists(Dataset::class));
-        self::assertSame(["package" => "tiamo/spss", "version" => "3.0.0"], (new PhpSpssEngine())->identity());
+        self::assertSame([
+            'package' => 'tiamo/spss',
+            'version' => '3.0.0',
+            'active_version' => '3.0.0',
+            'claimed_version_range' => '>=3.0.0 <4.0.0',
+            'ci_tested_versions' => ['3.0.0'],
+            'claimed_supported' => true,
+        ], (new PhpSpssEngine())->identity());
+    }
+
+    public function testSuccessfulMigrationAdvancesOlderIdentityVersion(): void
+    {
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        CatalogOwnership::ensure($pdo);
+        $pdo->exec('UPDATE catalog_identity SET schema_version = 1');
+
+        (new SpssAdapter($pdo, new FakeSpssEngine($this->fixture())))->migrateCatalog();
+
+        self::assertSame([['schema_version' => 3]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
+    }
+
+    public function testFailedMigrationDoesNotAdvanceOlderIdentityVersion(): void
+    {
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        CatalogOwnership::ensure($pdo);
+        $pdo->exec('UPDATE catalog_identity SET schema_version = 1');
+        $pdo->exec('CREATE TABLE datasets (application_id INTEGER PRIMARY KEY)');
+
+        try {
+            (new SpssAdapter($pdo, new FakeSpssEngine($this->fixture())))->migrateCatalog();
+            self::fail('A malformed legacy catalogue unexpectedly migrated.');
+        } catch (\PDOException|UnsupportedOperation) {
+            self::assertSame([['schema_version' => 1]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
+        }
+    }
+
+    public function testImportRequiresExplicitMigrationForOlderIdentityWithoutJournalMutation(): void
+    {
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        CatalogOwnership::ensure($pdo);
+        (new NormativeCatalog($pdo))->createTables();
+        $pdo->exec('UPDATE catalog_identity SET schema_version = 1');
+        $adapter = new SpssAdapter($pdo, new FakeSpssEngine($this->fixture()));
+
+        try {
+            $adapter->import('fixture.sav', 'Old catalog import');
+            self::fail('Import used an older catalogue without explicit migration.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::CatalogMigrationRequired, $exception->diagnosticCode);
+        }
+
+        self::assertSame([['schema_version' => 1]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
+        self::assertSame([], self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'operation_catalog'"));
+
+        $adapter->migrateCatalog();
+        $result = $adapter->import('fixture.sav', 'Old catalog import');
+
+        self::assertSame(2, $result->caseCount);
+        self::assertSame([['schema_version' => 3]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
+    }
+
+    public function testExportRequiresExplicitMigrationForOlderIdentityWithoutJournalMutation(): void
+    {
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $adapter = new SpssAdapter($pdo, new FakeSpssEngine($this->fixture()));
+        $adapter->import('fixture.sav', 'Old catalog export');
+        $pdo->exec('UPDATE catalog_identity SET schema_version = 1');
+        $before = self::rows($pdo, 'SELECT COUNT(*) AS operation_count FROM operation_catalog');
+
+        try {
+            $adapter->export('Old catalog export', 'old-catalog.sav');
+            self::fail('Export used an older catalogue without explicit migration.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::CatalogMigrationRequired, $exception->diagnosticCode);
+        }
+
+        self::assertSame($before, self::rows($pdo, 'SELECT COUNT(*) AS operation_count FROM operation_catalog'));
+        self::assertSame([['schema_version' => 1]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
+
+        $adapter->migrateCatalog();
+        $result = $adapter->export('Old catalog export', 'old-catalog.sav');
+
+        self::assertSame(2, $result->caseCount);
+        self::assertSame([['schema_version' => 3]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
+    }
+
+    public function testReadOnlyFreshInitializationFailureDoesNotCreateCurrentIdentity(): void
+    {
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $pdo->exec('PRAGMA query_only = ON');
+        $adapter = new SpssAdapter($pdo, new FakeSpssEngine($this->fixture()));
+
+        try {
+            $adapter->import('fixture.sav', 'Read-only setup');
+            self::fail('Read-only fresh initialization unexpectedly succeeded.');
+        } catch (\PDOException) {
+            self::assertSame([], self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'catalog_identity'"));
+        }
+    }
+
+    public function testFreshPendingInitializationFailureDoesNotClaimCurrentIdentity(): void
+    {
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        CatalogOwnership::ensure($pdo);
+        $pdo->exec('CREATE TABLE interrupted_setup (id INTEGER PRIMARY KEY)');
+        $adapter = new SpssAdapter($pdo, new FakeSpssEngine($this->fixture()));
+
+        try {
+            $adapter->import('fixture.sav', 'Interrupted setup');
+            self::fail('A non-empty pending namespace was initialized automatically.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::CatalogMigrationRequired, $exception->diagnosticCode);
+        }
+
+        self::assertSame([['schema_version' => 1]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
+        self::assertSame([], self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'operation_catalog'"));
     }
 
     public function testTypedDatasetImportCreatesWideTableAndExportPreservesSupportedMetadata(): void
@@ -56,6 +174,7 @@ final class SpssAdapterTest extends TestCase
         $import = $adapter->import('fixture.sav', 'Customer survey');
 
         self::assertSame('Customer survey', $import->datasetName);
+        self::assertSame([['schema_version' => 3]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
         self::assertSame(2, $import->caseCount);
         self::assertSame([], $import->diagnostics);
         self::assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/', $import->operationId);
@@ -128,7 +247,7 @@ final class SpssAdapterTest extends TestCase
             ],
             self::rows($pdo, 'SELECT direction, status, dataset_name, target_path, allow_loss, failure_code FROM operation_catalog ORDER BY rowid'),
         );
-        self::assertSame(["{\"package\":\"fake-spss-engine\",\"version\":\"test\"}", "{\"package\":\"fake-spss-engine\",\"version\":\"test\"}"], array_column(self::rows($pdo, 'SELECT engine_details FROM operation_catalog ORDER BY rowid'), 'engine_details'));
+        self::assertSame(["{\"package\":\"fake-spss-engine\",\"version\":\"test\",\"active_version\":\"test\",\"claimed_version_range\":\"test-only\",\"ci_tested_versions\":[\"test\"],\"claimed_supported\":true}", "{\"package\":\"fake-spss-engine\",\"version\":\"test\",\"active_version\":\"test\",\"claimed_version_range\":\"test-only\",\"ci_tested_versions\":[\"test\"],\"claimed_supported\":true}"], array_column(self::rows($pdo, 'SELECT engine_details FROM operation_catalog ORDER BY rowid'), 'engine_details'));
         self::assertSame('Customer survey source', $written->metadata->label);
         self::assertSame('Respondent ID', $written->metadata->weightVariableName);
         self::assertSame(['First document line', 'Second document line'], $written->metadata->documents());
@@ -411,6 +530,26 @@ final class SpssAdapterTest extends TestCase
         self::assertSame("OpenStatSpec t\u{00F6}\u{00F6}riist", $technical->productName);
     }
 
+    public function testMarkerV3RejectsLegacyOnlyCatalog(): void
+    {
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        (new SqliteWideTableImporter($pdo))->import(SpssSourceNormalizer::normalize($this->fixture()), 'Legacy v3 marker');
+        $pdo->exec('CREATE TABLE openstatspec_schema_migration (version INTEGER NOT NULL PRIMARY KEY, applied_at TIMESTAMP NOT NULL)');
+        $insert = $pdo->prepare('INSERT INTO openstatspec_schema_migration (version, applied_at) VALUES (?, ?)');
+        foreach ([1, 2, 3] as $version) {
+            $insert->execute([$version, '2026-07-28 00:00:00']);
+        }
+
+        try {
+            CatalogOwnership::ensure($pdo);
+            self::fail('A v3 marker claimed a legacy-only catalogue.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::CatalogNamespaceCollision, $exception->diagnosticCode);
+        }
+
+        self::assertSame([], self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'catalog_identity'"));
+    }
+
     public function testMigrateCatalogBackfillsLegacyDatasetsAndIsIdempotent(): void
     {
         if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
@@ -424,6 +563,14 @@ final class SpssAdapterTest extends TestCase
         self::assertSame([], self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dataset'"));
 
         $adapter = new SpssAdapter($pdo, $engine);
+        try {
+            $adapter->export('Legacy survey', 'legacy-before-migration.sav');
+            self::fail('Pre-identity legacy catalogue was used without explicit migration.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::CatalogMigrationRequired, $exception->diagnosticCode);
+        }
+        self::assertSame([], self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('catalog_identity', 'operation_catalog')"));
+
         $adapter->migrateCatalog();
         $adapter->migrateCatalog();
 

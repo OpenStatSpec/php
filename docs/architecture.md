@@ -101,10 +101,89 @@ $adapter->migrateCatalog();
 
 The command creates and versions the canonical catalogue through
 `openstatspec_schema_migration`; it also applies the write-format migration to
-SQLite, MySQL/MariaDB and PostgreSQL compatibility catalogues, then backfills each exportable legacy dataset into the singular standard tables. Imports invoke
-the same migration path before writing data.
+SQLite, MySQL/MariaDB and PostgreSQL compatibility catalogues, then backfills
+each exportable legacy dataset into the singular standard tables.
+
+A completely empty dedicated namespace is initialized automatically on its
+first ordinary import or export attempt. An existing catalogue is never
+upgraded implicitly: when its identity or validated pre-identity state is older,
+ordinary use fails with `catalog_migration_required` before journal or schema
+mutation, and deployment must call `migrateCatalog()` explicitly.
 
 MySQL/MariaDB DDL has implicit commits. The adapter preflights before creating
 a table and performs compensating cleanup after a later failure. If cleanup
 itself fails, it is reported as an error requiring operator inspection rather
 than being silently ignored.
+
+## Deployment namespace and connection isolation
+
+The adapter intentionally uses the generic catalogue names defined by the
+standard. It does not add an OpenStatSpec product prefix and does not qualify
+every SQL statement with a caller-supplied namespace. A production deployment
+must therefore dedicate the active database namespace to one OpenStatSpec
+catalogue.
+
+The capability declaration's `active_connection` object exposes the resolved
+namespace and its runtime inventory-verification status. The adapter rejects
+unrelated tables; only its known catalogue relations and physical wide tables
+registered by `dataset` or `datasets` are allowed. Deployment must still use
+a dedicated namespace and appropriate database permissions.
+
+### PostgreSQL
+
+Create a schema for the catalogue and data tables, grant the adapter principal
+access to that schema, and use a dedicated PDO connection with a fixed
+`search_path`. Do not include `public` or user-controlled schemas in that
+connection's effective path.
+
+```sql
+CREATE SCHEMA openstatspec AUTHORIZATION openstatspec_app;
+ALTER ROLE openstatspec_app IN DATABASE statistics
+  SET search_path = openstatspec;
+```
+
+Verify `current_schema()` and `current_schemas(false)` on the exact connection
+passed to `SpssAdapter`. Do not change `search_path` while an import, export, or
+catalogue migration is running.
+
+### MySQL and MariaDB
+
+Create and select a dedicated database in the PDO DSN, for example
+`dbname=openstatspec`. Grant the adapter principal only the required privileges
+on that database. Verify `DATABASE()` on the exact adapter connection before
+importing.
+
+### SQLite
+
+Use a dedicated database file rather than attaching OpenStatSpec catalogue
+tables to an application's existing file. Do not share the adapter PDO object
+with code that runs `ATTACH`, `DETACH`, transaction-control statements, or
+schema migrations during an adapter operation.
+
+## Memory behaviour
+
+The current PHP implementation is fully buffered and does not claim streaming:
+
+1. php-spss reads the source into a typed in-memory `Dataset`;
+2. normalization exposes the dataset rows to the SQL importer; and
+3. export reads the cases and reconstructs a complete `Dataset` before the SPSS
+   writer emits the target file.
+
+Memory use is consequently data-dependent and grows with cases, variables,
+encoded string values, and dictionary metadata. A database engine's row or
+value limit is not a PHP memory guarantee. Deployments must measure a
+representative high-end file under the same PHP version, extensions,
+`memory_limit`, and SPSS engine version used in production.
+
+`tools/memory-probe.php` provides a reproducible isolated-process probe. Its JSON
+result records the runtime and engine identity, source bytes, case count,
+baseline allocated/used memory, final allocated/used memory, process peak
+allocated/used memory, and whether temporary artifacts were retained. The
+report describes one measured file and environment only; it is not a benchmark
+claim for other datasets or hosts.
+
+CI smoke-tests the probe's execution and JSON schema with a small official
+fixture. CI intentionally applies no peak-memory threshold because allocator,
+PHP build, and extension differences make such a threshold fragile. Performance
+regression work should compare saved JSON reports produced with the same fixture
+and runtime image.

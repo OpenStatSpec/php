@@ -29,6 +29,7 @@ final readonly class OperationJournal
         ?string $sourceFormat = null,
         bool $recordNormative = true,
     ): string {
+        CatalogOwnership::ensure($this->pdo);
         $this->createLegacyTables();
         $operationId = $this->operationId();
         $statement = $this->pdo->prepare(

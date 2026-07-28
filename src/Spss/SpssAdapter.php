@@ -9,6 +9,7 @@ use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\FidelityPolicy;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\CanonicalCatalogProjection;
+use OpenStatSpec\Sql\CatalogOwnership;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\MySqlWideTableExporter;
 use OpenStatSpec\Sql\MySqlSchema;
@@ -48,6 +49,8 @@ final readonly class SpssAdapter
     /** Upgrade the legacy compatibility catalogue and canonical OpenStatSpec schema in place. */
     public function migrateCatalog(): void
     {
+        $this->connection->assertClaimedSupported();
+        CatalogOwnership::ensure($this->connection->pdo);
         match ($this->connection->profile->driverName()) {
             'pgsql' => (new PostgreSqlSchema($this->connection->pdo))->createCatalog(),
             'mysql' => (new MySqlSchema($this->connection->pdo))->createCatalog(),
@@ -56,6 +59,7 @@ final readonly class SpssAdapter
         $catalog = new NormativeCatalog($this->connection->pdo);
         $catalog->createTables();
         $this->backfillLegacyDatasets($catalog);
+        CatalogOwnership::markCurrentVersion($this->connection->pdo);
     }
 
     private function backfillLegacyDatasets(NormativeCatalog $catalog): void
@@ -87,6 +91,21 @@ final readonly class SpssAdapter
         }
     }
 
+    private function ensureCatalogReady(): void
+    {
+        try {
+            CatalogOwnership::assertReadyForUse($this->connection->pdo);
+        } catch (UnsupportedOperation $exception) {
+            if ($exception->diagnosticCode !== DiagnosticCode::CatalogMigrationRequired
+                || !CatalogOwnership::isFreshPending($this->connection->pdo)
+            ) {
+                throw $exception;
+            }
+            $this->migrateCatalog();
+            CatalogOwnership::assertReadyForUse($this->connection->pdo);
+        }
+    }
+
     private function legacySourceFormat(string $datasetName): string
     {
         $statement = $this->connection->pdo->prepare('SELECT source_format FROM file_technical_metadata WHERE dataset_name = ?');
@@ -100,6 +119,8 @@ final readonly class SpssAdapter
 
     public function import(string $sourcePath, string $datasetName): SpssImportResult
     {
+        $this->connection->assertClaimedSupported();
+        $this->ensureCatalogReady();
         $sourceFormat = $this->spssFormat($sourcePath);
         $journal = new OperationJournal($this->connection->pdo);
         $operationId = $journal->start('import', null, $sourcePath, engineDetails: $this->engine->identity(), sourceFormat: $sourceFormat);
@@ -129,6 +150,8 @@ final readonly class SpssAdapter
     /** @param list<string> $allowLoss */
     public function export(string $datasetName, string $targetPath, array $allowLoss = []): SpssExportResult
     {
+        $this->connection->assertClaimedSupported();
+        $this->ensureCatalogReady();
         $targetFormat = $this->spssFormat($targetPath);
         $journal = new OperationJournal($this->connection->pdo);
         $operationId = $journal->start('export', $datasetName, $targetPath, $allowLoss, $this->engine->identity(), $targetFormat);

@@ -26,7 +26,7 @@ final class SqliteProfile extends AbstractPdoSqlProfile
     }
     public function serverVersionRange(): string
     {
-        return 'SQLite 3.x; active version reported at runtime';
+        return 'SQLite >=3.24.0 <4.0.0; active version reported at runtime';
     }
     public function ddlAtomic(): bool
     {
@@ -35,6 +35,10 @@ final class SqliteProfile extends AbstractPdoSqlProfile
     public function identifierLimit(): int
     {
         return 255;
+    }
+    public function identifierLimitSource(): string
+    {
+        return 'OpenStatSpec profile boundary; SQLite has no comparable fixed identifier limit';
     }
     public function quoteIdentifier(string $identifier): string
     {
@@ -69,17 +73,17 @@ final class SqliteProfile extends AbstractPdoSqlProfile
         return [
             'maximum_source_variables' => $this->compileOption($pdo, 'MAX_COLUMN') === null
                 ? 'profile_theoretical_limit; PRAGMA MAX_COLUMN unavailable'
-                : 'active PRAGMA compile_options MAX_COLUMN minus technical ordinal, capped by profile',
+                : 'compile-time PRAGMA compile_options MAX_COLUMN minus technical ordinal, capped by profile',
             'maximum_value_bytes' => $this->compileOption($pdo, 'MAX_LENGTH') === null
                 ? 'profile_theoretical_limit; PRAGMA MAX_LENGTH unavailable'
-                : 'active PRAGMA compile_options MAX_LENGTH, capped by profile',
+                : 'compile-time PRAGMA compile_options MAX_LENGTH, capped by profile',
             'maximum_row_bytes' => $this->compileOption($pdo, 'MAX_LENGTH') === null
                 ? 'profile_theoretical_limit; PRAGMA MAX_LENGTH unavailable'
-                : 'active PRAGMA compile_options MAX_LENGTH, capped by profile',
+                : 'compile-time PRAGMA compile_options MAX_LENGTH, capped by profile',
             'maximum_statement_bytes' => $this->compileOption($pdo, 'MAX_LENGTH') === null
                 ? 'profile_theoretical_limit; PRAGMA MAX_LENGTH unavailable'
-                : 'active PRAGMA compile_options MAX_LENGTH, capped by profile',
-            'maximum_identifier_bytes' => 'OpenStatSpec deterministic profile boundary',
+                : 'compile-time PRAGMA compile_options MAX_LENGTH, capped by profile',
+            'identifier_limit' => 'OpenStatSpec deterministic profile boundary',
         ];
     }
     private function compileOption(PDO $pdo, string $name): ?int

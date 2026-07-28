@@ -29,6 +29,7 @@ final readonly class NormativeCatalog
             // OperationJournal creates the catalogue before the import transaction.
             return;
         }
+        CatalogOwnership::ensure($this->pdo);
         $binary64 = $driver === 'pgsql' ? 'DOUBLE PRECISION' : 'DOUBLE';
 
         foreach ([
@@ -576,7 +577,7 @@ final readonly class NormativeCatalog
         $statement = $this->statement("SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND tablename = ? AND indexdef LIKE 'CREATE UNIQUE INDEX%' AND REPLACE(indexdef, '\"', '') LIKE '%(dataset_id, source_ordinal)%' LIMIT 1");
         $statement->execute([$table]);
         if ($statement->fetchColumn() === false) {
-            $this->pdo->exec('CREATE UNIQUE INDEX ' . $index . ' ON ' . $table . ' (dataset_id, source_ordinal)');
+            $this->pdo->exec('ALTER TABLE ' . $table . ' ADD CONSTRAINT ' . $index . ' UNIQUE (dataset_id, source_ordinal)');
         }
     }
 

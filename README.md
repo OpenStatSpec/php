@@ -77,6 +77,52 @@ $adapter->migrateCatalog();
 
 The migration is idempotent. It upgrades the compatibility catalogue, creates the versioned normative OpenStatSpec catalogue, and backfills datasets imported by earlier adapter versions. Back up a production database before package upgrades and run this call from the application's normal deployment migration. The current catalogue migration version is recorded in `openstatspec_schema_migration`.
 
+## Deployment isolation
+
+OpenStatSpec uses generic, unqualified catalogue names such as `dataset`,
+`variable`, `operation`, and `fidelity_event`. Give the adapter a dedicated
+database namespace and a PDO connection whose namespace cannot be changed by
+unrelated application code while an adapter operation is running:
+
+- PostgreSQL: create a dedicated schema and use a dedicated connection with a
+  fixed `search_path` containing that schema only.
+- MySQL/MariaDB: select a dedicated database in the adapter DSN.
+- SQLite: use a dedicated database file and connection.
+
+The machine-readable capability declaration must expose the active namespace
+under `active_connection`. Check that value against the intended deployment namespace
+before importing. See [the architecture guide](docs/architecture.md#deployment-namespace-and-connection-isolation)
+for the isolation contract and examples.
+
+## Large-file memory probe
+
+The current adapter is **not streaming**. The SPSS engine materializes a typed
+dataset, import normalization retains its rows, and export reconstructs a full
+dataset before writing. Peak memory therefore depends on the supplied file's
+case count, variable count, string sizes, and metadata.
+
+Measure a representative, user-supplied SAV or ZSAV file in an isolated process:
+
+```bash
+php tools/memory-probe.php --source=/data/representative-large.sav
+```
+
+The command creates a temporary dedicated SQLite database, performs one semantic
+import/export round trip, removes its temporary artifacts, and prints one JSON
+report to standard output. It reports input size, case count, PHP `memory_limit`,
+baseline memory, and process peak memory. It deliberately declares
+`streaming: false` and does not infer a universal safe file-size limit.
+
+To retain the generated SQLite database and exported SPSS file for inspection,
+provide a new database path and keep the artifacts:
+
+```bash
+php tools/memory-probe.php \
+  --source=/data/representative-large.zsav \
+  --database=/tmp/openstatspec-memory-probe.sqlite \
+  --keep-artifacts
+```
+
 ## Testing and CI
 
 Run the local gate before committing:

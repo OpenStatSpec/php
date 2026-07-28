@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: OpenStatSpec/specification
-          ref: 04d3c3c3fdcf621165f312319d25a448db387370
+          ref: 6b9d1fc38f2f083c0ac5cf1c64874a6d07b95045
           path: openstatspec-specification
       - uses: shivammathur/setup-php@v2
         with:
@@ -61,7 +61,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: OpenStatSpec/specification
-          ref: 04d3c3c3fdcf621165f312319d25a448db387370
+          ref: 6b9d1fc38f2f083c0ac5cf1c64874a6d07b95045
           path: openstatspec-specification
       - uses: shivammathur/setup-php@v2
         with:
@@ -103,7 +103,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: OpenStatSpec/specification
-          ref: 04d3c3c3fdcf621165f312319d25a448db387370
+          ref: 6b9d1fc38f2f083c0ac5cf1c64874a6d07b95045
           path: openstatspec-specification
       - uses: shivammathur/setup-php@v2
         with:
@@ -145,7 +145,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: OpenStatSpec/specification
-          ref: 04d3c3c3fdcf621165f312319d25a448db387370
+          ref: 6b9d1fc38f2f083c0ac5cf1c64874a6d07b95045
           path: openstatspec-specification
       - uses: shivammathur/setup-php@v2
         with:

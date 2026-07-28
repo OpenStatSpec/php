@@ -39,7 +39,7 @@
       "@test"
     ],
     "fix": "php-cs-fixer fix --diff",
-    "lint": "find src tests -type f -name '*.php' -print0 | xargs -0 -n1 php -l",
+    "lint": "find src tests tools -type f -name '*.php' -print0 | xargs -0 -n1 php -l",
     "style": "php-cs-fixer fix --dry-run --diff",
     "test": "phpunit"
   },

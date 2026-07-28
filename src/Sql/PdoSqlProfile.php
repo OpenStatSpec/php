@@ -14,6 +14,12 @@ interface PdoSqlProfile
 
     public function identifierLimit(): int;
 
+    public function identifierLimitUnit(): string;
+
+    public function identifierLimitSource(): string;
+
+    public function generatedIdentifierRepertoire(): string;
+
     public function maximumValueBytes(): int;
 
     public function maximumRowBytes(): int;

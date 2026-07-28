@@ -26,6 +26,21 @@ abstract class AbstractPdoSqlProfile implements PdoSqlProfile
         return $candidate;
     }
 
+    public function identifierLimitUnit(): string
+    {
+        return 'bytes';
+    }
+
+    public function identifierLimitSource(): string
+    {
+        return 'OpenStatSpec generated-identifier profile boundary';
+    }
+
+    public function generatedIdentifierRepertoire(): string
+    {
+        return 'ASCII lowercase letters, digits, and underscore';
+    }
+
     public function assertCanRepresent(int $sourceVariableCount): void
     {
         if ($sourceVariableCount < 1 || $sourceVariableCount > $this->maximumSourceVariables()) {
@@ -109,7 +124,7 @@ abstract class AbstractPdoSqlProfile implements PdoSqlProfile
             'maximum_value_bytes' => 'profile_theoretical_limit',
             'maximum_row_bytes' => 'profile_theoretical_limit',
             'maximum_statement_bytes' => 'profile_theoretical_limit',
-            'maximum_identifier_bytes' => 'profile_theoretical_limit',
+            'identifier_limit' => 'profile_theoretical_limit',
         ];
     }
 

@@ -9,7 +9,7 @@ use SPSS\Sav\Dataset;
 /** Internal boundary around the selected external SPSS reader/writer. */
 interface SpssEngine
 {
-    /** @return array<string, string|null> */
+    /** @return array<string, mixed> */
     public function identity(): array;
 
     /** @return array<string, bool> */

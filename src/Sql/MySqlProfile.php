@@ -40,6 +40,15 @@ final class MySqlProfile extends AbstractPdoSqlProfile
     {
         return 64;
     }
+    public function identifierLimitUnit(): string
+    {
+        return 'characters';
+    }
+
+    public function identifierLimitSource(): string
+    {
+        return 'MySQL/MariaDB native identifier limit';
+    }
     public function quoteIdentifier(string $identifier): string
     {
         return $this->quoteWith($identifier, "`");
@@ -75,7 +84,7 @@ final class MySqlProfile extends AbstractPdoSqlProfile
             'maximum_value_bytes' => 'min(LONGTEXT, ' . $packetSource . ')',
             'maximum_row_bytes' => 'InnoDB physical row limit with off-page text references',
             'maximum_statement_bytes' => $packetSource,
-            'maximum_identifier_bytes' => 'server identifier limit',
+            'identifier_limit' => 'server identifier limit',
         ];
     }
     private function packetPayloadBytes(PDO $pdo): ?int

@@ -16,7 +16,14 @@ final class FakeSpssEngine implements SpssEngine
 
     public function identity(): array
     {
-        return ["package" => "fake-spss-engine", "version" => "test"];
+        return [
+            'package' => 'fake-spss-engine',
+            'version' => 'test',
+            'active_version' => 'test',
+            'claimed_version_range' => 'test-only',
+            'ci_tested_versions' => ['test'],
+            'claimed_supported' => true,
+        ];
     }
 
     /** @return array<string, bool> */

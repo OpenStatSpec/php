@@ -34,6 +34,10 @@ final class PostgreSqlProfile extends AbstractPdoSqlProfile
     {
         return 63;
     }
+    public function identifierLimitSource(): string
+    {
+        return 'PostgreSQL NAMEDATALEN minus one native byte limit';
+    }
     public function quoteIdentifier(string $identifier): string
     {
         return $this->quoteWith($identifier, '"');

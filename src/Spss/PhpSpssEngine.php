@@ -16,6 +16,8 @@ final class PhpSpssEngine implements SpssEngine
     public const PACKAGE = 'tiamo/spss';
     public const READER_CLASS = 'SPSS\\Sav\\Reader';
     public const WRITER_CLASS = 'SPSS\\Sav\\Writer';
+    public const CLAIMED_VERSION_RANGE = '>=3.0.0 <4.0.0';
+    public const CI_TESTED_VERSIONS = ['3.0.0'];
 
     public function isAvailable(): bool
     {
@@ -24,12 +26,23 @@ final class PhpSpssEngine implements SpssEngine
 
     public function identity(): array
     {
+        $version = class_exists(\Composer\InstalledVersions::class)
+            ? \Composer\InstalledVersions::getPrettyVersion(self::PACKAGE)
+            : null;
+
         return [
-            "package" => self::PACKAGE,
-            "version" => class_exists(\Composer\InstalledVersions::class)
-                ? \Composer\InstalledVersions::getPrettyVersion(self::PACKAGE)
-                : null,
+            'package' => self::PACKAGE,
+            'version' => $version,
+            'active_version' => $version,
+            'claimed_version_range' => self::CLAIMED_VERSION_RANGE,
+            'ci_tested_versions' => self::CI_TESTED_VERSIONS,
+            'claimed_supported' => self::isClaimedVersionSupported($version),
         ];
+    }
+
+    public static function isClaimedVersionSupported(?string $version): bool
+    {
+        return is_string($version) && preg_match('/^v?3\.\d+\.\d+(?:[-+].*)?$/', $version) === 1;
     }
 
     /** @return array<string, bool> */
