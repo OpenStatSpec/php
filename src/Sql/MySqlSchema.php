@@ -8,14 +8,14 @@ use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use PDO;
 
-/** MySQL/MariaDB DDL only; it does not claim SAV/ZSAV import/export support. */
+/** MySQL-family DDL only; it does not claim SAV/ZSAV import/export support. */
 final readonly class MySqlSchema
 {
     private MySqlProfile $profile;
 
-    public function __construct(private PDO $pdo)
+    public function __construct(private PDO $pdo, ?MySqlProfile $profile = null)
     {
-        $this->profile = new MySqlProfile();
+        $this->profile = $profile ?? new MySqlProfile();
     }
 
     /** @return list<string> */

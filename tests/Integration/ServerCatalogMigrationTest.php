@@ -138,7 +138,7 @@ SQL);
     private function connections(): array
     {
         $connections = [];
-        foreach (['mysql' => 'OPENSTATSPEC_MYSQL', 'mariadb' => 'OPENSTATSPEC_MARIADB', 'postgresql' => 'OPENSTATSPEC_PG'] as $name => $prefix) {
+        foreach (['mysql' => 'OPENSTATSPEC_MYSQL', 'mariadb' => 'OPENSTATSPEC_MARIADB', 'dolt' => 'OPENSTATSPEC_DOLT', 'postgresql' => 'OPENSTATSPEC_PG'] as $name => $prefix) {
             $dsn = getenv($prefix . '_DSN');
             $driver = $name === 'postgresql' ? 'pgsql' : 'mysql';
             if (!is_string($dsn) || $dsn === '' || !in_array($driver, PDO::getAvailableDrivers(), true)) {

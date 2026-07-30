@@ -68,8 +68,10 @@ abstract class AbstractPdoSqlProfile implements PdoSqlProfile
         $maximumValueBytes = $pdo === null ? $this->maximumValueBytes() : $this->effectiveMaximumValueBytes($pdo);
         $maximumRowBytes = $pdo === null ? $this->maximumRowBytes() : $this->effectiveMaximumRowBytes($pdo);
         $declaredRowBytes = 8;
+        $storageKinds = [];
         foreach ($variables as $variable) {
             $kind = is_string($variable['type'] ?? null) && str_contains(strtolower($variable['type']), 'string') ? 'string' : 'numeric';
+            $storageKinds[] = $kind;
             $width = $kind === 'string' && is_int($variable['width'] ?? null) ? $variable['width'] : 0;
             if ($width < 0 || $width > $maximumValueBytes) {
                 $this->capabilityExceeded('declared string width', $width, $maximumValueBytes);
@@ -80,19 +82,46 @@ abstract class AbstractPdoSqlProfile implements PdoSqlProfile
             $this->capabilityExceeded('declared row size', $declaredRowBytes, $maximumRowBytes);
         }
         $maximumStatementBytes = $pdo === null ? $this->maximumRowBytes() : $this->effectiveMaximumStatementBytes($pdo);
+        $maximumEncodedCaseBytes = min($maximumRowBytes, $maximumStatementBytes);
         foreach ($rows as $row) {
             if (count($row) !== count($variables)) {
                 throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Every source case must contain exactly one value per source variable.');
             }
-            $encodedRowBytes = 8;
-            foreach ($row as $value) {
+            $encodedRowBytes = 0;
+            foreach ($row as $index => $value) {
+                $kind = $storageKinds[$index];
+                if ($kind === 'string' && !is_string($value)) {
+                    throw new UnsupportedOperation(
+                        DiagnosticCode::InvalidSourceDataset,
+                        'SPSS string values must be non-null strings.',
+                    );
+                }
+                if ($kind === 'numeric'
+                    && $value !== null
+                    && !is_int($value)
+                    && !is_float($value)
+                ) {
+                    throw new UnsupportedOperation(
+                        DiagnosticCode::InvalidSourceDataset,
+                        'SPSS numeric values must be binary64 numbers or system-missing NULL.',
+                    );
+                }
+                if ($kind === 'numeric'
+                    && (is_int($value) || is_float($value))
+                    && !is_finite((float) $value)
+                ) {
+                    throw new UnsupportedOperation(
+                        DiagnosticCode::TargetCapabilityExceeded,
+                        $this->driverName() . ' rejects non-finite SPSS numeric values before mutation.',
+                    );
+                }
                 if (is_string($value) && strlen($value) > $maximumValueBytes) {
                     $this->capabilityExceeded('encoded string value', strlen($value), $maximumValueBytes);
                 }
                 $encodedRowBytes += is_string($value) ? strlen($value) : 8;
             }
-            if ($encodedRowBytes > $maximumStatementBytes) {
-                $this->capabilityExceeded('encoded case payload', $encodedRowBytes, $maximumStatementBytes);
+            if ($encodedRowBytes > $maximumEncodedCaseBytes) {
+                $this->capabilityExceeded('encoded case payload', $encodedRowBytes, $maximumEncodedCaseBytes);
             }
         }
     }

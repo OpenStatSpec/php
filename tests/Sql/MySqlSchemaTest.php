@@ -6,6 +6,7 @@ namespace OpenStatSpec\Tests\Sql;
 
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
+use OpenStatSpec\Sql\DoltProfile;
 use OpenStatSpec\Sql\MySqlSchema;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -58,6 +59,26 @@ final class MySqlSchemaTest extends TestCase
         try {
             $schema->wideTableDefinition('fixture', $variables);
             self::fail('Expected MySQL source-variable capability preflight to fail.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
+        }
+    }
+
+    public function testInjectedDoltProfileAppliesThe305VariableEnvelope(): void
+    {
+        $schema = new MySqlSchema($this->createMock(PDO::class), new DoltProfile());
+        $variables = [];
+        for ($index = 1; $index <= 305; ++$index) {
+            $variables[] = ['name' => 'v' . $index, 'type' => 'numeric'];
+        }
+
+        $definition = $schema->wideTableDefinition('dolt fixture', $variables);
+        self::assertCount(305, $definition->columns);
+
+        $variables[] = ['name' => 'v306', 'type' => 'numeric'];
+        try {
+            $schema->wideTableDefinition('too wide', $variables);
+            self::fail('Expected the injected Dolt profile to reject 306 source variables.');
         } catch (UnsupportedOperation $exception) {
             self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
         }

@@ -12,19 +12,29 @@ use PDOStatement;
 use Throwable;
 
 /**
- * MySQL/MariaDB importer for the strict one-source-dataset/one-wide-table
+ * MySQL-family importer for the strict one-source-dataset/one-wide-table
  * contract. MySQL DDL commits implicitly, so a failure after DDL is handled
  * with best-effort compensating cleanup rather than a false atomicity claim.
  */
 final readonly class MySqlWideTableImporter
 {
-    public function __construct(private PDO $pdo) {}
+    private MySqlProfile $profile;
+
+    public function __construct(private PDO $pdo, ?MySqlProfile $profile = null)
+    {
+        $this->profile = $profile ?? new MySqlProfile();
+    }
 
     /**
      * @param array<string, mixed> $source
      */
-    public function import(array $source, string $datasetName, string $sourcePath = ""): MySqlWideTableDefinition
-    {
+    public function import(
+        array $source,
+        string $datasetName,
+        string $sourcePath = "",
+        ?string $verifiedSourceSha256 = null,
+    ): MySqlWideTableDefinition {
+        $verifiedSourceSha256 = NormativeCatalog::validateSourceSha256($verifiedSourceSha256);
         $variables = $source['variables'] ?? null;
         $rows = $source['data'] ?? null;
         if (!is_array($variables) || !array_is_list($variables) || $variables === []) {
@@ -40,15 +50,17 @@ final readonly class MySqlWideTableImporter
             );
         }
 
-        (new MySqlProfile())->assertDataset($variables, $rows, $this->pdo);
+        $this->profile->assertDataset($variables, $rows, $this->pdo);
 
-        $schema = new MySqlSchema($this->pdo);
-        // Complete physical-name and width preflight happens before any DDL.
+        $schema = new MySqlSchema($this->pdo, $this->profile);
+        // Complete source, physical-name, and width preflight happens before any DDL.
         $definition = $schema->wideTableDefinition($datasetName, $variables);
+        $v3Metadata = $this->assertSourceMetadata($source, $variables, $definition);
 
         $schema->createCatalog();
         $this->pdo->exec($definition->createSql);
 
+        $ownedDefinition = $definition;
         try {
             $this->pdo->beginTransaction();
             $this->storeDatasetMetadata($datasetName, $source);
@@ -57,12 +69,23 @@ final readonly class MySqlWideTableImporter
             $this->storeWeightVariable($datasetName, $source['weightVariableName'] ?? null, $definition);
             $this->storeDisplayMetadata($datasetName, $source['displayParameters'] ?? []);
             $this->storeDictionaryMetadata($datasetName, $variables, $source['valueLabels'] ?? []);
-            if (is_array($variables[0] ?? null) && array_key_exists('role', $variables[0])) {
-                (new SqliteV3MetadataImporter($this->pdo))->store($datasetName, $source);
+            if ($v3Metadata !== null) {
+                (new SqliteV3MetadataImporter($this->pdo))->storeValidated($datasetName, $v3Metadata);
             }
             $this->insertCases($definition, $rows);
-            if ($sourcePath !== "") {
-                (new NormativeCatalog($this->pdo))->storeImportedDataset($datasetName, $sourcePath, $source);
+            if ($sourcePath !== "" || $verifiedSourceSha256 !== null) {
+                $datasetId = (new NormativeCatalog($this->pdo))->storeImportedDataset(
+                    $datasetName,
+                    $sourcePath,
+                    $source,
+                    $verifiedSourceSha256,
+                );
+                $ownedDefinition = new MySqlWideTableDefinition(
+                    $definition->tableName,
+                    $definition->createSql,
+                    $definition->columns,
+                    $datasetId,
+                );
             }
             $this->pdo->commit();
         } catch (Throwable $exception) {
@@ -70,13 +93,92 @@ final readonly class MySqlWideTableImporter
                 $this->pdo->rollBack();
             }
 
-            // CREATE TABLE has already committed on MySQL/MariaDB. Remove the
-            // target-specific artefacts that this invocation could have left.
-            $this->compensateFailure($datasetName, $definition);
+            // Catalogue DML was rolled back. Only the physical DDL survives.
+            $this->dropPhysicalTable($definition);
             throw $exception;
         }
 
-        return $definition;
+        return $ownedDefinition;
+    }
+
+    /**
+     * @param array<string, mixed>       $source
+     * @param list<array<string, mixed>> $variables
+     * @return V3MetadataPlan|null
+     */
+    private function assertSourceMetadata(
+        array $source,
+        array $variables,
+        MySqlWideTableDefinition $definition,
+    ): ?V3MetadataPlan {
+        $weightVariableName = $source['weightVariableName'] ?? null;
+        if ($weightVariableName !== null) {
+            if (!is_string($weightVariableName) || $weightVariableName === '') {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The SPSS weight-variable reference must be a non-empty source variable name.');
+            }
+            if (!in_array($weightVariableName, array_column($definition->columns, 'sourceName'), true)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The SPSS weight-variable reference must name a source variable.');
+            }
+        }
+
+        $technical = $source['technicalMetadata'] ?? null;
+        if ($technical !== null
+            && (!is_array($technical)
+                || !is_string($technical['sourceFormat'] ?? null)
+                || $technical['sourceFormat'] === ''
+                || !is_string($technical['encoding'] ?? null)
+                || $technical['encoding'] === '')
+        ) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'V3 technical metadata requires a non-empty source format and encoding.');
+        }
+
+        foreach ($variables as $variable) {
+            $this->writeFormatField($variable, 'writeFormatFamily', 5);
+            $this->writeFormatField($variable, 'writeFormatWidth', 8);
+            $this->writeFormatField($variable, 'writeFormatDecimals', 0);
+            $format = $variable['missingFormat'] ?? 0;
+            if (!is_int($format)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS missing-value format must be an integer.');
+            }
+            if ($format === 0) {
+                continue;
+            }
+            $values = $variable['missingValues'] ?? [];
+            if (!is_array($values) || !array_is_list($values)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS user-missing values must be an ordered list.');
+            }
+            foreach ($values as $value) {
+                $this->dictionaryValue($value);
+            }
+        }
+
+        $records = $source['valueLabels'] ?? [];
+        if (!is_array($records) || !array_is_list($records)) {
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS value-label records must be an ordered list.');
+        }
+        foreach ($records as $record) {
+            if (!is_array($record)
+                || !is_array($record['indexes'] ?? null)
+                || !array_is_list($record['indexes'])
+                || !is_array($record['labels'] ?? null)
+                || !array_is_list($record['labels'])
+            ) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS value-label records must contain ordered indexes and labels.');
+            }
+            foreach ($record['indexes'] as $index) {
+                if (!is_int($index) || !array_key_exists($index, $variables)) {
+                    throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS value-label indexes must refer to a source variable.');
+                }
+            }
+            foreach ($record['labels'] as $label) {
+                if (!is_array($label) || !is_string($label['label'] ?? null) || !array_key_exists('value', $label)) {
+                    throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Every SPSS value label must contain a typed value and string label.');
+                }
+                $this->dictionaryValue($label['value']);
+            }
+        }
+
+        return V3MetadataPlan::fromSourceIfPresent($source);
     }
 
     /**
@@ -334,6 +436,13 @@ final readonly class MySqlWideTableImporter
             return ['text', null, $value];
         }
         if (is_int($value) || is_float($value)) {
+            if (!is_finite((float) $value)) {
+                throw new UnsupportedOperation(
+                    DiagnosticCode::TargetCapabilityExceeded,
+                    'The Dolt profile rejects non-finite SPSS numeric values before mutation.',
+                );
+            }
+
             return ['numeric', Binary64::encode($value), null];
         }
         throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS dictionary values must be strings or binary64 numbers.');
@@ -354,12 +463,18 @@ final readonly class MySqlWideTableImporter
         return is_float($value) || is_int($value) ? (float) $value : null;
     }
 
-    private function compensateFailure(string $datasetName, MySqlWideTableDefinition $definition): void
+    public function compensateFailure(string $datasetName, MySqlWideTableDefinition $definition): void
     {
         try {
-            // MySQL DDL implicitly commits. Delete all catalogue rows that may
-            // have been inserted before the failing statement, in dependency
-            // order, then remove the dedicated wide table.
+            $datasetId = $definition->normativeDatasetId;
+            if ($datasetId === null) {
+                throw new \RuntimeException('The import attempt has no normative dataset ownership token.');
+            }
+            $this->assertOwnedNormativeDataset($datasetId, $datasetName, $definition->tableName);
+            $this->removeNormativeDataset($datasetId);
+
+            // This exact normative dataset ID proves that this attempt created
+            // the matching compatibility rows and physical relation.
             foreach ([
                 'multiple_response_set_members',
                 'multiple_response_sets',
@@ -379,21 +494,80 @@ final readonly class MySqlWideTableImporter
                 'variables',
                 'datasets',
             ] as $table) {
-                $statement = $this->pdo->prepare('DELETE FROM ' . $table . ' WHERE dataset_name = ?');
+                $sql = 'DELETE FROM ' . $table . ' WHERE dataset_name = ?';
+                if ($table === 'datasets') {
+                    $sql .= ' AND table_name = ?';
+                }
+                $statement = $this->pdo->prepare($sql);
                 if ($statement !== false) {
-                    $statement->execute([$datasetName]);
+                    $statement->execute($table === 'datasets'
+                        ? [$datasetName, $definition->tableName]
+                        : [$datasetName]);
                 }
             }
-            $quote = chr(96);
-            $this->pdo->exec(
-                'DROP TABLE IF EXISTS ' . $quote . str_replace($quote, $quote . $quote, $definition->tableName) . $quote,
-            );
+            $this->dropPhysicalTable($definition);
         } catch (Throwable $cleanupFailure) {
             throw new \RuntimeException(
-                "MySQL/MariaDB import cleanup failed; the target may require manual inspection: " . $definition->tableName,
+                'MySQL-family import cleanup failed; the target may require manual inspection: ' . $definition->tableName,
                 previous: $cleanupFailure,
             );
         }
+    }
+
+    private function assertOwnedNormativeDataset(
+        string $datasetId,
+        string $datasetName,
+        string $tableName,
+    ): void {
+        $dataset = $this->pdo->prepare(
+            'SELECT dataset_name, physical_table_name FROM dataset WHERE dataset_id = ?',
+        );
+        if ($dataset === false) {
+            throw new \RuntimeException('Could not verify normative dataset ownership.');
+        }
+        $dataset->execute([$datasetId]);
+        $rows = $dataset->fetchAll(PDO::FETCH_ASSOC);
+        if (count($rows) !== 1
+            || ($rows[0]['dataset_name'] ?? null) !== $datasetName
+            || ($rows[0]['physical_table_name'] ?? null) !== $tableName
+        ) {
+            throw new \RuntimeException('The normative dataset ownership token does not match this import attempt.');
+        }
+    }
+
+    private function removeNormativeDataset(string $datasetId): void
+    {
+        foreach ([
+            'UPDATE fidelity_event SET dataset_id = NULL WHERE dataset_id = ?',
+            'DELETE FROM multiple_response_member WHERE multiple_response_set_id IN (SELECT multiple_response_set_id FROM multiple_response_set WHERE dataset_id = ?)',
+            'DELETE FROM multiple_response_set WHERE dataset_id = ?',
+            'DELETE FROM variable_set_member WHERE variable_set_id IN (SELECT variable_set_id FROM variable_set WHERE dataset_id = ?)',
+            'DELETE FROM variable_set WHERE dataset_id = ?',
+            'DELETE FROM missing_rule WHERE variable_id IN (SELECT variable_id FROM variable WHERE dataset_id = ?)',
+            'DELETE FROM variable_value_label_set WHERE variable_id IN (SELECT variable_id FROM variable WHERE dataset_id = ?)',
+            'DELETE FROM value_label WHERE value_label_set_id IN (SELECT value_label_set_id FROM value_label_set WHERE dataset_id = ?)',
+            'DELETE FROM value_label_set WHERE dataset_id = ?',
+            'DELETE FROM variable_attribute WHERE variable_id IN (SELECT variable_id FROM variable WHERE dataset_id = ?)',
+            'DELETE FROM dataset_attribute WHERE dataset_id = ?',
+            'DELETE FROM document WHERE dataset_id = ?',
+            'DELETE FROM dataset_weight_variable WHERE dataset_id = ?',
+            'DELETE FROM variable WHERE dataset_id = ?',
+            'DELETE FROM dataset WHERE dataset_id = ?',
+        ] as $sql) {
+            $statement = $this->pdo->prepare($sql);
+            if ($statement === false) {
+                throw new \RuntimeException('Could not prepare normative Dolt cleanup.');
+            }
+            $statement->execute([$datasetId]);
+        }
+    }
+
+    private function dropPhysicalTable(MySqlWideTableDefinition $definition): void
+    {
+        $quote = chr(96);
+        $this->pdo->exec(
+            'DROP TABLE IF EXISTS ' . $quote . str_replace($quote, $quote . $quote, $definition->tableName) . $quote,
+        );
     }
 
     private function requiredStatement(string $sql, string $description): PDOStatement
@@ -402,7 +576,7 @@ final readonly class MySqlWideTableImporter
         if ($statement === false) {
             throw new UnsupportedOperation(
                 DiagnosticCode::InvalidSourceDataset,
-                'The MySQL/MariaDB profile could not prepare the ' . $description . ' statement.',
+                'The MySQL-family profile could not prepare the ' . $description . ' statement.',
             );
         }
 
@@ -457,6 +631,12 @@ final readonly class MySqlWideTableImporter
             throw new UnsupportedOperation(
                 DiagnosticCode::InvalidSourceDataset,
                 'SPSS numeric values must be binary64 numbers or system-missing NULL.',
+            );
+        }
+        if (!is_finite($value)) {
+            throw new UnsupportedOperation(
+                DiagnosticCode::TargetCapabilityExceeded,
+                'The Dolt profile rejects non-finite SPSS numeric values before mutation.',
             );
         }
 

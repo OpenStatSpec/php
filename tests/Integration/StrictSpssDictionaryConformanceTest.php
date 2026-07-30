@@ -86,6 +86,7 @@ final class StrictSpssDictionaryConformanceTest extends TestCase
         foreach ([
             'mysql' => 'OPENSTATSPEC_MYSQL',
             'mariadb' => 'OPENSTATSPEC_MARIADB',
+            'dolt' => 'OPENSTATSPEC_DOLT',
             'postgresql' => 'OPENSTATSPEC_PG',
         ] as $name => $prefix) {
             $dsn = getenv($prefix . '_DSN');

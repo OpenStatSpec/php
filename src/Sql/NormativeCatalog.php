@@ -95,10 +95,47 @@ final readonly class NormativeCatalog
         return $statement->fetchColumn() !== false;
     }
 
+    public static function validateSourceSha256(?string $verifiedSourceSha256): ?string
+    {
+        if ($verifiedSourceSha256 !== null
+            && preg_match('/\A[0-9a-f]{64}\z/', $verifiedSourceSha256) !== 1
+        ) {
+            throw new UnsupportedOperation(
+                DiagnosticCode::InvalidSourceDataset,
+                'The verified source SHA-256 must be exactly 64 lowercase hexadecimal characters.',
+            );
+        }
+
+        return $verifiedSourceSha256;
+    }
+
+    private function sourceHash(string $sourcePath, ?string $verifiedSourceSha256): ?string
+    {
+        if ($verifiedSourceSha256 !== null) {
+            return self::validateSourceSha256($verifiedSourceSha256);
+        }
+        if (!is_file($sourcePath)) {
+            return null;
+        }
+        $sourceSha256 = hash_file('sha256', $sourcePath);
+        if (!is_string($sourceSha256)) {
+            throw new UnsupportedOperation(
+                DiagnosticCode::InvalidSourceDataset,
+                'The source file SHA-256 could not be calculated.',
+            );
+        }
+
+        return self::validateSourceSha256($sourceSha256);
+    }
 
     /** @param array<string, mixed> $source */
-    public function storeImportedDataset(string $datasetName, string $sourcePath, array $source): void
-    {
+    public function storeImportedDataset(
+        string $datasetName,
+        string $sourcePath,
+        array $source,
+        ?string $verifiedSourceSha256 = null,
+    ): string {
+        $verifiedSourceSha256 = self::validateSourceSha256($verifiedSourceSha256);
         $this->createTables();
         $mappings = $this->physicalVariables($datasetName);
         /** @var list<mixed> $variables */
@@ -123,7 +160,7 @@ final readonly class NormativeCatalog
             $datasetName,
             is_string($source['fileLabel'] ?? null) ? $source['fileLabel'] : null,
             is_string($technical['encoding'] ?? null) ? $technical['encoding'] : null,
-            is_file($sourcePath) ? hash_file('sha256', $sourcePath) : null,
+            $this->sourceHash($sourcePath, $verifiedSourceSha256),
             count($this->list($source['data'] ?? null, 'Source cases')),
             self::timestamp(),
         ]);
@@ -165,6 +202,8 @@ final readonly class NormativeCatalog
         $this->storeDocuments($datasetId, $this->list($source['documents'] ?? [], 'Documents'));
         $this->storeVariableSets($datasetId, $variableIds, $this->list($source['variableSets'] ?? [], 'Variable sets'), $variables);
         $this->storeMultipleResponseSets($datasetId, $variableIds, $this->list($source['multipleResponseSets'] ?? [], 'Multiple-response sets'), $variables);
+
+        return $datasetId;
     }
 
     private function physicalTableName(string $datasetName): string
@@ -483,9 +522,9 @@ final readonly class NormativeCatalog
             return;
         }
         if ($driver === 'mysql') {
-            // MySQL/MariaDB DDL is not transactional. Every statement is
-            // idempotent and migration version 3 is recorded only after all
-            // constraints have been restored successfully.
+            // The MySQL-family compatibility path treats DDL as non-transactional.
+            // Every statement is idempotent and migration version 3 is recorded only
+            // after all constraints have been restored successfully.
             $this->pdo->exec('ALTER TABLE variable_set MODIFY source_ordinal INTEGER NOT NULL');
             $this->pdo->exec('ALTER TABLE multiple_response_set MODIFY source_ordinal INTEGER NOT NULL');
             $this->ensureMySqlUniqueIndex('variable_set', 'uq_variable_set_dataset_ordinal');
@@ -583,11 +622,24 @@ final readonly class NormativeCatalog
 
     private function ensureMySqlUniqueIndex(string $table, string $index): void
     {
-        $statement = $this->statement("SELECT index_name FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? GROUP BY index_name HAVING MIN(non_unique) = 0 AND GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') = 'dataset_id,source_ordinal' LIMIT 1");
+        $statement = $this->statement('SELECT index_name, non_unique, column_name FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? ORDER BY index_name, seq_in_index');
         $statement->execute([$table]);
-        if ($statement->fetchColumn() === false) {
-            $this->pdo->exec('CREATE UNIQUE INDEX ' . $index . ' ON ' . $table . ' (dataset_id, source_ordinal)');
+        /** @var array<string, list<string>> $uniqueIndexes */
+        $uniqueIndexes = [];
+        while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+            if ((int) ($row['non_unique'] ?? 1) !== 0
+                || !is_string($row['index_name'] ?? null)
+                || !is_string($row['column_name'] ?? null)
+            ) {
+                continue;
+            }
+            $uniqueIndexes[$row['index_name']][] = $row['column_name'];
         }
+        if (in_array(['dataset_id', 'source_ordinal'], $uniqueIndexes, true)) {
+            return;
+        }
+
+        $this->pdo->exec('CREATE UNIQUE INDEX ' . $index . ' ON ' . $table . ' (dataset_id, source_ordinal)');
     }
 
     private function ensureColumn(string $table, string $column, string $definition): void

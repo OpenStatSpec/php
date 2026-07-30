@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Sql;
 
-/** A deterministic MySQL/MariaDB native-table DDL plan. */
+/** A deterministic MySQL-family native-table DDL plan. */
 final readonly class MySqlWideTableDefinition
 {
     /**
@@ -14,5 +14,6 @@ final readonly class MySqlWideTableDefinition
         public string $tableName,
         public string $createSql,
         public array $columns,
+        public ?string $normativeDatasetId = null,
     ) {}
 }

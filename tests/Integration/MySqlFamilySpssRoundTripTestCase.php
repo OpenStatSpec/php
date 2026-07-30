@@ -32,7 +32,7 @@ use SPSS\Sav\VariableSet;
 use SPSS\Sav\VariableType;
 
 /**
- * Runs only against an explicitly configured MySQL/MariaDB instance.
+ * Runs only against an explicitly configured MySQL-family instance.
  *
  * GitHub Actions supplies the service. Developers can opt in locally with:
  * The concrete MySQL and MariaDB subclasses each supply their own DSN variables.
@@ -64,7 +64,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
                 self::assertMatchesRegularExpression('/^dataset_/', $tableName);
                 $caseCount = $pdo->query('SELECT COUNT(*) FROM ' . $this->quote($tableName));
                 if ($caseCount === false) {
-                    throw new RuntimeException('Could not count imported MySQL/MariaDB cases.');
+                    throw new RuntimeException('Could not count imported MySQL-family cases.');
                 }
                 self::assertSame(2, (int) $caseCount->fetchColumn());
                 $this->assertVariableCatalog(
@@ -117,7 +117,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
                 self::assertSame($fixture->rows(), $roundTrip->rows());
                 self::assertSame($format, $roundTrip->technicalMetadata->sourceFormat);
                 self::assertSame($compression, $roundTrip->technicalMetadata->compression);
-                self::assertSame('MySQL/MariaDB integration fixture', $roundTrip->metadata->label);
+                self::assertSame('MySQL-family integration fixture', $roundTrip->metadata->label);
                 self::assertSame('Score', $roundTrip->metadata->weightVariableName);
                 self::assertSame(['First document line', 'Second document line'], $roundTrip->metadata->documents());
                 self::assertCount(3, $roundTrip->variables());
@@ -133,7 +133,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
                 self::assertEquals(MissingValues::discrete('MISSING'), $roundTrip->variables()[1]->missingValues);
                 self::assertSame(400, $roundTrip->variables()[2]->width);
                 self::assertSame(340, strlen((string) $roundTrip->rows()[0][2]));
-                self::assertEquals([new FileAttribute('Source', ['MySQL/MariaDB integration'])], $roundTrip->metadata->attributes());
+                self::assertEquals([new FileAttribute('Source', ['MySQL-family integration'])], $roundTrip->metadata->attributes());
                 self::assertEquals([new VariableSet('Core', ['Score', 'Reason'])], $roundTrip->metadata->variableSets());
                 self::assertCount(1, $roundTrip->metadata->multipleResponseSets());
                 self::assertSame(MultipleResponseSetType::DICHOTOMY, $roundTrip->metadata->multipleResponseSets()[0]->type);
@@ -150,7 +150,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
 
     abstract protected function environmentPrefix(): string;
 
-    private function mysql(): PDO
+    protected function mysql(): PDO
     {
         $prefix = $this->environmentPrefix();
         $dsn = getenv($prefix . '_DSN');
@@ -218,10 +218,10 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
             ]),
             [[7.5, 'present', $longText], [null, 'MISSING', '']],
             new FileMetadata(
-                'MySQL/MariaDB integration fixture',
+                'MySQL-family integration fixture',
                 weightVariableName: 'Score',
                 documents: ['First document line', 'Second document line'],
-                attributes: [new FileAttribute('Source', ['MySQL/MariaDB integration'])],
+                attributes: [new FileAttribute('Source', ['MySQL-family integration'])],
                 variableSets: [new VariableSet('Core', ['Score', 'Reason'])],
                 multipleResponseSets: [
                     new MultipleResponseSet(
@@ -239,13 +239,13 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
         );
     }
 
-    private function tableName(PDO $pdo, string $datasetName): string
+    protected function tableName(PDO $pdo, string $datasetName): string
     {
         $statement = $pdo->prepare('SELECT table_name FROM datasets WHERE dataset_name = ?');
         $statement->execute([$datasetName]);
         $tableName = $statement->fetchColumn();
         if (!is_string($tableName) || $tableName === '') {
-            throw new RuntimeException('The MySQL/MariaDB dataset catalogue entry was not created.');
+            throw new RuntimeException('The MySQL-family dataset catalogue entry was not created.');
         }
 
         return $tableName;
@@ -263,7 +263,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
     }
 
     /** @param list<mixed> $parameters */
-    private function scalar(PDO $pdo, string $sql, array $parameters): mixed
+    protected function scalar(PDO $pdo, string $sql, array $parameters): mixed
     {
         $statement = $pdo->prepare($sql);
         $statement->execute($parameters);
@@ -271,12 +271,13 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
         return $statement->fetchColumn();
     }
 
-    private function cleanup(PDO $pdo, string $datasetName, ?string $tableName): void
+    protected function cleanup(PDO $pdo, string $datasetName, ?string $tableName): void
     {
         if ($tableName !== null) {
             $pdo->exec('DROP TABLE IF EXISTS ' . $this->quote($tableName));
         }
         foreach ([
+            'dataset_weight_variables',
             'multiple_response_set_members',
             'multiple_response_sets',
             'variable_set_members',
@@ -314,12 +315,12 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
         }
     }
 
-    private function quote(string $identifier): string
+    protected function quote(string $identifier): string
     {
         return chr(96) . str_replace(chr(96), chr(96) . chr(96), $identifier) . chr(96);
     }
 
-    private function fileHeader(string $path): string
+    protected function fileHeader(string $path): string
     {
         $header = file_get_contents($path, false, null, 0, 4);
         if (!is_string($header)) {

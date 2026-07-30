@@ -14,33 +14,30 @@ final readonly class Connection
     public PdoSqlProfile $profile;
     public string $profileName;
     public string $serverVersion;
+    public string $rawServerVersion;
+    public string $identitySource;
+    /** @var array<string, string|null> */
+    public array $identityProbeResults;
     public bool $claimedSupported;
     public ?string $matchedClaim;
 
     public function __construct(public PDO $pdo)
     {
-        $driver = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
-        if (!is_string($driver)) {
-            throw new UnsupportedOperation(
-                DiagnosticCode::UnsupportedSqlDriver,
-                'The PDO connection did not report a usable SQL driver name.',
-            );
-        }
-
-        $this->serverVersion = (string) $pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
-        $this->profileName = match ($driver) {
-            'sqlite' => 'sqlite',
-            'pgsql' => 'postgresql',
-            'mysql' => stripos($this->serverVersion, 'mariadb') !== false ? 'mariadb' : 'mysql',
-            default => throw new UnsupportedOperation(
-                DiagnosticCode::UnsupportedSqlDriver,
-                sprintf('The PDO driver "%s" has no OpenStatSpec SQL profile.', $driver),
-            ),
-        };
+        $identity = ServerIdentity::detect($pdo);
+        $this->profileName = $identity->profileName;
+        $this->serverVersion = $identity->serverVersion;
+        $this->rawServerVersion = $identity->rawServerVersion;
+        $this->identitySource = $identity->identitySource;
+        $this->identityProbeResults = $identity->probeResults;
         $this->profile = match ($this->profileName) {
             'sqlite' => new SqliteProfile(),
             'postgresql' => new PostgreSqlProfile(),
             'mysql', 'mariadb' => new MySqlProfile(),
+            'dolt' => new DoltProfile(),
+            default => throw new UnsupportedOperation(
+                DiagnosticCode::UnsupportedSqlDriver,
+                sprintf('The SQL profile "%s" has no OpenStatSpec implementation.', $this->profileName),
+            ),
         };
         $assessment = ServerVersionPolicy::assess($this->profileName, $this->serverVersion);
         $this->claimedSupported = $assessment['claimed_supported'];
