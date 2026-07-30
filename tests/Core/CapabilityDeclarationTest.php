@@ -15,9 +15,9 @@ final class CapabilityDeclarationTest extends TestCase
         $pdo = new \PDO('sqlite::memory:');
         $declaration = (new CapabilityDeclaration($pdo, new PhpSpssEngine()))->toArray();
         self::assertSame('release_candidate', $declaration['specification_status']);
-        self::assertNull($declaration['specification_release']);
+        self::assertSame('v1.0.0-rc.1', $declaration['specification_release']);
         self::assertSame(CapabilityDeclaration::SPECIFICATION_RELEASE, $declaration['specification_release']);
-        self::assertSame('34141dda023d9e0217c37c232e39f436edfb0746', $declaration['specification_commit']);
+        self::assertSame('fef0dc6f4b17ff7141dad3f49d0524c63efbfed5', $declaration['specification_commit']);
         self::assertSame(CapabilityDeclaration::SPECIFICATION_COMMIT, $declaration['specification_commit']);
         self::assertMatchesRegularExpression('/^[0-9a-f]{40}$/', $declaration['specification_commit']);
         self::assertSame(['import', 'export', 'semantic_round_trip'], $declaration['directions']);
@@ -57,6 +57,8 @@ final class CapabilityDeclarationTest extends TestCase
             $profile = $declaration['sql_profiles'][$name];
             self::assertSame($name, $profile['profile']);
             self::assertSame(CapabilityDeclaration::SPECIFICATION_COMMIT, $profile['specification_commit']);
+            self::assertSame('release_candidate', $profile['specification_status']);
+            self::assertSame(CapabilityDeclaration::SPECIFICATION_RELEASE, $profile['specification_release']);
             self::assertGreaterThan(0, $profile['theoretical_limits']['maximum_value_bytes']);
             self::assertNotSame('', $profile['claimed_server_versions']);
             self::assertNotEmpty($profile['ci_tested_server_versions']);
