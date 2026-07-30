@@ -182,7 +182,7 @@ final class OfficialSpssConformanceManifestTest extends TestCase
 
         if (array_key_exists('variable_attributes', $expected)) {
             $actual = [];
-            foreach ($this->rows($pdo, 'SELECT variable.source_name, attribute.attribute_name, attribute.array_ordinal, attribute.attribute_value FROM variable_attribute attribute JOIN variable ON variable.variable_id = attribute.variable_id WHERE variable.dataset_id = ? ORDER BY variable.source_ordinal, attribute.attribute_name, attribute.array_ordinal', [$datasetId]) as $row) {
+            foreach ($this->rows($pdo, 'SELECT variable.source_name, attribute_row.attribute_name, attribute_row.array_ordinal, attribute_row.attribute_value FROM variable_attribute attribute_row JOIN variable ON variable.variable_id = attribute_row.variable_id WHERE variable.dataset_id = ? ORDER BY variable.source_ordinal, attribute_row.attribute_name, attribute_row.array_ordinal', [$datasetId]) as $row) {
                 $key = (string) $row['source_name'] . "\0" . (string) $row['attribute_name'];
                 if (!isset($actual[$key])) {
                     $actual[$key] = ['variable' => (string) $row['source_name'], 'name' => (string) $row['attribute_name'], 'values' => []];
@@ -290,7 +290,7 @@ final class OfficialSpssConformanceManifestTest extends TestCase
             'utf8_source_encoding' => self::assertSame('UTF-8', strtoupper((string) $this->scalar($pdo, 'SELECT source_encoding FROM dataset WHERE dataset_id = ?', [$datasetId]))),
             'string_over_255_bytes' => self::assertGreaterThan(0, $count("SELECT COUNT(*) FROM variable WHERE dataset_id = ? AND storage_kind = 'string' AND declared_string_width > 255")),
             'dataset_attribute_arrays' => self::assertGreaterThan(1, $count('SELECT COUNT(*) FROM dataset_attribute WHERE dataset_id = ?')),
-            'variable_attribute_arrays' => self::assertGreaterThan(1, $count('SELECT COUNT(*) FROM variable_attribute attribute JOIN variable ON variable.variable_id = attribute.variable_id WHERE variable.dataset_id = ?')),
+            'variable_attribute_arrays' => self::assertGreaterThan(1, $count('SELECT COUNT(*) FROM variable_attribute attribute_row JOIN variable ON variable.variable_id = attribute_row.variable_id WHERE variable.dataset_id = ?')),
             'variable_sets_ordered' => self::assertGreaterThan(0, $count('SELECT COUNT(*) FROM variable_set WHERE dataset_id = ? AND source_ordinal IS NOT NULL')),
             'multiple_response_md' => self::assertGreaterThan(0, $count("SELECT COUNT(*) FROM multiple_response_set WHERE dataset_id = ? AND set_kind = 'MD'")),
             'multiple_response_mc' => self::assertGreaterThan(0, $count("SELECT COUNT(*) FROM multiple_response_set WHERE dataset_id = ? AND set_kind = 'MC'")),

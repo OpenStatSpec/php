@@ -624,17 +624,7 @@ final readonly class NormativeCatalog
     {
         $statement = $this->statement('SELECT index_name, non_unique, column_name FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? ORDER BY index_name, seq_in_index');
         $statement->execute([$table]);
-        /** @var array<string, list<string>> $uniqueIndexes */
-        $uniqueIndexes = [];
-        while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
-            if ((int) ($row['non_unique'] ?? 1) !== 0
-                || !is_string($row['index_name'] ?? null)
-                || !is_string($row['column_name'] ?? null)
-            ) {
-                continue;
-            }
-            $uniqueIndexes[$row['index_name']][] = $row['column_name'];
-        }
+        $uniqueIndexes = MySqlIndexIntrospection::uniqueColumnLists($statement->fetchAll(PDO::FETCH_ASSOC));
         if (in_array(['dataset_id', 'source_ordinal'], $uniqueIndexes, true)) {
             return;
         }
