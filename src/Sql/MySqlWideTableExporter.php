@@ -30,7 +30,7 @@ use SPSS\Sav\VariableRole;
 use SPSS\Sav\VariableSet;
 use SPSS\Sav\VariableType;
 
-/** Reconstructs a complete V3 Dataset from the MySQL/MariaDB strict-wide catalogue. */
+/** Reconstructs a complete V3 Dataset from the MySQL-family strict-wide catalogue. */
 final readonly class MySqlWideTableExporter
 {
     public function __construct(private PDO $pdo) {}
@@ -41,7 +41,7 @@ final readonly class MySqlWideTableExporter
         if (!in_array($targetFormat, ['sav', 'zsav'], true)) {
             throw new UnsupportedOperation(
                 DiagnosticCode::UnsupportedSourceFormat,
-                'The MySQL/MariaDB profile can only construct SAV or ZSAV datasets.',
+                'The MySQL-family profile can only construct SAV or ZSAV datasets.',
             );
         }
 
@@ -57,7 +57,7 @@ final readonly class MySqlWideTableExporter
         $rows = [];
         while (($row = $cases->fetch(PDO::FETCH_ASSOC)) !== false) {
             if (!is_array($row)) {
-                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB wide-table reader returned an invalid case row.');
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family wide-table reader returned an invalid case row.');
             }
             $values = [];
             foreach ($variables as $variable) {
@@ -117,7 +117,7 @@ final readonly class MySqlWideTableExporter
         $statement->execute([$datasetName]);
         $dataset = $statement->fetch(PDO::FETCH_ASSOC);
         if (!is_array($dataset) || !is_string($dataset['table_name'] ?? null) || $dataset['table_name'] === '') {
-            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The requested dataset is not present in the MySQL/MariaDB catalogue.');
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The requested dataset is not present in the MySQL-family catalogue.');
         }
 
         return ['table_name' => $dataset['table_name']];
@@ -157,7 +157,7 @@ final readonly class MySqlWideTableExporter
                 || (!is_string($label) && $label !== null)
                 || ($storageKind === 'string' && ($sourceWidth < 1 || $sourceWidth > 32767))
             ) {
-                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB variable catalogue is malformed.');
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family variable catalogue is malformed.');
             }
 
             $variables[] = [
@@ -208,7 +208,7 @@ final readonly class MySqlWideTableExporter
         $typedLabels = [];
         while (($row = $labels->fetch(PDO::FETCH_ASSOC)) !== false) {
             if (!is_array($row) || !is_string($row['label'] ?? null)) {
-                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB value-label catalogue is malformed.');
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family value-label catalogue is malformed.');
             }
             $typedLabels[] = new ValueLabel($this->dictionaryValue($row), $row['label']);
         }
@@ -220,7 +220,7 @@ final readonly class MySqlWideTableExporter
             return ['labels' => $typedLabels, 'missing' => MissingValues::none()];
         }
         if ($format < -3 || ($format < 0 && $format !== -2 && $format !== -3) || $format > 3) {
-            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB user-missing rule has an unsupported SPSS missing format.');
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family user-missing rule has an unsupported SPSS missing format.');
         }
 
         $valuesStatement = $this->statement('SELECT value_kind, numeric_value, text_value FROM missing_rule_values WHERE dataset_name = ? AND variable_ordinal = ? ORDER BY ordinal');
@@ -228,14 +228,14 @@ final readonly class MySqlWideTableExporter
         $values = [];
         while (($row = $valuesStatement->fetch(PDO::FETCH_ASSOC)) !== false) {
             if (!is_array($row)) {
-                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB user-missing value catalogue is malformed.');
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family user-missing value catalogue is malformed.');
             }
             $values[] = $this->dictionaryValue($row);
         }
 
         if ($format === -2) {
             if (count($values) !== 2) {
-                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB user-missing rule has an incomplete ordered value list.');
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family user-missing rule has an incomplete ordered value list.');
             }
 
             return ['labels' => $typedLabels, 'missing' => MissingValues::range(
@@ -245,7 +245,7 @@ final readonly class MySqlWideTableExporter
         }
         if ($format === -3) {
             if (count($values) !== 3) {
-                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB user-missing rule has an incomplete ordered value list.');
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family user-missing rule has an incomplete ordered value list.');
             }
 
             return ['labels' => $typedLabels, 'missing' => MissingValues::rangeAndValue(
@@ -255,7 +255,7 @@ final readonly class MySqlWideTableExporter
             )];
         }
         if (count($values) !== $format) {
-            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB user-missing rule has an incomplete ordered value list.');
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family user-missing rule has an incomplete ordered value list.');
         }
 
         return ['labels' => $typedLabels, 'missing' => MissingValues::discrete(...$values)];
@@ -279,7 +279,7 @@ final readonly class MySqlWideTableExporter
             }
         }
 
-        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB dictionary contains an invalid typed value.');
+        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family dictionary contains an invalid typed value.');
     }
 
     private function numeric(int|float|string $value): int|float
@@ -300,7 +300,7 @@ final readonly class MySqlWideTableExporter
         $statement->execute([$datasetName, $ordinal]);
         $role = $this->integer($statement->fetchColumn());
         if ($role === null || ($typed = VariableRole::tryFrom($role)) === null) {
-            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB variable role catalogue is malformed.');
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family variable role catalogue is malformed.');
         }
 
         return $typed;
@@ -343,7 +343,7 @@ final readonly class MySqlWideTableExporter
             $name = $row['attribute_name'] ?? null;
             $value = $row['value'] ?? null;
             if (!is_string($name) || $name === '' || !is_string($value)) {
-                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB attribute catalogue is malformed.');
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family attribute catalogue is malformed.');
             }
             $grouped[$name][] = $value;
         }
@@ -362,14 +362,14 @@ final readonly class MySqlWideTableExporter
             $ordinal = $this->integer($set['set_ordinal'] ?? null);
             $name = $set['name'] ?? null;
             if ($ordinal === null || !is_string($name) || $name === '') {
-                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB variable-set catalogue is malformed.');
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family variable-set catalogue is malformed.');
             }
             $members->execute([$datasetName, $ordinal]);
             $names = [];
             while (($member = $members->fetch(PDO::FETCH_ASSOC)) !== false) {
                 $sourceName = $member['source_name'] ?? null;
                 if (!is_string($sourceName) || $sourceName === '') {
-                    throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A MySQL/MariaDB variable set references an unknown variable.');
+                    throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A MySQL-family variable set references an unknown variable.');
                 }
                 $names[] = $sourceName;
             }
@@ -394,7 +394,7 @@ final readonly class MySqlWideTableExporter
             $labelSource = is_string($set['label_source'] ?? null) ? MultipleResponseLabelSource::tryFrom($set['label_source']) : null;
             $label = $set['label'] ?? null;
             if ($ordinal === null || !is_string($name) || $name === '' || $type === null || $categoryLabels === null || $labelSource === null || ($label !== null && !is_string($label))) {
-                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB multiple-response-set catalogue is malformed.');
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family multiple-response-set catalogue is malformed.');
             }
             $countedValue = $this->countedValue($set);
             $members->execute([$datasetName, $ordinal]);
@@ -402,14 +402,14 @@ final readonly class MySqlWideTableExporter
             while (($member = $members->fetch(PDO::FETCH_ASSOC)) !== false) {
                 $sourceName = $member['source_name'] ?? null;
                 if (!is_string($sourceName) || $sourceName === '') {
-                    throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A MySQL/MariaDB multiple-response set references an unknown variable.');
+                    throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A MySQL-family multiple-response set references an unknown variable.');
                 }
                 $names[] = $sourceName;
             }
             try {
                 $result[] = new MultipleResponseSet($name, $type, $names, $label, $countedValue, $categoryLabels, $labelSource);
             } catch (\InvalidArgumentException $exception) {
-                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB multiple-response-set catalogue is inconsistent: ' . $exception->getMessage());
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family multiple-response-set catalogue is inconsistent: ' . $exception->getMessage());
             }
         }
 
@@ -431,7 +431,7 @@ final readonly class MySqlWideTableExporter
             return (int) $value;
         }
 
-        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A MySQL/MariaDB multiple-response set has an invalid counted value.');
+        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A MySQL-family multiple-response set has an invalid counted value.');
     }
 
     private function fileLabel(string $datasetName): ?string
@@ -455,7 +455,7 @@ final readonly class MySqlWideTableExporter
             return null;
         }
         if (!is_string($name) || $name === '') {
-            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB weight-variable catalogue references an unknown source variable.');
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family weight-variable catalogue references an unknown source variable.');
         }
 
         return $name;
@@ -496,7 +496,7 @@ final readonly class MySqlWideTableExporter
     {
         if ($storageKind === 'string') {
             if (!is_string($value)) {
-                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB wide table contains a null or non-string SPSS string value.');
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family wide table contains a null or non-string SPSS string value.');
             }
 
             return $value;
@@ -508,7 +508,7 @@ final readonly class MySqlWideTableExporter
             return (float) $value;
         }
 
-        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB wide table contains a non-numeric SPSS numeric value.');
+        throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family wide table contains a non-numeric SPSS numeric value.');
     }
 
     private function integer(mixed $value): ?int
@@ -520,7 +520,7 @@ final readonly class MySqlWideTableExporter
     {
         $statement = $this->pdo->prepare($sql);
         if ($statement === false) {
-            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL/MariaDB profile could not prepare a required catalogue query.');
+            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The MySQL-family profile could not prepare a required catalogue query.');
         }
 
         return $statement;

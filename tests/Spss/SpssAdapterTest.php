@@ -6,6 +6,7 @@ namespace OpenStatSpec\Tests\Spss;
 
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
+use OpenStatSpec\Spss\GuardedImportSpssEngine;
 use OpenStatSpec\Spss\PhpSpssEngine;
 use OpenStatSpec\Spss\SpssAdapter;
 use OpenStatSpec\Spss\SpssSourceNormalizer;
@@ -288,6 +289,360 @@ final class SpssAdapterTest extends TestCase
         self::assertSame(MultipleResponseSetType::CATEGORY, $multipleResponseSets[1]->type);
         self::assertSame(['Respondent ID', 'Favourite colour'], $multipleResponseSets[1]->variableNames());
         self::assertNull($multipleResponseSets[1]->countedValue);
+    }
+
+    public function testGuardedEngineKeepsPhysicalDescriptorPathOutOfDatabaseProvenance(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $physicalDescriptorPath = '/proc/self/fd/17';
+        $innerEngine = new FakeSpssEngine($this->fixture('sav'));
+        $engine = new GuardedImportSpssEngine($innerEngine, $physicalDescriptorPath, 'sav');
+        $adapter = new SpssAdapter($pdo, $engine);
+        $verifiedSourceSha256 = str_repeat('a', 64);
+
+        $adapter->import(
+            $engine->logicalPath(),
+            'Guarded import',
+            verifiedSourceSha256: $verifiedSourceSha256,
+        );
+
+        self::assertSame('source.sav', $engine->logicalPath());
+        self::assertSame($physicalDescriptorPath, $innerEngine->lastReadPath());
+        self::assertSame(
+            [['source_hash' => $verifiedSourceSha256]],
+            self::rows($pdo, 'SELECT source_hash FROM dataset WHERE dataset_name = "Guarded import"'),
+        );
+        $journal = self::rows(
+            $pdo,
+            'SELECT target_path, engine_details FROM operation_catalog WHERE direction = "import"',
+        );
+        self::assertSame('source.sav', $journal[0]['target_path']);
+        self::assertStringNotContainsString($physicalDescriptorPath, $journal[0]['engine_details']);
+        self::assertSame([], self::rows($pdo, 'SELECT source_item FROM fidelity_event_catalog'));
+        self::assertSame([], self::rows($pdo, 'SELECT source_item FROM fidelity_event'));
+    }
+
+    public function testGuardedEngineSanitizesPhysicalDescriptorReadFailureBeforeJournaling(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $physicalDescriptorPath = '/proc/self/fd/17';
+        $innerEngine = new FakeSpssEngine(
+            $this->fixture('sav'),
+            new RuntimeException('Failed to read ' . $physicalDescriptorPath),
+        );
+        $engine = new GuardedImportSpssEngine($innerEngine, $physicalDescriptorPath, 'sav');
+        $adapter = new SpssAdapter($pdo, $engine);
+
+        try {
+            $adapter->import(
+                $engine->logicalPath(),
+                'Rejected guarded import',
+                verifiedSourceSha256: str_repeat('a', 64),
+            );
+            self::fail('A guarded inner read failure was not reported.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::InvalidSourceDataset, $exception->diagnosticCode);
+            self::assertStringContainsString('source.sav', $exception->getMessage());
+            self::assertStringNotContainsString($physicalDescriptorPath, $exception->getMessage());
+            self::assertNull($exception->getPrevious());
+        }
+
+        self::assertSame($physicalDescriptorPath, $innerEngine->lastReadPath());
+        $persisted = json_encode([
+            'operation_catalog' => self::rows($pdo, 'SELECT * FROM operation_catalog'),
+            'fidelity_event_catalog' => self::rows($pdo, 'SELECT * FROM fidelity_event_catalog'),
+            'operation' => self::rows($pdo, 'SELECT * FROM operation'),
+            'fidelity_event' => self::rows($pdo, 'SELECT * FROM fidelity_event'),
+            'dataset' => self::rows($pdo, 'SELECT * FROM dataset'),
+        ], JSON_THROW_ON_ERROR);
+        self::assertStringContainsString('source.sav', $persisted);
+        self::assertStringNotContainsString($physicalDescriptorPath, $persisted);
+    }
+
+    public function testGuardedEngineRejectsReturnedTechnicalFormatMismatchWithoutJournalLeak(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $physicalDescriptorPath = '/proc/self/fd/17';
+        $innerEngine = new FakeSpssEngine($this->fixture('zsav'));
+        $engine = new GuardedImportSpssEngine($innerEngine, $physicalDescriptorPath, 'sav');
+        $adapter = new SpssAdapter($pdo, $engine);
+
+        try {
+            $adapter->import(
+                $engine->logicalPath(),
+                'Rejected guarded format mismatch',
+                verifiedSourceSha256: str_repeat('a', 64),
+            );
+            self::fail('A guarded dataset with mismatched technical source format was accepted.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::InvalidSourceDataset, $exception->diagnosticCode);
+            self::assertSame(
+                'The guarded SPSS source could not be read for logical path source.sav.',
+                $exception->getMessage(),
+            );
+            self::assertStringNotContainsString($physicalDescriptorPath, $exception->getMessage());
+            self::assertNull($exception->getPrevious());
+        }
+
+        self::assertSame($physicalDescriptorPath, $innerEngine->lastReadPath());
+        self::assertSame(
+            [[
+                'target_path' => 'source.sav',
+                'source_format' => 'sav',
+                'status' => 'failed',
+                'failure_code' => 'invalid_source_dataset',
+            ]],
+            self::rows(
+                $pdo,
+                'SELECT target_path, source_format, status, failure_code FROM operation_catalog',
+            ),
+        );
+        $persisted = json_encode([
+            'operation_catalog' => self::rows($pdo, 'SELECT * FROM operation_catalog'),
+            'fidelity_event_catalog' => self::rows($pdo, 'SELECT * FROM fidelity_event_catalog'),
+            'operation' => self::rows($pdo, 'SELECT * FROM operation'),
+            'fidelity_event' => self::rows($pdo, 'SELECT * FROM fidelity_event'),
+            'dataset' => self::rows($pdo, 'SELECT * FROM dataset'),
+        ], JSON_THROW_ON_ERROR);
+        self::assertStringContainsString('source.sav', $persisted);
+        self::assertStringNotContainsString($physicalDescriptorPath, $persisted);
+        self::assertSame([], self::rows($pdo, 'SELECT * FROM dataset'));
+    }
+
+    public function testGuardedEngineRejectsDescriptorBearingNestedIdentityWithoutJournaling(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $physicalDescriptorPath = '/proc/self/fd/17';
+        $maliciousIdentities = [
+            ['package' => 'malicious', 'nested' => ['detail' => $physicalDescriptorPath]],
+            ['package' => 'malicious', 'nested' => ['detail' => 'opened /dev/fd/22']],
+            ['package' => 'malicious', 'nested' => ['descriptor-/proc/123/fd/8' => true]],
+        ];
+
+        foreach ($maliciousIdentities as $maliciousIdentity) {
+            $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            $innerEngine = new FakeSpssEngine(
+                $this->fixture(),
+                identityOverride: $maliciousIdentity,
+            );
+            $engine = new GuardedImportSpssEngine($innerEngine, $physicalDescriptorPath, 'sav');
+            $adapter = new SpssAdapter($pdo, $engine);
+
+            try {
+                $adapter->import(
+                    $engine->logicalPath(),
+                    'Rejected guarded identity',
+                    verifiedSourceSha256: str_repeat('a', 64),
+                );
+                self::fail('A descriptor-bearing engine identity was accepted.');
+            } catch (UnsupportedOperation $exception) {
+                self::assertSame(DiagnosticCode::InvalidSourceDataset, $exception->diagnosticCode);
+                self::assertSame(
+                    'The guarded SPSS engine identity is not safe for journaling.',
+                    $exception->getMessage(),
+                );
+                self::assertDoesNotMatchRegularExpression(
+                    '~(?:/proc/(?:self|thread-self|[0-9]+)/fd/[0-9]+|/dev/fd/[0-9]+)~',
+                    $exception->getMessage(),
+                );
+                self::assertNull($exception->getPrevious());
+            }
+
+            self::assertSame(
+                [],
+                self::rows(
+                    $pdo,
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('operation_catalog', 'fidelity_event_catalog')",
+                ),
+            );
+            self::assertSame([], self::rows($pdo, 'SELECT * FROM operation'));
+            self::assertSame([], self::rows($pdo, 'SELECT * FROM fidelity_event'));
+            self::assertSame([], self::rows($pdo, 'SELECT * FROM dataset'));
+        }
+    }
+
+    public function testGuardedEngineSupportsZsavLogicalPathWithDevFdSource(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $physicalDescriptorPath = '/dev/fd/23';
+        $innerEngine = new FakeSpssEngine($this->fixture('zsav'));
+        $engine = new GuardedImportSpssEngine($innerEngine, $physicalDescriptorPath, 'zsav');
+        $adapter = new SpssAdapter($pdo, $engine);
+        $verifiedSourceSha256 = str_repeat('b', 64);
+
+        $adapter->import(
+            $engine->logicalPath(),
+            'Guarded ZSAV import',
+            verifiedSourceSha256: $verifiedSourceSha256,
+        );
+
+        self::assertSame('source.zsav', $engine->logicalPath());
+        self::assertSame($physicalDescriptorPath, $innerEngine->lastReadPath());
+        self::assertSame(
+            [['target_path' => 'source.zsav', 'source_format' => 'zsav']],
+            self::rows(
+                $pdo,
+                'SELECT target_path, source_format FROM operation_catalog WHERE direction = "import"',
+            ),
+        );
+        self::assertSame(
+            [['source_format' => 'zsav', 'source_hash' => $verifiedSourceSha256]],
+            self::rows(
+                $pdo,
+                'SELECT source_format, source_hash FROM dataset WHERE dataset_name = "Guarded ZSAV import"',
+            ),
+        );
+    }
+
+    public function testGuardedEngineRejectsNonJsonSafeIdentityWithoutJournaling(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $physicalDescriptorPath = '/proc/self/fd/17';
+        $unsafeIdentities = [
+            ['package' => 'malicious', 'detail' => INF],
+            ['package' => 'malicious', 'detail' => NAN],
+            ['package' => 'malicious', 'detail' => "\xC3\x28"],
+            ['package' => 'malicious', "invalid-key-\xC3\x28" => true],
+        ];
+
+        foreach ($unsafeIdentities as $unsafeIdentity) {
+            $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            $innerEngine = new FakeSpssEngine(
+                $this->fixture(),
+                identityOverride: $unsafeIdentity,
+            );
+            $engine = new GuardedImportSpssEngine($innerEngine, $physicalDescriptorPath, 'sav');
+            $adapter = new SpssAdapter($pdo, $engine);
+
+            try {
+                $adapter->import(
+                    $engine->logicalPath(),
+                    'Rejected non-JSON-safe identity',
+                    verifiedSourceSha256: str_repeat('a', 64),
+                );
+                self::fail('A non-JSON-safe engine identity was accepted.');
+            } catch (UnsupportedOperation $exception) {
+                self::assertSame(DiagnosticCode::InvalidSourceDataset, $exception->diagnosticCode);
+                self::assertSame(
+                    'The guarded SPSS engine identity is not safe for journaling.',
+                    $exception->getMessage(),
+                );
+                self::assertNull($exception->getPrevious());
+            }
+
+            self::assertSame(
+                [],
+                self::rows(
+                    $pdo,
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('operation_catalog', 'fidelity_event_catalog')",
+                ),
+            );
+            self::assertSame([], self::rows($pdo, 'SELECT * FROM operation'));
+            self::assertSame([], self::rows($pdo, 'SELECT * FROM fidelity_event'));
+            self::assertSame([], self::rows($pdo, 'SELECT * FROM dataset'));
+        }
+    }
+
+    public function testImportRejectsEphemeralDescriptorPathsBeforeDatabaseMutation(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        foreach (['/proc/self/fd/7', '/proc/thread-self/fd/7', '/proc/123/fd/7', '/dev/fd/7'] as $sourcePath) {
+            $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            $adapter = new SpssAdapter($pdo, new FakeSpssEngine($this->fixture()));
+
+            try {
+                $adapter->import(
+                    $sourcePath,
+                    'Rejected descriptor import',
+                    verifiedSourceSha256: str_repeat('a', 64),
+                );
+                self::fail('An ephemeral descriptor path was accepted.');
+            } catch (UnsupportedOperation $exception) {
+                self::assertSame(DiagnosticCode::InvalidSourceDataset, $exception->diagnosticCode);
+            }
+
+            self::assertSame(
+                [],
+                self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table'"),
+            );
+        }
+    }
+
+    public function testImportWithoutExplicitHashRetainsReadablePathHashing(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        $sourcePath = sys_get_temp_dir() . '/openstatspec-source-hash-' . uniqid('', true) . '.sav';
+        try {
+            file_put_contents($sourcePath, 'source bytes');
+            $expectedSourceSha256 = hash_file('sha256', $sourcePath);
+            $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            $adapter = new SpssAdapter($pdo, new FakeSpssEngine($this->fixture()));
+
+            $adapter->import($sourcePath, 'Readable source');
+
+            self::assertSame(
+                [['source_hash' => $expectedSourceSha256]],
+                self::rows($pdo, 'SELECT source_hash FROM dataset WHERE dataset_name = "Readable source"'),
+            );
+        } finally {
+            @unlink($sourcePath);
+        }
+    }
+
+    public function testImportRejectsInvalidVerifiedSha256BeforeDatabaseMutation(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+
+        foreach (['abc', str_repeat('A', 64)] as $invalidSourceSha256) {
+            $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            $adapter = new SpssAdapter($pdo, new FakeSpssEngine($this->fixture()));
+
+            try {
+                $adapter->import(
+                    'source.sav',
+                    'Rejected import',
+                    verifiedSourceSha256: $invalidSourceSha256,
+                );
+                self::fail('An invalid verified source SHA-256 was accepted.');
+            } catch (UnsupportedOperation $exception) {
+                self::assertSame(DiagnosticCode::InvalidSourceDataset, $exception->diagnosticCode);
+            }
+
+            self::assertSame(
+                [],
+                self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table'"),
+            );
+        }
     }
 
     public function testPhpSpssEngineWritesAndReadsTypedDataset(): void
@@ -640,7 +995,7 @@ final class SpssAdapterTest extends TestCase
         $pdo->exec("INSERT INTO variable_set (variable_set_id, dataset_id, source_ordinal, set_name) VALUES ('vs-duplicate', 'dataset-v3', 1, 'Duplicate')");
     }
 
-    private function fixture(): Dataset
+    private function fixture(string $sourceFormat = 'zsav'): Dataset
     {
         return new Dataset(
             new VariableDictionary([
@@ -696,7 +1051,7 @@ final class SpssAdapterTest extends TestCase
                 ],
             ),
             new FileTechnicalMetadata(
-                sourceFormat: 'zsav',
+                sourceFormat: $sourceFormat,
                 recordType: '$FL3',
                 sourceVersion: 'OpenStatSpec 0.1',
                 provenance: 'Päritolu: küsitlus',

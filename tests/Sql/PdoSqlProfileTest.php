@@ -6,6 +6,7 @@ namespace OpenStatSpec\Tests\Sql;
 
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
+use OpenStatSpec\Sql\DoltProfile;
 use OpenStatSpec\Sql\MySqlProfile;
 use OpenStatSpec\Sql\PostgreSqlProfile;
 use OpenStatSpec\Sql\SqliteProfile;
@@ -29,6 +30,57 @@ final class PdoSqlProfileTest extends TestCase
         self::assertSame("`name`", $mysql->quoteIdentifier('name'));
         self::assertSame(1599, $postgres->maximumSourceVariables());
         self::assertSame(1016, $mysql->maximumSourceVariables());
+
+        $dolt = new DoltProfile();
+        self::assertSame(305, $dolt->maximumSourceVariables());
+        self::assertSame(65_504, $dolt->maximumRowBytes());
+        self::assertSame('bytes', $dolt->identifierLimitUnit());
+    }
+
+    public function testDoltEnvelopeAccepts305VariablesAndRejects306(): void
+    {
+        $profile = new DoltProfile();
+        $profile->assertCanRepresent(305);
+        self::assertSame(305, $profile->maximumSourceVariables());
+
+        $this->expectException(UnsupportedOperation::class);
+        $this->expectExceptionMessage('at most 305 source variables');
+        $profile->assertCanRepresent(306);
+    }
+
+    public function testDoltActivePreflightAccepts65504BytesAndRejects65505(): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $statement = $this->createMock(PDOStatement::class);
+        $pdo->method('query')->with('SELECT @@max_allowed_packet')->willReturn($statement);
+        $statement->method('fetchColumn')->willReturn('1073741824');
+        $profile = new DoltProfile();
+        $variables = [['name' => 'payload', 'type' => 'string', 'width' => 65_505]];
+
+        $profile->assertDataset($variables, [[str_repeat('a', 65_504)]], $pdo);
+
+        try {
+            $profile->assertDataset($variables, [[str_repeat('a', 65_505)]], $pdo);
+            self::fail('Dolt accepted an encoded case beyond its 65,504-byte envelope.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
+            self::assertStringContainsString('encoded case payload is 65505 bytes', $exception->getMessage());
+            self::assertStringContainsString('limit is 65504 bytes', $exception->getMessage());
+        }
+    }
+
+    public function testDoltLimitSourcesDoNotClaimInnoDbStorageLimits(): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $statement = $this->createMock(PDOStatement::class);
+        $pdo->expects(self::once())->method('query')->with('SELECT @@max_allowed_packet')->willReturn($statement);
+        $statement->expects(self::once())->method('fetchColumn')->willReturn('1073741824');
+
+        $sources = (new DoltProfile())->effectiveLimitSources($pdo);
+        self::assertStringNotContainsString('InnoDB', implode("\n", $sources));
+        self::assertStringContainsString('305 source variables', $sources['maximum_source_variables']);
+        self::assertStringContainsString('65,504-byte', $sources['maximum_row_bytes']);
+        self::assertStringContainsString('active @@max_allowed_packet', $sources['maximum_statement_bytes']);
     }
 
     public function testProfilesRejectWideTablesBeyondDeclaredCapabilities(): void

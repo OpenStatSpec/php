@@ -4,9 +4,14 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Tests\Sql;
 
+use OpenStatSpec\Core\DiagnosticCode;
+use OpenStatSpec\Core\UnsupportedOperation;
+use OpenStatSpec\Sql\DoltProfile;
 use OpenStatSpec\Sql\MySqlWideTableImporter;
 use PDO;
 use PDOStatement;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
@@ -263,15 +268,34 @@ final class MySqlWideTableImporterTest extends TestCase
         ], $multipleResponseMemberRows);
     }
 
-    public function testCompensatesForImplicitDdlCommitWhenCaseInsertFails(): void
+    public function testInjectedDoltProfileRejects306VariablesBeforeDdl(): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $pdo->expects(self::never())->method('exec');
+        $pdo->expects(self::never())->method('prepare');
+        $variables = [];
+        for ($index = 1; $index <= 306; ++$index) {
+            $variables[] = ['name' => 'v' . $index, 'type' => 'numeric'];
+        }
+
+        try {
+            (new MySqlWideTableImporter($pdo, new DoltProfile()))->import([
+                'variables' => $variables,
+                'data' => [],
+            ], 'too wide');
+            self::fail('Expected Dolt preflight to reject 306 source variables.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
+        }
+    }
+
+    public function testRolledBackCaseInsertFailureDropsOnlyAttemptPhysicalTable(): void
     {
         $pdo = $this->createMock(PDO::class);
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
         $cases = $this->createMock(PDOStatement::class);
-        $cleanup = $this->createMock(PDOStatement::class);
         $executedSql = [];
-        $cleanupSql = [];
 
         $pdo->expects(self::exactly(22))->method('exec')->willReturnCallback(function (string $sql) use (&$executedSql): int {
             $executedSql[] = $sql;
@@ -282,26 +306,15 @@ final class MySqlWideTableImporterTest extends TestCase
         $pdo->expects(self::once())->method('inTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('rollBack')->willReturn(true);
         $pdo->expects(self::never())->method('commit');
-        $pdo->expects(self::exactly(20))->method('prepare')->willReturnCallback(
-            static function (string $sql) use ($dataset, $variables, $cases, $cleanup, &$cleanupSql): PDOStatement {
-                if (str_starts_with($sql, 'DELETE FROM ')) {
-                    $cleanupSql[] = $sql;
-
-                    return $cleanup;
-                }
-
-                return match (true) {
-                    str_starts_with($sql, 'INSERT INTO datasets') => $dataset,
-                    str_starts_with($sql, 'INSERT INTO variables') => $variables,
-                    default => $cases,
-                };
-            },
+        $pdo->expects(self::exactly(3))->method('prepare')->willReturnOnConsecutiveCalls(
+            $dataset,
+            $variables,
+            $cases,
         );
 
         $dataset->expects(self::once())->method('execute')->willReturn(true);
         $variables->expects(self::once())->method('execute')->willReturn(true);
         $cases->expects(self::once())->method('execute')->willThrowException(new RuntimeException('insert failed'));
-        $cleanup->expects(self::exactly(17))->method('execute')->with(['customer survey'])->willReturn(true);
 
         $this->expectExceptionMessage('insert failed');
         try {
@@ -312,15 +325,139 @@ final class MySqlWideTableImporterTest extends TestCase
         } finally {
             self::assertStringStartsWith('DROP TABLE IF EXISTS ', $executedSql[21] ?? '');
             self::assertStringContainsString('dataset_customer_survey', $executedSql[21] ?? '');
-            self::assertSame([
-                'DELETE FROM multiple_response_set_members WHERE dataset_name = ?',
-                'DELETE FROM multiple_response_sets WHERE dataset_name = ?',
-                'DELETE FROM variable_set_members WHERE dataset_name = ?',
-                'DELETE FROM variable_sets WHERE dataset_name = ?',
-                'DELETE FROM variable_attributes WHERE dataset_name = ?',
-                'DELETE FROM file_attributes WHERE dataset_name = ?',
-                'DELETE FROM variable_roles WHERE dataset_name = ?',
-            ], array_slice($cleanupSql, 0, 7));
         }
+    }
+
+    #[DataProvider('nonFiniteValues')]
+    public function testDoltRejectsEveryNonFiniteValueBeforeDdl(float $value): void
+    {
+        $pdo = $this->doltPreflightPdo();
+        $pdo->expects(self::never())->method('exec');
+        $pdo->expects(self::never())->method('prepare');
+
+        try {
+            (new MySqlWideTableImporter($pdo, new DoltProfile()))->import([
+                'variables' => [['name' => 'Score', 'type' => 'numeric']],
+                'data' => [[$value]],
+            ], 'non finite');
+            self::fail('Dolt accepted a non-finite value.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
+            self::assertStringContainsString('non-finite', $exception->getMessage());
+        }
+    }
+
+    public function testDoltRejectsMissingWeightAndNonFiniteDictionaryBeforeDdl(): void
+    {
+        foreach ([
+            [
+                'variables' => [['name' => 'Score', 'type' => 'numeric']],
+                'weightVariableName' => 'Missing',
+                'data' => [[1.0]],
+            ],
+            [
+                'variables' => [[
+                    'name' => 'Score',
+                    'type' => 'numeric',
+                    'missingFormat' => 1,
+                    'missingValues' => [NAN],
+                ]],
+                'data' => [[1.0]],
+            ],
+        ] as $source) {
+            $pdo = $this->doltPreflightPdo();
+            $pdo->expects(self::never())->method('exec');
+            $pdo->expects(self::never())->method('prepare');
+
+            try {
+                (new MySqlWideTableImporter($pdo, new DoltProfile()))->import($source, 'invalid metadata');
+                self::fail('Dolt accepted invalid source metadata.');
+            } catch (UnsupportedOperation) {
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $metadata */
+    #[DataProvider('invalidV3Metadata')]
+    public function testDoltRejectsInvalidV3MetadataBeforeDdl(array $metadata, DiagnosticCode $diagnosticCode): void
+    {
+        $pdo = $this->doltPreflightPdo();
+        $pdo->expects(self::never())->method('beginTransaction');
+        $pdo->expects(self::never())->method('exec');
+        $pdo->expects(self::never())->method('prepare');
+        $source = array_merge([
+            'variables' => [[
+                'name' => 'Score',
+                'type' => 'numeric',
+                'role' => 0,
+                'attributes' => [],
+            ]],
+            'data' => [[1.0]],
+        ], $metadata);
+
+        try {
+            (new MySqlWideTableImporter($pdo, new DoltProfile()))->import($source, 'invalid v3 metadata');
+            self::fail('Dolt accepted invalid V3 metadata.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame($diagnosticCode, $exception->diagnosticCode);
+        }
+    }
+
+    /** @return iterable<string, array{array<string, mixed>, DiagnosticCode}> */
+    public static function invalidV3Metadata(): iterable
+    {
+        yield 'malformed file attributes' => [
+            ['fileAttributes' => [['name' => 'Broken', 'values' => 'not-a-list']]],
+            DiagnosticCode::InvalidSourceDataset,
+        ];
+        yield 'unknown variable-set member' => [
+            ['variableSets' => [['name' => 'Core', 'variableNames' => ['Missing']]]],
+            DiagnosticCode::InvalidSourceDataset,
+        ];
+        yield 'duplicate variable-set member' => [
+            ['variableSets' => [['name' => 'Core', 'variableNames' => ['Score', 'Score']]]],
+            DiagnosticCode::InvalidSourceDataset,
+        ];
+        yield 'duplicate multiple-response-set member' => [[
+            'multipleResponseSets' => [[
+                'name' => '$Set',
+                'type' => 'dichotomy',
+                'variableNames' => ['Score', 'Score'],
+                'label' => null,
+                'countedValue' => 1.0,
+                'categoryLabels' => 'counted_values',
+                'labelSource' => 'variable_label',
+            ]],
+        ], DiagnosticCode::InvalidSourceDataset];
+        yield 'non-finite multiple-response counted value' => [[
+            'multipleResponseSets' => [[
+                'name' => '$Set',
+                'type' => 'dichotomy',
+                'variableNames' => ['Score'],
+                'label' => null,
+                'countedValue' => INF,
+                'categoryLabels' => 'counted_values',
+                'labelSource' => 'variable_label',
+            ]],
+        ], DiagnosticCode::TargetCapabilityExceeded];
+    }
+
+    /** @return iterable<string, array{float}> */
+    public static function nonFiniteValues(): iterable
+    {
+        yield 'NaN' => [NAN];
+        yield 'positive infinity' => [INF];
+        yield 'negative infinity' => [-INF];
+    }
+
+    /** @return PDO&MockObject */
+    private function doltPreflightPdo(): PDO
+    {
+        $pdo = $this->createMock(PDO::class);
+        $statement = $this->createMock(PDOStatement::class);
+        $pdo->method('query')->with('SELECT @@max_allowed_packet')->willReturn($statement);
+        $statement->method('fetchColumn')->willReturn('1073741824');
+
+        return $pdo;
     }
 }

@@ -236,19 +236,12 @@ final class PostgreSqlWideTableImporterTest extends TestCase
     public function testRejectsNullStringBeforeCommitAndRollsBack(): void
     {
         $pdo = $this->createMock(PDO::class);
-        $dataset = $this->createMock(PDOStatement::class);
-        $variables = $this->createMock(PDOStatement::class);
-        $cases = $this->createMock(PDOStatement::class);
-
-        $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
+        $pdo->expects(self::never())->method('beginTransaction');
         $pdo->expects(self::never())->method('commit');
-        $pdo->expects(self::once())->method('inTransaction')->willReturn(true);
-        $pdo->expects(self::once())->method('rollBack')->willReturn(true);
-        $pdo->expects(self::atLeast(18))->method('exec')->willReturn(0);
-        $pdo->expects(self::exactly(3))->method('prepare')->willReturnOnConsecutiveCalls($dataset, $variables, $cases);
-        $dataset->method('execute')->willReturn(true);
-        $variables->method('execute')->willReturn(true);
-        $cases->expects(self::never())->method('execute');
+        $pdo->expects(self::never())->method('inTransaction');
+        $pdo->expects(self::never())->method('rollBack');
+        $pdo->expects(self::never())->method('exec');
+        $pdo->expects(self::never())->method('prepare');
 
         $this->expectExceptionMessage('SPSS string values must be non-null strings.');
         (new PostgreSqlWideTableImporter($pdo))->import([

@@ -6,7 +6,7 @@ namespace OpenStatSpec\Sql;
 
 use PDO;
 
-final class MySqlProfile extends AbstractPdoSqlProfile
+class MySqlProfile extends AbstractPdoSqlProfile
 {
     public function driverName(): string
     {

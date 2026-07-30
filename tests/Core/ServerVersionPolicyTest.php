@@ -9,6 +9,7 @@ use OpenStatSpec\Core\ServerVersionPolicy;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Spss\SpssAdapter;
 use PDO;
+use PDOStatement;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -24,6 +25,9 @@ final class ServerVersionPolicyTest extends TestCase
         yield 'MariaDB LTS supported' => ['mariadb', '11.8.8-MariaDB-ubu2404', true, 'MariaDB 11.4.x, 11.8.x or 12.3.x'];
         yield 'MariaDB latest supported' => ['mariadb', '12.3.2-MariaDB-ubu2404', true, 'MariaDB 11.4.x, 11.8.x or 12.3.x'];
         yield 'MariaDB old' => ['mariadb', '10.11.11-MariaDB', false, null];
+        yield 'Dolt supported exact release' => ['dolt', '2.2.2', true, 'Dolt 2.2.2'];
+        yield 'Dolt unvalidated patch release' => ['dolt', '2.2.3', false, null];
+        yield 'Dolt malformed' => ['dolt', 'not-a-version', false, null];
         yield 'PostgreSQL previous major supported' => ['postgresql', '17.5 (Ubuntu 17.5-1)', true, 'PostgreSQL 17.x or 18.x'];
         yield 'PostgreSQL latest supported' => ['postgresql', '18.4 (Debian 18.4-1)', true, 'PostgreSQL 17.x or 18.x'];
         yield 'PostgreSQL old' => ['postgresql', '16.9', false, null];
@@ -51,6 +55,17 @@ final class ServerVersionPolicyTest extends TestCase
             PDO::ATTR_DRIVER_NAME => 'mysql',
             PDO::ATTR_SERVER_VERSION => '8.0.40',
             default => '',
+        });
+        $pdo->method('query')->willReturnCallback(function (string $query): PDOStatement {
+            $value = match ($query) {
+                'SELECT @@version' => '8.0.40',
+                'SELECT @@version_comment' => 'MySQL Community Server - GPL',
+                default => throw new \LogicException('Unexpected identity probe: ' . $query),
+            };
+            $statement = $this->createMock(PDOStatement::class);
+            $statement->method('fetchColumn')->willReturn($value);
+
+            return $statement;
         });
         $pdo->expects(self::never())->method('exec');
 

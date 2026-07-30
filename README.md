@@ -8,7 +8,7 @@ It imports an unencrypted SPSS `.sav` or `.zsav` dataset into a relational datab
 
 This is an early reference implementation. Its round-trip contract is **semantic**, not byte-identical: supported cases, order, variables, values, dictionary metadata and technical metadata are preserved; compression layout, timestamps and other writer-specific bytes are not promised.
 
-SQLite, PostgreSQL 17/18, MySQL 8.4/9.7 and MariaDB 11.4/11.8/12.3 are implemented PDO profiles. Each follows one strict-wide contract:
+SQLite, PostgreSQL 17/18, MySQL 8.4/9.7, MariaDB 11.4/11.8/12.3 and Dolt 2.2.2 are implemented PDO profiles. Each follows one strict-wide contract:
 
 1. One source dataset becomes one dedicated SQL data table.
 2. One SPSS case becomes one SQL row.
@@ -32,6 +32,7 @@ Composer resolves dependencies against PHP 8.4.1, the package minimum.
 ## API
 
 ```php
+use OpenStatSpec\Spss\GuardedImportSpssEngine;
 use OpenStatSpec\Spss\SpssAdapter;
 
 $pdo = new PDO('pgsql:host=localhost;dbname=statistics', $user, $password);
@@ -43,6 +44,35 @@ $import = $adapter->import('/data/survey.zsav', 'survey_2026');
 $export = $adapter->export('survey_2026', '/data/survey-export.sav');
 // SpssExportResult: operationId, datasetName, caseCount, diagnostics, allowLoss
 ```
+
+Use `GuardedImportSpssEngine` when an engine must read from an ephemeral
+descriptor while the adapter and database receive only a logical source path:
+
+```php
+$engine = new GuardedImportSpssEngine($innerEngine, $procFdPath, 'sav');
+$adapter = new SpssAdapter($pdo, $engine);
+$import = $adapter->import(
+    $engine->logicalPath(),
+    'survey_2026',
+    verifiedSourceSha256: $verifiedSourceSha256,
+);
+```
+
+`verifiedSourceSha256` must be exactly 64 lowercase hexadecimal characters.
+The adapter persists it as `dataset.source_hash`, but validates only its shape:
+the caller is responsible for proving that it hashes the exact bytes read by
+the engine. Keep any physical guarded path, such as `/proc/self/fd/...`,
+internal to the engine; `SpssAdapter::import()` rejects exact Linux
+descriptor paths under `/proc/*/fd/` and `/dev/fd/` before any database
+mutation. `GuardedImportSpssEngine` also recursively rejects descriptor
+paths in inner-engine identity keys or values and replaces every inner read
+exception with a neutral logical-source error. Sanitized errors do not chain
+the original exception, so descriptor paths cannot enter operation or fidelity
+journals through identity metadata or read failures. The adapter and catalogue
+need only the logical `.sav`/`.zsav` path
+and the verified hash. Omitting the argument preserves the
+existing behavior: a readable source file is hashed by pathname, otherwise
+`dataset.source_hash` is `NULL`.
 
 ### Fidelity policy
 
@@ -86,7 +116,7 @@ unrelated application code while an adapter operation is running:
 
 - PostgreSQL: create a dedicated schema and use a dedicated connection with a
   fixed `search_path` containing that schema only.
-- MySQL/MariaDB: select a dedicated database in the adapter DSN.
+- MySQL/MariaDB/Dolt: select a dedicated database in the adapter DSN.
 - SQLite: use a dedicated database file and connection.
 
 The machine-readable capability declaration must expose the active namespace
@@ -134,7 +164,7 @@ composer check
 
 `composer check` validates Composer configuration, lints PHP, checks style, runs PHPStan and runs PHPUnit. Use `composer fix` for safe style fixes, then rerun `composer check`.
 
-GitHub Actions runs the regular suite on PHP 8.4 and 8.5. It also runs real SAV and ZSAV integration round trips against PostgreSQL 17 and 18, MySQL 8.4 and 9.7, and MariaDB 11.4, 11.8 and 12.3. Those profile checks use their PDO drivers and php-spss V3 read/write paths, not only DDL snapshots.
+GitHub Actions runs the regular suite on PHP 8.4 and 8.5. It also runs real SAV and ZSAV integration round trips against PostgreSQL 17 and 18, MySQL 8.4 and 9.7, MariaDB 11.4, 11.8 and 12.3, and Dolt 2.2.2. Those profile checks use their PDO drivers and php-spss V3 read/write paths, not only DDL snapshots.
 
 ## Contributing
 

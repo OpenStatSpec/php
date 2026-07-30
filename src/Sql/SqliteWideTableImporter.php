@@ -21,14 +21,20 @@ final readonly class SqliteWideTableImporter
     }
 
     /** @param array<string, mixed> $source */
-    public function import(array $source, string $datasetName, string $sourcePath = ""): void
-    {
+    public function import(
+        array $source,
+        string $datasetName,
+        string $sourcePath = "",
+        ?string $verifiedSourceSha256 = null,
+    ): void {
+        $verifiedSourceSha256 = NormativeCatalog::validateSourceSha256($verifiedSourceSha256);
         $variables = $this->variables($source['variables']);
         $sourceRows = $source['data'] ?? null;
         if (!is_array($sourceRows) || !array_is_list($sourceRows)) {
             throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The source dataset must contain an ordered case list.');
         }
         $this->profile->assertDataset($source['variables'], $sourceRows, $this->pdo);
+        $v3Metadata = V3MetadataPlan::fromSource($source);
         $tableName = 'dataset_' . $this->identifier($datasetName);
 
         $this->pdo->beginTransaction();
@@ -37,7 +43,7 @@ final readonly class SqliteWideTableImporter
             $this->storeDatasetMetadata($datasetName, $source);
             $this->storeTechnicalMetadata($datasetName, $source);
             $this->storeDictionaryMetadata($datasetName, $source['variables'], $source['valueLabels'] ?? []);
-            (new SqliteV3MetadataImporter($this->pdo))->store($datasetName, $source);
+            (new SqliteV3MetadataImporter($this->pdo))->storeValidated($datasetName, $v3Metadata);
             $this->storeDisplayMetadata($datasetName, is_array($source['displayParameters'] ?? null) ? $source['displayParameters'] : []);
             $this->createDataTable($tableName, $variables);
             $this->pdo->prepare('INSERT INTO datasets (dataset_name, table_name) VALUES (?, ?)')->execute([$datasetName, $tableName]);
@@ -47,8 +53,13 @@ final readonly class SqliteWideTableImporter
             }
             $this->storeWeightVariable($datasetName, $source['weightVariableName'] ?? null, $variables);
             $this->insertCases($tableName, $variables, $sourceRows);
-            if ($sourcePath !== "") {
-                (new NormativeCatalog($this->pdo))->storeImportedDataset($datasetName, $sourcePath, $source);
+            if ($sourcePath !== "" || $verifiedSourceSha256 !== null) {
+                (new NormativeCatalog($this->pdo))->storeImportedDataset(
+                    $datasetName,
+                    $sourcePath,
+                    $source,
+                    $verifiedSourceSha256,
+                );
             }
             $this->pdo->commit();
         } catch (Throwable $exception) {

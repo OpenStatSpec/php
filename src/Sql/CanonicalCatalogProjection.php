@@ -174,7 +174,7 @@ final readonly class CanonicalCatalogProjection
             $file->execute([$datasetName, $row['attribute_name'], (int) $row['array_ordinal'], $row['attribute_value']]);
         }
         $variable = $this->statement('INSERT INTO variable_attributes (dataset_name, variable_ordinal, attribute_name, ordinal, value) VALUES (?, ?, ?, ?, ?)');
-        foreach ($this->all('SELECT source.source_ordinal, attribute.attribute_name, attribute.array_ordinal, attribute.attribute_value FROM variable_attribute attribute JOIN variable source ON source.variable_id = attribute.variable_id WHERE source.dataset_id = ? ORDER BY source.source_ordinal, attribute.attribute_name, attribute.array_ordinal', [$datasetId]) as $row) {
+        foreach ($this->all('SELECT v.source_ordinal, va.attribute_name, va.array_ordinal, va.attribute_value FROM variable_attribute va JOIN variable v ON v.variable_id = va.variable_id WHERE v.dataset_id = ? ORDER BY v.source_ordinal, va.attribute_name, va.array_ordinal', [$datasetId]) as $row) {
             $variable->execute([$datasetName, (int) $row['source_ordinal'], $row['attribute_name'], (int) $row['array_ordinal'], $row['attribute_value']]);
         }
     }

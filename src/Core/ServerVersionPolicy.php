@@ -14,6 +14,7 @@ final class ServerVersionPolicy
         $supported = match ($profile) {
             'mysql' => preg_match('/^(?:MySQL\s+)?(?:8\.4|9\.7)(?:\.|$)/i', trim($serverVersion)) === 1,
             'mariadb' => preg_match('/^(?:MariaDB\s+)?(?:11\.4|11\.8|12\.3)(?:\.|$)/i', trim($serverVersion)) === 1,
+            'dolt' => trim($serverVersion) === '2.2.2',
             'postgresql' => preg_match('/^(?:PostgreSQL\s+)?(?:17|18)(?:\.|$)/i', trim($serverVersion)) === 1,
             'sqlite' => self::supportsSqlite($serverVersion),
             default => false,
@@ -39,6 +40,7 @@ final class ServerVersionPolicy
         return match ($profile) {
             'mysql' => 'MySQL 8.4.x or 9.7.x',
             'mariadb' => 'MariaDB 11.4.x, 11.8.x or 12.3.x',
+            'dolt' => 'Dolt 2.2.2',
             'postgresql' => 'PostgreSQL 17.x or 18.x',
             'sqlite' => 'SQLite >=3.24.0 <4.0.0',
             default => 'unsupported',

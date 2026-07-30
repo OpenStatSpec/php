@@ -6,16 +6,27 @@ namespace OpenStatSpec\Tests\Support;
 
 use OpenStatSpec\Spss\SpssEngine;
 use SPSS\Sav\Dataset;
+use Throwable;
 
 final class FakeSpssEngine implements SpssEngine
 {
     /** @var list<array{targetPath: string, dataset: Dataset}> */
     private array $writes = [];
+    private ?string $lastReadPath = null;
 
-    public function __construct(private Dataset $dataset) {}
+    /** @param ?array<string, mixed> $identityOverride */
+    public function __construct(
+        private Dataset $dataset,
+        private ?Throwable $readFailure = null,
+        private ?array $identityOverride = null,
+    ) {}
 
     public function identity(): array
     {
+        if ($this->identityOverride !== null) {
+            return $this->identityOverride;
+        }
+
         return [
             'package' => 'fake-spss-engine',
             'version' => 'test',
@@ -52,7 +63,21 @@ final class FakeSpssEngine implements SpssEngine
 
     public function read(string $sourcePath): Dataset
     {
+        $this->lastReadPath = $sourcePath;
+        if ($this->readFailure !== null) {
+            throw $this->readFailure;
+        }
+
         return $this->dataset;
+    }
+
+    public function lastReadPath(): string
+    {
+        if ($this->lastReadPath === null) {
+            throw new \LogicException('No SAV dataset was read.');
+        }
+
+        return $this->lastReadPath;
     }
 
     public function write(string $targetPath, Dataset $dataset): void

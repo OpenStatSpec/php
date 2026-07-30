@@ -32,6 +32,8 @@ final readonly class PostgreSqlWideTableImporter
             );
         }
 
+        V3MetadataPlan::fromSourceIfPresent($source);
+
         $schema = new PostgreSqlSchema($this->pdo);
         // Validate the complete physical mapping before any DDL starts.
         $definition = $schema->wideTableDefinition($datasetName, $variables);
@@ -57,8 +59,13 @@ final readonly class PostgreSqlWideTableImporter
      *
      * @param array<string, mixed> $source
      */
-    public function import(array $source, string $datasetName, string $sourcePath = ""): PostgreSqlWideTableDefinition
-    {
+    public function import(
+        array $source,
+        string $datasetName,
+        string $sourcePath = "",
+        ?string $verifiedSourceSha256 = null,
+    ): PostgreSqlWideTableDefinition {
+        $verifiedSourceSha256 = NormativeCatalog::validateSourceSha256($verifiedSourceSha256);
         $variables = $source['variables'] ?? null;
         $rows = $source['data'] ?? null;
         if (!is_array($variables) || !array_is_list($variables) || $variables === []) {
@@ -69,6 +76,7 @@ final readonly class PostgreSqlWideTableImporter
         }
 
         (new PostgreSqlProfile())->assertDataset($variables, $rows, $this->pdo);
+        $v3Metadata = V3MetadataPlan::fromSourceIfPresent($source);
 
         $schema = new PostgreSqlSchema($this->pdo);
         // Preflight the entire physical-name mapping before changing the target.
@@ -84,12 +92,17 @@ final readonly class PostgreSqlWideTableImporter
             $this->storeWeightVariable($datasetName, $source['weightVariableName'] ?? null, $definition);
             $this->storeDisplayMetadata($datasetName, $source['displayParameters'] ?? []);
             $this->storeDictionaryMetadata($datasetName, $variables, $source['valueLabels'] ?? []);
-            if (is_array($variables[0] ?? null) && array_key_exists('role', $variables[0])) {
-                (new SqliteV3MetadataImporter($this->pdo))->store($datasetName, $source);
+            if ($v3Metadata !== null) {
+                (new SqliteV3MetadataImporter($this->pdo))->storeValidated($datasetName, $v3Metadata);
             }
             $this->insertCases($definition, $rows);
-            if ($sourcePath !== "") {
-                (new NormativeCatalog($this->pdo))->storeImportedDataset($datasetName, $sourcePath, $source);
+            if ($sourcePath !== "" || $verifiedSourceSha256 !== null) {
+                (new NormativeCatalog($this->pdo))->storeImportedDataset(
+                    $datasetName,
+                    $sourcePath,
+                    $source,
+                    $verifiedSourceSha256,
+                );
             }
             $this->pdo->commit();
         } catch (Throwable $exception) {

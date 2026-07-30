@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OpenStatSpec\Tests\Integration;
 
 use OpenStatSpec\Spss\SpssAdapter;
+use OpenStatSpec\Sql\MySqlIndexIntrospection;
 use PDO;
 use PDOException;
 use PHPUnit\Framework\TestCase;
@@ -106,9 +107,10 @@ SQL);
             return;
         }
 
-        $statement = $pdo->prepare("SELECT index_name FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? GROUP BY index_name HAVING MIN(non_unique) = 0 AND GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') = 'dataset_id,source_ordinal' LIMIT 1");
+        $statement = $pdo->prepare('SELECT index_name, non_unique, column_name FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? ORDER BY index_name, seq_in_index');
         $statement->execute([$table]);
-        $index = $statement->fetchColumn();
+        $uniqueIndexes = MySqlIndexIntrospection::uniqueColumnLists($statement->fetchAll(PDO::FETCH_ASSOC));
+        $index = array_search(['dataset_id', 'source_ordinal'], $uniqueIndexes, true);
         if (is_string($index)) {
             $pdo->exec('ALTER TABLE `' . str_replace('`', '``', $table) . '` DROP INDEX `' . str_replace('`', '``', $index) . '`');
         }
@@ -138,7 +140,7 @@ SQL);
     private function connections(): array
     {
         $connections = [];
-        foreach (['mysql' => 'OPENSTATSPEC_MYSQL', 'mariadb' => 'OPENSTATSPEC_MARIADB', 'postgresql' => 'OPENSTATSPEC_PG'] as $name => $prefix) {
+        foreach (['mysql' => 'OPENSTATSPEC_MYSQL', 'mariadb' => 'OPENSTATSPEC_MARIADB', 'dolt' => 'OPENSTATSPEC_DOLT', 'postgresql' => 'OPENSTATSPEC_PG'] as $name => $prefix) {
             $dsn = getenv($prefix . '_DSN');
             $driver = $name === 'postgresql' ? 'pgsql' : 'mysql';
             if (!is_string($dsn) || $dsn === '' || !in_array($driver, PDO::getAvailableDrivers(), true)) {
