@@ -153,6 +153,56 @@ final class InPlaceTransformationExecutorTest extends TestCase
         )->fetchAll(PDO::FETCH_COLUMN));
     }
 
+    public function testNewTargetIsRejectedBeforeAlterAtTheEffectiveColumnLimit(): void
+    {
+        $connection = new Connection($this->pdo);
+        $maximum = $connection->profile->effectiveMaximumSourceVariables($this->pdo);
+        $columns = ['__case_ordinal INTEGER NOT NULL PRIMARY KEY'];
+        for ($ordinal = 1; $ordinal <= $maximum; ++$ordinal) {
+            $columns[] = 'v' . $ordinal . ' REAL NULL';
+        }
+
+        $this->pdo->exec('DROP TABLE respondents');
+        $this->pdo->exec('CREATE TABLE respondents (' . implode(', ', $columns) . ')');
+        $this->pdo->exec('DELETE FROM variable');
+        $insert = $this->pdo->prepare(
+            'INSERT INTO variable '
+            . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind) '
+            . 'VALUES (?, ?, ?, ?, ?, ?)',
+        );
+        $this->pdo->beginTransaction();
+        for ($ordinal = 1; $ordinal <= $maximum; ++$ordinal) {
+            $name = 'V' . $ordinal;
+            $insert->execute([
+                sprintf('00000000-0000-4000-8000-%012d', $ordinal),
+                self::DATASET_ID,
+                $ordinal,
+                $name,
+                strtolower($name),
+                'numeric',
+            ]);
+        }
+        $this->pdo->commit();
+        $columnsBefore = count($this->query('PRAGMA table_info(respondents)')->fetchAll());
+
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new RecodeOperation('V1', 'OverflowTarget', [
+                new RecodeRule(new ElseSelector(), new CopySourceAction()),
+            ]),
+        ]);
+
+        try {
+            (new InPlaceTransformationExecutor($connection))->execute($plan);
+            self::fail('A target beyond the effective source-variable limit was created.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
+            self::assertStringContainsString('at most ' . $maximum . ' source variables', $exception->getMessage());
+        }
+
+        self::assertSame($maximum, (int) $this->query('SELECT COUNT(*) FROM variable')->fetchColumn());
+        self::assertSame($columnsBefore, count($this->query('PRAGMA table_info(respondents)')->fetchAll()));
+    }
+
     public function testRecodeWithOnlyElseAssignsTheExpressionDirectly(): void
     {
         $plan = new TransformationPlan(self::DATASET_ID, [

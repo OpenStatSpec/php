@@ -216,7 +216,7 @@ final class InPlaceTransformationExecutor
                 }
                 $target = $variables[$operation->targetVariable()] ?? null;
                 if ($target === null) {
-                    $this->assertCanCreateTarget($source);
+                    $this->assertCanCreateTarget($source, count($variables));
                     $physical = $this->connection->profile->physicalIdentifier($operation->targetVariable(), $used);
                     $target = new VariableBinding(
                         NormativeCatalog::uuid(),
@@ -252,7 +252,7 @@ final class InPlaceTransformationExecutor
         return $variables;
     }
 
-    private function assertCanCreateTarget(VariableBinding $source): void
+    private function assertCanCreateTarget(VariableBinding $source, int $registeredVariableCount): void
     {
         if ($source->storageKind === 'string') {
             throw new UnsupportedOperation(
@@ -268,6 +268,18 @@ final class InPlaceTransformationExecutor
                 sprintf(
                     '%s cannot atomically add a new INTO target to an existing wide table; register the target variable first.',
                     $this->connection->profileName,
+                ),
+            );
+        }
+
+        $maximum = $this->connection->profile->effectiveMaximumSourceVariables($this->connection->pdo);
+        if ($registeredVariableCount >= $maximum) {
+            throw new UnsupportedOperation(
+                DiagnosticCode::TargetCapabilityExceeded,
+                sprintf(
+                    '%s supports at most %d source variables in one OpenStatSpec wide table.',
+                    $this->connection->profileName,
+                    $maximum,
                 ),
             );
         }
