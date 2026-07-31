@@ -2,7 +2,21 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-31
+
+### Added
+
+- Added a source-neutral canonical transformation plan, validation, provenance,
+  and in-place execution layer for recodes, variable labels, and value labels.
+- Added an SPSS syntax frontend and documented extension points for future
+  statistical-language frontends, with explicit SAS and Stata placeholders.
+
 ### Changed
+
+- Transformations now mutate the existing logical dataset and physical wide
+  table without creating copied datasets, persistent staging tables, or an
+  OpenStatSpec-managed undo/version history; Dolt identity can be recorded for
+  audit without making Dolt mandatory for other supported connections.
 
 - Distinguished conservative MySQL 8.4.x/9.7.x, MariaDB
   11.4.x/11.8.x/12.3.x, and PostgreSQL 17.x/18.x runtime claims from exact CI
@@ -17,7 +31,8 @@
 - Pinned active conformance fixtures and capabilities to released OpenStatSpec
   specification v0.1.0 at commit `d287c2cde9ade71f04e27dd012caec876901aed5`.
 
-[Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/OpenStatSpec/php/compare/v0.3.0...v0.4.0
 
 ## [0.3.0] - 2026-07-30
 

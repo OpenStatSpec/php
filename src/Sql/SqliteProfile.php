@@ -53,6 +53,12 @@ final class SqliteProfile extends AbstractPdoSqlProfile
     {
         return 'TEXT';
     }
+    public function exactValueCondition(string $expression, bool $stringValue): string
+    {
+        return $stringValue
+            ? $expression . ' COLLATE BINARY = ? COLLATE BINARY'
+            : parent::exactValueCondition($expression, false);
+    }
     public function effectiveMaximumSourceVariables(PDO $pdo): int
     {
         $maximum = $this->compileOption($pdo, 'MAX_COLUMN');

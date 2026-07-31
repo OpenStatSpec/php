@@ -69,6 +69,16 @@ final class CapabilityDeclarationTest extends TestCase
                 $profile['ci_tested_server_versions'],
             );
             self::assertNotSame('', $profile['physical_table_mapping']);
+            self::assertSame('supported', $profile['transformation_workflow']);
+            self::assertSame('supported', $profile['in_place_transformations']['status']);
+            self::assertSame('supported', $profile['in_place_transformations']['existing_target']);
+            self::assertSame(
+                in_array($name, ['sqlite', 'postgresql'], true)
+                    ? 'supported_in_native_transaction'
+                    : 'preexisting_target_required',
+                $profile['in_place_transformations']['new_numeric_target'],
+            );
+            self::assertFalse($profile['in_place_transformations']['persistent_rollback_artifacts']);
             if ($name === 'dolt') {
                 self::assertSame(['maximum_value_bytes'], array_keys($profile['theoretical_limits']));
                 self::assertSame(306, $profile['proposed_adapter_limits']['maximum_physical_columns']);
@@ -89,7 +99,10 @@ final class CapabilityDeclarationTest extends TestCase
                     'system_missing' => 'sql_null',
                 ], $profile['numeric_exception_policy']);
                 self::assertSame(65_504, $profile['storage_evidence']['text']['observed_value_bytes']);
-                self::assertSame('unsupported', $profile['transformation_workflow']);
+                self::assertSame(
+                    'clean_working_set_and_stable_branch_head',
+                    $profile['in_place_transformations']['dolt_repository_guard'],
+                );
                 self::assertSame('mysql_compatible', $profile['transport']);
                 self::assertSame(['2.2.2', '2.2.3'], $profile['exact_ci_tested_versions']);
                 self::assertSame(
@@ -98,6 +111,7 @@ final class CapabilityDeclarationTest extends TestCase
                 );
                 self::assertNull($profile['identity']['active_probe_results']);
             } else {
+                self::assertNull($profile['in_place_transformations']['dolt_repository_guard']);
                 self::assertGreaterThan(0, $profile['theoretical_limits']['maximum_physical_columns']);
                 self::assertGreaterThan(0, $profile['theoretical_limits']['maximum_row_bytes']);
                 self::assertArrayNotHasKey('maximum_identifier_bytes', $profile['theoretical_limits']);

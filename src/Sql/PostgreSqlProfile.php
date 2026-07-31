@@ -52,4 +52,10 @@ final class PostgreSqlProfile extends AbstractPdoSqlProfile
     {
         return 'TEXT';
     }
+    public function exactValueCondition(string $expression, bool $stringValue): string
+    {
+        return $stringValue
+            ? $expression . ' COLLATE "C" = ? COLLATE "C"'
+            : parent::exactValueCondition($expression, false);
+    }
 }

@@ -195,7 +195,18 @@ final readonly class CapabilityDeclaration implements JsonSerializable
                     'unit' => 'bytes',
                 ],
             ] : null,
-            'transformation_workflow' => $name === 'dolt' ? 'unsupported' : null,
+            'transformation_workflow' => 'supported',
+            'in_place_transformations' => [
+                'status' => 'supported',
+                'existing_target' => 'supported',
+                'new_numeric_target' => $profile->ddlAtomic()
+                    ? 'supported_in_native_transaction'
+                    : 'preexisting_target_required',
+                'dolt_repository_guard' => $name === 'dolt'
+                    ? 'clean_working_set_and_stable_branch_head'
+                    : null,
+                'persistent_rollback_artifacts' => false,
+            ],
             'physical_table_mapping' => 'dataset.physical_table_schema + dataset.physical_table_name',
             'identifier_policy' => 'deterministic ASCII mapping; source name remains authoritative',
         ];

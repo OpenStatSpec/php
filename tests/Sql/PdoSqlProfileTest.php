@@ -31,8 +31,13 @@ final class PdoSqlProfileTest extends TestCase
         self::assertSame("`name`", $mysql->quoteIdentifier('name'));
         self::assertSame(1599, $postgres->maximumSourceVariables());
         self::assertSame(1016, $mysql->maximumSourceVariables());
+        self::assertSame('column_name = ?', $postgres->exactValueCondition('column_name', false));
+        self::assertSame('column_name COLLATE "C" = ? COLLATE "C"', $postgres->exactValueCondition('column_name', true));
+        self::assertSame('column_name COLLATE BINARY = ? COLLATE BINARY', $sqlite->exactValueCondition('column_name', true));
+        self::assertSame('BINARY column_name = BINARY ?', $mysql->exactValueCondition('column_name', true));
 
         $dolt = new DoltProfile();
+        self::assertSame('BINARY column_name = BINARY ?', $dolt->exactValueCondition('column_name', true));
         self::assertSame(305, $dolt->maximumSourceVariables());
         self::assertSame(65_504, $dolt->maximumRowBytes());
         self::assertSame('bytes', $dolt->identifierLimitUnit());
