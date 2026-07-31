@@ -8,13 +8,14 @@
   11.4.x/11.8.x/12.3.x, and PostgreSQL 17.x/18.x runtime claims from exact CI
   evidence at MySQL 8.4.11/9.7.2, MariaDB 11.4.12/11.8.8/12.3.2, and
   PostgreSQL 17.10/18.4; live service tests now verify each normalized version.
-- Kept Dolt independently pinned and service-tested at exact 2.2.2, clarified
+- Expanded Dolt's independent runtime claim to canonical stable
+  `>=2.2.2,<2.3.0` releases while retaining immutable live 2.2.2 and 2.2.3
+  service evidence and all boundary, cleanup, and conformance gates; clarified
   that PHP's SQLite core `>=3.24.0,<4.0.0` policy does not conflict with the
   Python-only optional workflow's `>=3.35.0,<4.0.0` policy, and documented
   Microsoft SQL Server as unsupported roadmap scope.
-- Pinned active conformance fixtures and capabilities to untagged OpenStatSpec
-  specification commit `e94ae8349d2b0dffe0c65e820b4b22b8c074b7b5` with a
-  null release value.
+- Pinned active conformance fixtures and capabilities to released OpenStatSpec
+  specification v0.1.0 at commit `d287c2cde9ade71f04e27dd012caec876901aed5`.
 
 [Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.3.0...HEAD
 

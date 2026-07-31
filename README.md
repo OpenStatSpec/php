@@ -9,10 +9,11 @@ It imports an unencrypted SPSS `.sav` or `.zsav` dataset into a relational datab
 This is an early reference implementation. Its round-trip contract is **semantic**, not byte-identical: supported cases, order, variables, values, dictionary metadata and technical metadata are preserved; compression layout, timestamps and other writer-specific bytes are not promised.
 
 SQLite, PostgreSQL 17.x/18.x, MySQL 8.4.x/9.7.x, MariaDB
-11.4.x/11.8.x/12.3.x and exact Dolt 2.2.2 are implemented PDO profiles.
+11.4.x/11.8.x/12.3.x and Dolt 2.2.x with the explicit
+`>=2.2.2,<2.3.0` floor/range are implemented PDO profiles.
 Server-family claims are conservative compatibility policies; CI records exact
 evidence at PostgreSQL 17.10/18.4, MySQL 8.4.11/9.7.2 and MariaDB
-11.4.12/11.8.8/12.3.2. Each service job verifies its live normalized product
+11.4.12/11.8.8/12.3.2, and Dolt 2.2.2/2.2.3. Each service job verifies its live normalized product
 version before the run counts as evidence.
 
 The PHP SQLite core profile remains `>=3.24.0,<4.0.0`. The Python adapter's
@@ -179,10 +180,12 @@ composer check
 
 GitHub Actions runs the regular suite on PHP 8.4 and 8.5. It also runs real
 SAV and ZSAV integration round trips against exact PostgreSQL 17.10/18.4,
-MySQL 8.4.11/9.7.2, MariaDB 11.4.12/11.8.8/12.3.2, and Dolt 2.2.2.
+MySQL 8.4.11/9.7.2, MariaDB 11.4.12/11.8.8/12.3.2, and Dolt
+2.2.2/2.2.3.
 Those checks use their PDO drivers and php-spss V3 read/write paths, not only
-DDL snapshots. The family policies remain runtime claims; exact patches are CI
-evidence points, except Dolt, whose claim and evidence are both exactly 2.2.2.
+DDL snapshots. Family policies remain runtime claims and exact patches are CI
+evidence points; Dolt's 2.2.x family claim additionally has an explicit 2.2.2
+minimum and 2.3.0 exclusive upper bound.
 
 ## Contributing
 

@@ -21,24 +21,24 @@ final class ServerIdentityTest extends TestCase
         $pdo = $this->mysqlPdo('8.0.33', [
             'SELECT @@version' => '8.0.33',
             'SELECT @@version_comment' => ' Dolt ',
-            'SELECT DOLT_VERSION()' => '2.2.2',
+            'SELECT DOLT_VERSION()' => '2.2.3',
         ]);
 
         $identity = ServerIdentity::detect($pdo);
         self::assertSame('dolt', $identity->profileName);
-        self::assertSame('2.2.2', $identity->serverVersion);
+        self::assertSame('2.2.3', $identity->serverVersion);
         self::assertSame('8.0.33', $identity->rawServerVersion);
         self::assertSame('@@version + @@version_comment + DOLT_VERSION()', $identity->identitySource);
         self::assertSame([
             'PDO::ATTR_SERVER_VERSION' => '8.0.33',
             '@@version' => '8.0.33',
             '@@version_comment' => 'Dolt',
-            'DOLT_VERSION()' => '2.2.2',
+            'DOLT_VERSION()' => '2.2.3',
         ], $identity->probeResults);
 
         $connection = new Connection($pdo);
         self::assertTrue($connection->claimedSupported);
-        self::assertSame('Dolt 2.2.2', $connection->matchedClaim);
+        self::assertSame('Dolt 2.2.x (>=2.2.2 <2.3.0)', $connection->matchedClaim);
         self::assertInstanceOf(DoltProfile::class, $connection->profile);
     }
 
@@ -84,17 +84,17 @@ final class ServerIdentityTest extends TestCase
         self::assertSame('MariaDB 11.4.x, 11.8.x or 12.3.x', $connection->matchedClaim);
     }
 
-    public function testUnvalidatedDoltVersionIsDetectedButNotClaimed(): void
+    public function testDoltOutsideClaimedFamilyIsDetectedButNotClaimed(): void
     {
         $pdo = $this->mysqlPdo('8.0.33', [
             'SELECT @@version' => '8.0.33',
             'SELECT @@version_comment' => 'Dolt',
-            'SELECT DOLT_VERSION()' => '2.2.3',
+            'SELECT DOLT_VERSION()' => '2.3.0',
         ]);
 
         $connection = new Connection($pdo);
         self::assertSame('dolt', $connection->profileName);
-        self::assertSame('2.2.3', $connection->serverVersion);
+        self::assertSame('2.3.0', $connection->serverVersion);
         self::assertFalse($connection->claimedSupported);
         self::assertNull($connection->matchedClaim);
     }

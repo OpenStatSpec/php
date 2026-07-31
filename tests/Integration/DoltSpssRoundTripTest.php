@@ -25,7 +25,7 @@ use SPSS\Sav\VariableMetadata;
 use SPSS\Sav\VariableType;
 
 /**
- * Real Dolt 2.2.2 round-trip coverage. Requires OPENSTATSPEC_DOLT_* variables.
+ * Real Dolt 2.2.2/2.2.3 round-trip coverage. Requires OPENSTATSPEC_DOLT_* variables.
  */
 final class DoltSpssRoundTripTest extends MySqlFamilySpssRoundTripTestCase
 {

@@ -15,10 +15,10 @@ final class CapabilityDeclarationTest extends TestCase
     {
         $pdo = new \PDO('sqlite::memory:');
         $declaration = (new CapabilityDeclaration($pdo, new PhpSpssEngine()))->toArray();
-        self::assertSame('release_candidate', $declaration['specification_status']);
-        self::assertNull($declaration['specification_release']);
+        self::assertSame('released', $declaration['specification_status']);
+        self::assertSame('v0.1.0', $declaration['specification_release']);
         self::assertSame(CapabilityDeclaration::SPECIFICATION_RELEASE, $declaration['specification_release']);
-        self::assertSame('e94ae8349d2b0dffe0c65e820b4b22b8c074b7b5', $declaration['specification_commit']);
+        self::assertSame('d287c2cde9ade71f04e27dd012caec876901aed5', $declaration['specification_commit']);
         self::assertSame(CapabilityDeclaration::SPECIFICATION_COMMIT, $declaration['specification_commit']);
         self::assertMatchesRegularExpression('/^[0-9a-f]{40}$/', $declaration['specification_commit']);
         self::assertSame(['import', 'export', 'semantic_round_trip'], $declaration['directions']);
@@ -59,7 +59,7 @@ final class CapabilityDeclarationTest extends TestCase
             $profile = $declaration['sql_profiles'][$name];
             self::assertSame($name, $profile['profile']);
             self::assertSame(CapabilityDeclaration::SPECIFICATION_COMMIT, $profile['specification_commit']);
-            self::assertSame('release_candidate', $profile['specification_status']);
+            self::assertSame('released', $profile['specification_status']);
             self::assertSame(CapabilityDeclaration::SPECIFICATION_RELEASE, $profile['specification_release']);
             self::assertGreaterThan(0, $profile['theoretical_limits']['maximum_value_bytes']);
             self::assertNotSame('', $profile['claimed_server_versions']);
@@ -77,6 +77,8 @@ final class CapabilityDeclarationTest extends TestCase
                 self::assertSame(307, $profile['observed_limits']['minimum_observed_physical_columns']);
                 self::assertSame(64, $profile['observed_limits']['identifier_limit']['value']);
                 self::assertSame(65, $profile['observed_limits']['rejected_identifier_bytes']);
+                self::assertSame(['minimum_inclusive' => '2.2.2', 'maximum_exclusive' => '2.3.0'], $profile['claimed_version_range']);
+                self::assertSame('Dolt 2.2.x (>=2.2.2 <2.3.0)', $profile['claimed_server_versions']);
                 self::assertSame('observed_exact_version', $profile['limit_bases']['identifier_limit']);
                 self::assertTrue($profile['storage_evidence']['binary64']['maximum_finite_round_trip_exact']);
                 self::assertSame('reject_before_mutation', $profile['storage_evidence']['binary64']['non_finite_policy']);
@@ -89,7 +91,7 @@ final class CapabilityDeclarationTest extends TestCase
                 self::assertSame(65_504, $profile['storage_evidence']['text']['observed_value_bytes']);
                 self::assertSame('unsupported', $profile['transformation_workflow']);
                 self::assertSame('mysql_compatible', $profile['transport']);
-                self::assertSame(['2.2.2'], $profile['exact_ci_tested_versions']);
+                self::assertSame(['2.2.2', '2.2.3'], $profile['exact_ci_tested_versions']);
                 self::assertSame(
                     ['@@version', '@@version_comment', 'DOLT_VERSION()'],
                     $profile['identity']['required_probes'],

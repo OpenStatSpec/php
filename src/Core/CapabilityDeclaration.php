@@ -18,8 +18,8 @@ use PDO;
 /** Machine-readable SPSS 1.0 and SQL-profile capability declaration. */
 final readonly class CapabilityDeclaration implements JsonSerializable
 {
-    public const SPECIFICATION_RELEASE = null;
-    public const SPECIFICATION_COMMIT = 'e94ae8349d2b0dffe0c65e820b4b22b8c074b7b5';
+    public const SPECIFICATION_RELEASE = 'v0.1.0';
+    public const SPECIFICATION_COMMIT = 'd287c2cde9ade71f04e27dd012caec876901aed5';
 
     private Connection $connection;
 
@@ -39,7 +39,7 @@ final readonly class CapabilityDeclaration implements JsonSerializable
 
         return [
             'specification' => 'OpenStatSpec',
-            'specification_status' => 'release_candidate',
+            'specification_status' => 'released',
             'specification_release' => self::SPECIFICATION_RELEASE,
             'specification_commit' => self::SPECIFICATION_COMMIT,
             'profile' => 'SPSS SAV/ZSAV 1.0',
@@ -135,7 +135,7 @@ final readonly class CapabilityDeclaration implements JsonSerializable
             'dialect' => $name === 'dolt' ? 'mysql' : $name,
             'transport' => $name === 'dolt' ? 'mysql_compatible' : $name,
             'specification_commit' => self::SPECIFICATION_COMMIT,
-            'specification_status' => 'release_candidate',
+            'specification_status' => 'released',
             'specification_release' => self::SPECIFICATION_RELEASE,
             'driver' => $name === 'postgresql' ? 'pgsql' : ($name === 'mariadb' ? 'mysql' : $profile->driverName()),
             'identity' => $name === 'dolt' ? [
@@ -148,10 +148,10 @@ final readonly class CapabilityDeclaration implements JsonSerializable
             'claimed_server_versions' => ServerVersionPolicy::claim($name),
             'claimed_version_range' => $name === 'dolt' ? [
                 'minimum_inclusive' => '2.2.2',
-                'maximum_inclusive' => '2.2.2',
+                'maximum_exclusive' => '2.3.0',
             ] : null,
             'ci_tested_server_versions' => ServerVersionPolicy::ciTestedVersions($name),
-            'exact_ci_tested_versions' => $name === 'dolt' ? ['2.2.2'] : null,
+            'exact_ci_tested_versions' => $name === 'dolt' ? ['2.2.2', '2.2.3'] : null,
             'theoretical_limits' => $theoretical,
             'proposed_adapter_limits' => $proposed,
             'observed_limits' => $observedLimits,
