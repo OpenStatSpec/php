@@ -67,6 +67,22 @@ final class SpssCompilerTest extends TestCase
         self::assertSame('new_second', $plan->operations()[1]->targetVariable());
     }
 
+    public function testPreservesSequentialOperationsOnTheSameTarget(): void
+    {
+        $plan = (new SpssCompiler())->compile(<<<'SPSS'
+            RECODE score (1=2).
+            RECODE score (2=3).
+            VARIABLE LABELS score 'First label'.
+            VARIABLE LABELS score 'Replacement label'.
+            SPSS, self::DATASET_ID);
+
+        self::assertCount(4, $plan->operations());
+        self::assertSame(
+            ['recode', 'recode', 'set_variable_label', 'set_variable_label'],
+            array_map(static fn($operation): string => $operation->type(), $plan->operations()),
+        );
+    }
+
     public function testBinderRejectsInvalidElsePositionAndIntoArity(): void
     {
         foreach ([

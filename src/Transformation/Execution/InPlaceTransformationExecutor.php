@@ -433,6 +433,16 @@ final class InPlaceTransformationExecutor
         if ($else === null) {
             throw $this->invalidCatalog('A recode requires one explicit final else action.');
         }
+        if ($when === []) {
+            $this->statement(sprintf(
+                'UPDATE %s SET %s = %s',
+                $this->qualifiedTable($dataset),
+                $this->quote($target->physicalName),
+                $else,
+            ))->execute($parameters);
+
+            return;
+        }
         $sql = sprintf(
             'UPDATE %s SET %s = CASE %s ELSE %s END',
             $this->qualifiedTable($dataset),

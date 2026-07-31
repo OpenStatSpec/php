@@ -41,21 +41,9 @@ final class PlanValidator
             $this->violation('operations.empty', '$.operations', 'A transformation plan must contain at least one operation.');
         }
 
-        /** @var array<string, int> $targets */
-        $targets = [];
         foreach ($plan->operations() as $index => $operation) {
             $path = '$.operations[' . $index . ']';
             $this->validateOperation($operation, $path);
-            $targetKey = $operation::class . "\0" . $operation->targetVariable();
-            if (isset($targets[$targetKey])) {
-                $this->violation(
-                    'operation.duplicate_target',
-                    $path . '.target_variable',
-                    sprintf('Operation type %s targets variable %s more than once.', $operation->type(), $operation->targetVariable()),
-                );
-            } else {
-                $targets[$targetKey] = $index;
-            }
         }
 
         return new ValidationResult($this->violations);

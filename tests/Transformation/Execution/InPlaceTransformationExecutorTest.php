@@ -153,6 +153,26 @@ final class InPlaceTransformationExecutorTest extends TestCase
         )->fetchAll(PDO::FETCH_COLUMN));
     }
 
+    public function testRecodeWithOnlyElseAssignsTheExpressionDirectly(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new RecodeOperation('SourceValue', 'Destination', [
+                new RecodeRule(
+                    new ElseSelector(),
+                    new AssignValueAction(ScalarValue::number(7)),
+                ),
+            ]),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame(
+            [7.0, 7.0, 7.0, 7.0, 7.0],
+            $this->query('SELECT destination FROM respondents ORDER BY __case_ordinal')
+                ->fetchAll(PDO::FETCH_COLUMN),
+        );
+    }
+
     public function testSystemMissingActionForStringTargetFailsBeforeMutation(): void
     {
         $this->pdo->exec("ALTER TABLE respondents ADD COLUMN source_text TEXT NOT NULL DEFAULT ''");

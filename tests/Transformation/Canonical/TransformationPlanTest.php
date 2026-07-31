@@ -66,7 +66,7 @@ final class TransformationPlanTest extends TestCase
         self::assertSame('d562adfb994ddad015bd0fee06dc56026c6fa405476ca980e92190c00162ba52', $plan->hash());
     }
 
-    public function testValidatorCollectsIdentityNameDuplicateTargetAndLabelViolations(): void
+    public function testValidatorCollectsIdentityNameAndLabelViolations(): void
     {
         $duplicateLabels = [
             new ValueLabel(ScalarValue::number(1), 'One'),
@@ -88,12 +88,27 @@ final class TransformationPlanTest extends TestCase
             'text.invalid_unicode',
             'variable.invalid_name',
             'variable.invalid_name',
-            'operation.duplicate_target',
             'value_labels.duplicate_value',
         ], $this->codes($result->violations()));
 
         $this->expectException(InvalidTransformationPlan::class);
         $result->throwIfInvalid();
+    }
+
+    public function testValidatorAllowsSequentialOperationsOnTheSameTarget(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new SetVariableLabelOperation('status', 'First label'),
+            new SetVariableLabelOperation('status', 'Replacement label'),
+            new RecodeOperation('status', 'status', [
+                new RecodeRule(new ElseSelector(), new CopySourceAction()),
+            ]),
+            new RecodeOperation('status', 'status', [
+                new RecodeRule(new ElseSelector(), new AssignValueAction(ScalarValue::number(1))),
+            ]),
+        ]);
+
+        self::assertTrue((new PlanValidator())->validate($plan)->isValid());
     }
 
     public function testValidatorRejectsAmbiguousAndIncompleteRecodeMappings(): void
