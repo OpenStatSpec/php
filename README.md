@@ -16,6 +16,16 @@ evidence at PostgreSQL 17.10/18.4, MySQL 8.4.11/9.7.2 and MariaDB
 11.4.12/11.8.8/12.3.2, and Dolt 2.2.2/2.2.3. Each service job verifies its live normalized product
 version before the run counts as evidence.
 
+### Supported database engines
+
+| Engine / profile | Runtime support policy | Exact CI-tested versions |
+| --- | --- | --- |
+| SQLite core / `sqlite` | `>=3.24.0,<4.0.0` | Runtime-provided PDO SQLite; no pinned server image |
+| PostgreSQL / `postgresql` | 17.x and 18.x | 17.10 and 18.4 |
+| MySQL / `mysql` | 8.4.x and 9.7.x | 8.4.11 and 9.7.2 |
+| MariaDB / `mariadb` | 11.4.x, 11.8.x, and 12.3.x | 11.4.12, 11.8.8, and 12.3.2 |
+| Dolt / `dolt` | 2.2.x family with `>=2.2.2,<2.3.0` | 2.2.2 and 2.2.3 |
+
 The PHP SQLite core profile remains `>=3.24.0,<4.0.0`. The Python adapter's
 optional Transformation Workflow has its own narrower `>=3.35.0,<4.0.0`
 policy; it does not change PHP support. Microsoft SQL Server is not supported
