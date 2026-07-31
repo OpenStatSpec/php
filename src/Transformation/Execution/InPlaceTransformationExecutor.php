@@ -301,6 +301,11 @@ final class InPlaceTransformationExecutor
                     $target->sourceName,
                     $this->stringWidth($target),
                 ));
+            } elseif ($action instanceof SetMissingAction && $target->storageKind === 'string') {
+                throw $this->invalidCatalog(sprintf(
+                    'System-missing recoding is not representable for string variable "%s".',
+                    $target->sourceName,
+                ));
             }
         }
     }
@@ -378,8 +383,11 @@ final class InPlaceTransformationExecutor
             $type,
         ));
         $this->statement(
-            'INSERT INTO variable (variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind) '
-            . 'VALUES (?, ?, ?, ?, ?, ?)',
+            'INSERT INTO variable '
+            . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind, '
+            . 'print_format_family, print_format_width, print_format_decimals, '
+            . 'write_format_family, write_format_width, write_format_decimals) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         )->execute([
             $target->variableId,
             $dataset->datasetId,
@@ -387,6 +395,12 @@ final class InPlaceTransformationExecutor
             $target->sourceName,
             $target->physicalName,
             $target->storageKind,
+            5,
+            8,
+            0,
+            5,
+            8,
+            0,
         ]);
         $created[$target->sourceName] = true;
     }

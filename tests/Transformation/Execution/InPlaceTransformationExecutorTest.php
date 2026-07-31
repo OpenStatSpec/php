@@ -12,6 +12,7 @@ use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 use OpenStatSpec\Transformation\Model\Action\AssignValueAction;
 use OpenStatSpec\Transformation\Model\Action\CopySourceAction;
+use OpenStatSpec\Transformation\Model\Action\SetMissingAction;
 use OpenStatSpec\Transformation\Model\RecodeOperation;
 use OpenStatSpec\Transformation\Model\RecodeRule;
 use OpenStatSpec\Transformation\Model\ScalarValue;
@@ -139,9 +140,65 @@ final class InPlaceTransformationExecutorTest extends TestCase
         self::assertSame('createdtarget', $this->query(
             "SELECT physical_name FROM variable WHERE source_name = 'CreatedTarget'",
         )->fetchColumn());
+        self::assertSame(
+            ['5', 8, 0, '5', 8, 0],
+            $this->query(
+                "SELECT print_format_family, print_format_width, print_format_decimals, "
+                . "write_format_family, write_format_width, write_format_decimals "
+                . "FROM variable WHERE source_name = 'CreatedTarget'",
+            )->fetch(PDO::FETCH_NUM),
+        );
         self::assertSame([100.0, 2.0, 3.0, 9.0, null], $this->query(
             'SELECT createdtarget FROM respondents ORDER BY __case_ordinal',
         )->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    public function testSystemMissingActionForStringTargetFailsBeforeMutation(): void
+    {
+        $this->pdo->exec("ALTER TABLE respondents ADD COLUMN source_text TEXT NOT NULL DEFAULT ''");
+        $this->pdo->exec("ALTER TABLE respondents ADD COLUMN destination_text TEXT NOT NULL DEFAULT 'original'");
+        $insertVariable = $this->pdo->prepare(
+            'INSERT INTO variable '
+            . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind, declared_string_width) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?)',
+        );
+        $insertVariable->execute([
+            '018f47f2-8b6a-7c3d-9e1f-123456789abf',
+            self::DATASET_ID,
+            3,
+            'SourceText',
+            'source_text',
+            'string',
+            8,
+        ]);
+        $insertVariable->execute([
+            '018f47f2-8b6a-7c3d-9e1f-123456789ac0',
+            self::DATASET_ID,
+            4,
+            'DestinationText',
+            'destination_text',
+            'string',
+            8,
+        ]);
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new RecodeOperation('SourceText', 'DestinationText', [
+                new RecodeRule(new ElseSelector(), new SetMissingAction()),
+            ]),
+        ]);
+
+        try {
+            (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+            self::fail('System-missing recoding into a string target unexpectedly executed.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::InvalidSourceDataset, $exception->diagnosticCode);
+            self::assertStringContainsString('not representable', $exception->getMessage());
+        }
+
+        self::assertSame(
+            ['original', 'original', 'original', 'original', 'original'],
+            $this->query('SELECT destination_text FROM respondents ORDER BY __case_ordinal')
+                ->fetchAll(PDO::FETCH_COLUMN),
+        );
     }
 
     public function testNewStringTargetRequiresExplicitCatalogWidth(): void
