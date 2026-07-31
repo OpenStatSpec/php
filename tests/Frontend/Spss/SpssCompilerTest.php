@@ -99,6 +99,22 @@ final class SpssCompilerTest extends TestCase
         }
     }
 
+    public function testRejectsDuplicateIntoTargetsWithinOneParallelRecode(): void
+    {
+        try {
+            (new SpssCompiler())->compile(
+                'RECODE first second (1=2) INTO result result.',
+                self::DATASET_ID,
+            );
+            self::fail('A parallel RECODE with duplicate INTO targets unexpectedly compiled.');
+        } catch (SpssSyntaxException $exception) {
+            self::assertStringContainsString(
+                'duplicate target variables',
+                $exception->diagnostics[0]->message,
+            );
+        }
+    }
+
     public function testBinderRejectsInvalidElsePositionAndIntoArity(): void
     {
         foreach ([

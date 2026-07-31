@@ -35,6 +35,12 @@ final class Binder
                 if (count($statement->sources) !== count($targets)) {
                     $this->fail($statement->line(), 'RECODE INTO must have exactly one target for each source variable.');
                 }
+                if ($statement->targets !== [] && count(array_unique($targets)) !== count($targets)) {
+                    $this->fail(
+                        $statement->line(),
+                        'RECODE INTO must not contain duplicate target variables in the same statement.',
+                    );
+                }
                 foreach ($targets as $targetIndex => $target) {
                     foreach (array_slice($statement->sources, $targetIndex + 1) as $laterSource) {
                         if ($target === $laterSource) {

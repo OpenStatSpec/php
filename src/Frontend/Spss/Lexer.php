@@ -19,15 +19,15 @@ final class Lexer
         $length = strlen($source);
 
         while ($offset < $length) {
-            $character = $source[$offset];
+            $character = $this->characterAt($source, $offset, $line, $column);
             if (ctype_space($character)) {
                 $this->advance($character, $offset, $line, $column);
                 continue;
             }
 
             if ($atStatementStart && $character === '*') {
-                while ($offset < $length && $source[$offset] !== '.') {
-                    $this->advance($source[$offset], $offset, $line, $column);
+                while ($offset < $length && $this->characterAt($source, $offset, $line, $column) !== '.') {
+                    $this->advance($this->characterAt($source, $offset, $line, $column), $offset, $line, $column);
                 }
                 if ($offset === $length) {
                     $this->fail($line, $column, 'Comment is missing its period terminator.');
@@ -70,14 +70,19 @@ final class Lexer
 
             if ($this->isIdentifierStart($character)) {
                 $start = $offset;
-                while ($offset < $length && $this->isIdentifierPart($source[$offset])) {
-                    $this->advance($source[$offset], $offset, $line, $column);
+                while ($offset < $length) {
+                    $identifierCharacter = $this->characterAt($source, $offset, $line, $column);
+                    if (!$this->isIdentifierPart($identifierCharacter)) {
+                        break;
+                    }
+                    $this->advance($identifierCharacter, $offset, $line, $column);
                 }
                 $tokens[] = new Token(TokenType::Identifier, substr($source, $start, $offset - $start), $tokenLine, $tokenColumn);
                 continue;
             }
 
-            $this->fail($line, $column, sprintf('Unexpected character %s.', json_encode($character, JSON_THROW_ON_ERROR)));
+            $encoded = json_encode($character, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+            $this->fail($line, $column, sprintf('Unexpected character %s.', $encoded === false ? '?' : $encoded));
         }
 
         $tokens[] = new Token(TokenType::EndOfFile, '', $line, $column);
@@ -87,7 +92,7 @@ final class Lexer
 
     private function string(string $source, int &$offset, int &$line, int &$column): Token
     {
-        $quote = $source[$offset];
+        $quote = $this->characterAt($source, $offset, $line, $column);
         $tokenLine = $line;
         $tokenColumn = $column;
         $this->advance($quote, $offset, $line, $column);
@@ -95,14 +100,14 @@ final class Lexer
         $length = strlen($source);
 
         while ($offset < $length) {
-            $character = $source[$offset];
+            $character = $this->characterAt($source, $offset, $line, $column);
             if ($character !== $quote) {
                 $value .= $character;
                 $this->advance($character, $offset, $line, $column);
                 continue;
             }
             $this->advance($character, $offset, $line, $column);
-            if ($offset < $length && $source[$offset] === $quote) {
+            if ($offset < $length && $this->characterAt($source, $offset, $line, $column) === $quote) {
                 $value .= $quote;
                 $this->advance($quote, $offset, $line, $column);
                 continue;
@@ -146,17 +151,43 @@ final class Lexer
 
     private function isIdentifierStart(string $character): bool
     {
-        return ctype_alpha($character) || str_contains('_@#$', $character);
+        return preg_match('/\A\p{L}\z/uD', $character) === 1 || str_contains('_@#$', $character);
     }
 
     private function isIdentifierPart(string $character): bool
     {
-        return ctype_alnum($character) || str_contains('_@#$', $character);
+        return preg_match('/\A[\p{L}\p{M}\p{N}]\z/uD', $character) === 1 || str_contains('_@#$', $character);
+    }
+
+    private function characterAt(string $source, int $offset, int $line, int $column): string
+    {
+        $firstByte = ord($source[$offset]);
+        $byteLength = match (true) {
+            $firstByte <= 0x7F => 1,
+            $firstByte >= 0xC2 && $firstByte <= 0xDF => 2,
+            $firstByte >= 0xE0 && $firstByte <= 0xEF => 3,
+            $firstByte >= 0xF0 && $firstByte <= 0xF4 => 4,
+            default => null,
+        };
+        $character = $byteLength === null ? '' : substr($source, $offset, $byteLength);
+        if (
+            $byteLength === null
+            || strlen($character) !== $byteLength
+            || preg_match('/\A.\z/usD', $character) !== 1
+        ) {
+            $this->fail(
+                $line,
+                $column,
+                sprintf('Invalid UTF-8 sequence beginning with byte 0x%02X.', $firstByte),
+            );
+        }
+
+        return $character;
     }
 
     private function advance(string $character, int &$offset, int &$line, int &$column): void
     {
-        ++$offset;
+        $offset += strlen($character);
         if ($character === "\n") {
             ++$line;
             $column = 1;

@@ -32,6 +32,25 @@ final class LexerTest extends TestCase
         self::assertSame(1, count(array_filter($tokens, static fn($token): bool => $token->type === TokenType::Terminator)));
     }
 
+    public function testTokenizesPrecomposedAndDecomposedUnicodeIdentifiers(): void
+    {
+        $precomposed = "\u{00E9}chelle";
+        $decomposed = "e\u{0301}chelle";
+        $tokens = (new Lexer())->tokenize($precomposed . ' ' . $decomposed . '.');
+
+        self::assertSame(TokenType::Identifier, $tokens[0]->type);
+        self::assertSame($precomposed, $tokens[0]->lexeme);
+        self::assertSame(TokenType::Identifier, $tokens[1]->type);
+        self::assertSame($decomposed, $tokens[1]->lexeme);
+    }
+
+    public function testRejectsInvalidTrailingUtf8Byte(): void
+    {
+        $this->expectException(SpssSyntaxException::class);
+
+        (new Lexer())->tokenize("RECODE score (1=2).\xC3");
+    }
+
     public function testRejectsUnknownCharactersWithPositionedDiagnostic(): void
     {
         try {
