@@ -8,7 +8,20 @@ It imports an unencrypted SPSS `.sav` or `.zsav` dataset into a relational datab
 
 This is an early reference implementation. Its round-trip contract is **semantic**, not byte-identical: supported cases, order, variables, values, dictionary metadata and technical metadata are preserved; compression layout, timestamps and other writer-specific bytes are not promised.
 
-SQLite, PostgreSQL 17/18, MySQL 8.4/9.7, MariaDB 11.4/11.8/12.3 and Dolt 2.2.2 are implemented PDO profiles. Each follows one strict-wide contract:
+SQLite, PostgreSQL 17.x/18.x, MySQL 8.4.x/9.7.x, MariaDB
+11.4.x/11.8.x/12.3.x and exact Dolt 2.2.2 are implemented PDO profiles.
+Server-family claims are conservative compatibility policies; CI records exact
+evidence at PostgreSQL 17.10/18.4, MySQL 8.4.11/9.7.2 and MariaDB
+11.4.12/11.8.8/12.3.2. Each service job verifies its live normalized product
+version before the run counts as evidence.
+
+The PHP SQLite core profile remains `>=3.24.0,<4.0.0`. The Python adapter's
+optional Transformation Workflow has its own narrower `>=3.35.0,<4.0.0`
+policy; it does not change PHP support. Microsoft SQL Server is not supported
+by this adapter and remains roadmap-only in the specification's
+[MSSQL dialect roadmap](https://github.com/OpenStatSpec/specification/blob/main/docs/mssql-dialect-roadmap.md).
+
+Each implemented profile follows one strict-wide contract:
 
 1. One source dataset becomes one dedicated SQL data table.
 2. One SPSS case becomes one SQL row.
@@ -164,7 +177,12 @@ composer check
 
 `composer check` validates Composer configuration, lints PHP, checks style, runs PHPStan and runs PHPUnit. Use `composer fix` for safe style fixes, then rerun `composer check`.
 
-GitHub Actions runs the regular suite on PHP 8.4 and 8.5. It also runs real SAV and ZSAV integration round trips against PostgreSQL 17 and 18, MySQL 8.4 and 9.7, MariaDB 11.4, 11.8 and 12.3, and Dolt 2.2.2. Those profile checks use their PDO drivers and php-spss V3 read/write paths, not only DDL snapshots.
+GitHub Actions runs the regular suite on PHP 8.4 and 8.5. It also runs real
+SAV and ZSAV integration round trips against exact PostgreSQL 17.10/18.4,
+MySQL 8.4.11/9.7.2, MariaDB 11.4.12/11.8.8/12.3.2, and Dolt 2.2.2.
+Those checks use their PDO drivers and php-spss V3 read/write paths, not only
+DDL snapshots. The family policies remain runtime claims; exact patches are CI
+evidence points, except Dolt, whose claim and evidence are both exactly 2.2.2.
 
 ## Contributing
 

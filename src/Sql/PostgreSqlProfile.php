@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Sql;
 
+use OpenStatSpec\Core\ServerVersionPolicy;
+
 final class PostgreSqlProfile extends AbstractPdoSqlProfile
 {
     public function driverName(): string
@@ -24,7 +26,7 @@ final class PostgreSqlProfile extends AbstractPdoSqlProfile
     }
     public function serverVersionRange(): string
     {
-        return 'PostgreSQL 17.x or 18.x';
+        return ServerVersionPolicy::claim('postgresql');
     }
     public function ddlAtomic(): bool
     {

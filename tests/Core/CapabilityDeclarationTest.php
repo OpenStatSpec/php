@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OpenStatSpec\Tests\Core;
 
 use OpenStatSpec\Core\CapabilityDeclaration;
+use OpenStatSpec\Core\ServerVersionPolicy;
 use OpenStatSpec\Spss\PhpSpssEngine;
 use PHPUnit\Framework\TestCase;
 
@@ -15,9 +16,9 @@ final class CapabilityDeclarationTest extends TestCase
         $pdo = new \PDO('sqlite::memory:');
         $declaration = (new CapabilityDeclaration($pdo, new PhpSpssEngine()))->toArray();
         self::assertSame('release_candidate', $declaration['specification_status']);
-        self::assertSame('v1.0.0-rc.1', $declaration['specification_release']);
+        self::assertNull($declaration['specification_release']);
         self::assertSame(CapabilityDeclaration::SPECIFICATION_RELEASE, $declaration['specification_release']);
-        self::assertSame('fef0dc6f4b17ff7141dad3f49d0524c63efbfed5', $declaration['specification_commit']);
+        self::assertSame('e94ae8349d2b0dffe0c65e820b4b22b8c074b7b5', $declaration['specification_commit']);
         self::assertSame(CapabilityDeclaration::SPECIFICATION_COMMIT, $declaration['specification_commit']);
         self::assertMatchesRegularExpression('/^[0-9a-f]{40}$/', $declaration['specification_commit']);
         self::assertSame(['import', 'export', 'semantic_round_trip'], $declaration['directions']);
@@ -53,6 +54,7 @@ final class CapabilityDeclarationTest extends TestCase
         foreach ($declaration['required_capabilities'] as $supported) {
             self::assertTrue($supported);
         }
+        self::assertArrayNotHasKey('mssql', $declaration['sql_profiles']);
         foreach (['sqlite', 'mysql', 'mariadb', 'dolt', 'postgresql'] as $name) {
             $profile = $declaration['sql_profiles'][$name];
             self::assertSame($name, $profile['profile']);
@@ -62,6 +64,10 @@ final class CapabilityDeclarationTest extends TestCase
             self::assertGreaterThan(0, $profile['theoretical_limits']['maximum_value_bytes']);
             self::assertNotSame('', $profile['claimed_server_versions']);
             self::assertNotEmpty($profile['ci_tested_server_versions']);
+            self::assertSame(
+                ServerVersionPolicy::ciTestedVersions($name),
+                $profile['ci_tested_server_versions'],
+            );
             self::assertNotSame('', $profile['physical_table_mapping']);
             if ($name === 'dolt') {
                 self::assertSame(['maximum_value_bytes'], array_keys($profile['theoretical_limits']));

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Sql;
 
+use OpenStatSpec\Core\ServerVersionPolicy;
 use PDO;
 
 /** Dolt's supported MySQL-wire SQL profile; SQL mechanics reuse MySqlProfile. */
@@ -21,7 +22,7 @@ final class DoltProfile extends MySqlProfile
 
     public function serverVersionRange(): string
     {
-        return 'Dolt 2.2.2';
+        return ServerVersionPolicy::claim('dolt');
     }
 
     public function identifierLimitUnit(): string

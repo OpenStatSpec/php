@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Sql;
 
+use OpenStatSpec\Core\ServerVersionPolicy;
 use PDO;
 
 final class SqliteProfile extends AbstractPdoSqlProfile
@@ -26,7 +27,7 @@ final class SqliteProfile extends AbstractPdoSqlProfile
     }
     public function serverVersionRange(): string
     {
-        return 'SQLite >=3.24.0 <4.0.0; active version reported at runtime';
+        return ServerVersionPolicy::claim('sqlite') . '; active version reported at runtime';
     }
     public function ddlAtomic(): bool
     {

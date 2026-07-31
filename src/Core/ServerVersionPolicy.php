@@ -46,4 +46,36 @@ final class ServerVersionPolicy
             default => 'unsupported',
         };
     }
+
+    /** @return list<string> */
+    public static function ciTestedVersions(string $profile): array
+    {
+        return match ($profile) {
+            'mysql' => ['MySQL 8.4.11', 'MySQL 9.7.2'],
+            'mariadb' => ['MariaDB 11.4.12', 'MariaDB 11.8.8', 'MariaDB 12.3.2'],
+            'dolt' => ['Dolt 2.2.2'],
+            'postgresql' => ['PostgreSQL 17.10', 'PostgreSQL 18.4'],
+            'sqlite' => ['active PDO SQLite version reported by CI'],
+            default => [],
+        };
+    }
+
+    public static function normalize(string $profile, string $serverVersion): ?string
+    {
+        $serverVersion = trim($serverVersion);
+        if ($profile === 'dolt') {
+            return $serverVersion === '' ? null : $serverVersion;
+        }
+        if (!in_array($profile, ['mysql', 'mariadb', 'postgresql', 'sqlite'], true)) {
+            return null;
+        }
+        if (preg_match('/(\d+)\.(\d+)(?:\.(\d+))?/', $serverVersion, $matches) !== 1) {
+            return null;
+        }
+        if ($profile === 'postgresql') {
+            return $matches[1] . '.' . $matches[2];
+        }
+
+        return $matches[1] . '.' . $matches[2] . '.' . ($matches[3] ?? '0');
+    }
 }

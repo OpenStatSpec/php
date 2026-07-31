@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OpenStatSpec\Tests\Sql;
 
 use OpenStatSpec\Core\DiagnosticCode;
+use OpenStatSpec\Core\ServerVersionPolicy;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\DoltProfile;
 use OpenStatSpec\Sql\MySqlProfile;
@@ -35,6 +36,10 @@ final class PdoSqlProfileTest extends TestCase
         self::assertSame(305, $dolt->maximumSourceVariables());
         self::assertSame(65_504, $dolt->maximumRowBytes());
         self::assertSame('bytes', $dolt->identifierLimitUnit());
+        self::assertSame(ServerVersionPolicy::claim('postgresql'), $postgres->serverVersionRange());
+        self::assertSame(ServerVersionPolicy::claim('dolt'), $dolt->serverVersionRange());
+        self::assertSame(ServerVersionPolicy::claim('sqlite') . '; active version reported at runtime', $sqlite->serverVersionRange());
+        self::assertSame(ServerVersionPolicy::claim('mysql') . ' or ' . ServerVersionPolicy::claim('mariadb'), $mysql->serverVersionRange());
     }
 
     public function testDoltEnvelopeAccepts305VariablesAndRejects306(): void

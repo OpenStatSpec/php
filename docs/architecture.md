@@ -28,11 +28,17 @@ The public `SpssAdapter` chooses a profile from the PDO driver:
 | PDO driver | Profile | Current coverage |
 | --- | --- | --- |
 | `sqlite` | SQLite | in-memory unit and round-trip suite |
-| `pgsql` | PostgreSQL | live PostgreSQL 17 and 18 SAV/ZSAV CI round trips |
-| `mysql` | MySQL/MariaDB | live MySQL 8.4/9.7 and MariaDB 11.4/11.8/12.3 SAV/ZSAV CI round trips |
+| `pgsql` | PostgreSQL | 17.x/18.x claim; live 17.10/18.4 SAV/ZSAV CI evidence |
+| `mysql` | MySQL/MariaDB | MySQL 8.4.x/9.7.x and MariaDB 11.4.x/11.8.x/12.3.x claims; live 8.4.11/9.7.2 and 11.4.12/11.8.8/12.3.2 CI evidence |
 | `mysql` | Dolt | live Dolt 2.2.2 SAV/ZSAV CI round trips; detected by `@@version_comment` plus `DOLT_VERSION()` |
 
 Every profile creates the same logical strict-wide layout and metadata catalogue. Physical SQL types, identifier limits and capability preflight are profile-specific. A source that cannot be represented must be rejected before an incomplete substitute is created.
+
+The PHP SQLite core claim is `>=3.24.0,<4.0.0`. Python's optional
+Transformation Workflow independently requires `>=3.35.0,<4.0.0`; that
+adapter-specific tier does not narrow PHP support. Microsoft SQL Server is not
+a PHP runtime capability and remains a future dialect in the specification's
+[MSSQL roadmap](https://github.com/OpenStatSpec/specification/blob/main/docs/mssql-dialect-roadmap.md).
 
 ## Catalogue and recovery
 

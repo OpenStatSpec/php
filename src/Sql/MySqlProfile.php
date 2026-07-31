@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Sql;
 
+use OpenStatSpec\Core\ServerVersionPolicy;
 use PDO;
 
 class MySqlProfile extends AbstractPdoSqlProfile
@@ -26,7 +27,7 @@ class MySqlProfile extends AbstractPdoSqlProfile
     }
     public function serverVersionRange(): string
     {
-        return 'MySQL 8.4.x/9.7.x or MariaDB 11.4.x/11.8.x/12.3.x';
+        return ServerVersionPolicy::claim('mysql') . ' or ' . ServerVersionPolicy::claim('mariadb');
     }
     public function ddlAtomic(): bool
     {

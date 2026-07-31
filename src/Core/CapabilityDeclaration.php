@@ -18,8 +18,8 @@ use PDO;
 /** Machine-readable SPSS 1.0 and SQL-profile capability declaration. */
 final readonly class CapabilityDeclaration implements JsonSerializable
 {
-    public const SPECIFICATION_RELEASE = 'v1.0.0-rc.1';
-    public const SPECIFICATION_COMMIT = 'fef0dc6f4b17ff7141dad3f49d0524c63efbfed5';
+    public const SPECIFICATION_RELEASE = null;
+    public const SPECIFICATION_COMMIT = 'e94ae8349d2b0dffe0c65e820b4b22b8c074b7b5';
 
     private Connection $connection;
 
@@ -150,13 +150,7 @@ final readonly class CapabilityDeclaration implements JsonSerializable
                 'minimum_inclusive' => '2.2.2',
                 'maximum_inclusive' => '2.2.2',
             ] : null,
-            'ci_tested_server_versions' => match ($name) {
-                'mysql' => ['MySQL 8.4.x', 'MySQL 9.7.x'],
-                'mariadb' => ['MariaDB 11.4.x', 'MariaDB 11.8.x', 'MariaDB 12.3.x'],
-                'dolt' => ['Dolt 2.2.2'],
-                'postgresql' => ['PostgreSQL 17.x', 'PostgreSQL 18.x'],
-                default => ['active PDO SQLite version reported by CI'],
-            },
+            'ci_tested_server_versions' => ServerVersionPolicy::ciTestedVersions($name),
             'exact_ci_tested_versions' => $name === 'dolt' ? ['2.2.2'] : null,
             'theoretical_limits' => $theoretical,
             'proposed_adapter_limits' => $proposed,
