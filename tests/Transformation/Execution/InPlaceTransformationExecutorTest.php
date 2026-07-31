@@ -1,0 +1,284 @@
+<?php
+
+declare(strict_types=1);
+
+namespace OpenStatSpec\Tests\Transformation\Execution;
+
+use OpenStatSpec\Sql\CatalogOwnership;
+use OpenStatSpec\Core\DiagnosticCode;
+use OpenStatSpec\Core\UnsupportedOperation;
+use OpenStatSpec\Sql\Connection;
+use OpenStatSpec\Sql\NormativeCatalog;
+use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
+use OpenStatSpec\Transformation\Model\Action\AssignValueAction;
+use OpenStatSpec\Transformation\Model\Action\CopySourceAction;
+use OpenStatSpec\Transformation\Model\RecodeOperation;
+use OpenStatSpec\Transformation\Model\RecodeRule;
+use OpenStatSpec\Transformation\Model\ScalarValue;
+use OpenStatSpec\Transformation\Model\Selector\ElseSelector;
+use OpenStatSpec\Transformation\Model\Selector\ExactValueSelector;
+use OpenStatSpec\Transformation\Model\Selector\MissingValueSelector;
+use OpenStatSpec\Transformation\Model\Selector\NumericRangeSelector;
+use OpenStatSpec\Transformation\Model\SetValueLabelsOperation;
+use OpenStatSpec\Transformation\Model\SetVariableLabelOperation;
+use OpenStatSpec\Transformation\Model\TransformationPlan;
+use OpenStatSpec\Transformation\Model\ValueLabel;
+use PDO;
+use PDOStatement;
+use PHPUnit\Framework\TestCase;
+
+final class InPlaceTransformationExecutorTest extends TestCase
+{
+    private const DATASET_ID = '018f47f2-8b6a-7c3d-9e1f-123456789abc';
+
+    private PDO $pdo;
+
+    protected function setUp(): void
+    {
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO SQLite is not available in this PHP environment.');
+        }
+        $this->pdo = new PDO('sqlite::memory:', options: [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_STRINGIFY_FETCHES => false,
+        ]);
+        $this->pdo->exec('PRAGMA foreign_keys = ON');
+        (new NormativeCatalog($this->pdo))->createTables();
+        $this->pdo->exec(
+            'CREATE TABLE respondents (__case_ordinal INTEGER NOT NULL PRIMARY KEY, source_value REAL NULL, destination REAL NULL)',
+        );
+        $this->pdo->prepare(
+            'INSERT INTO dataset '
+            . '(dataset_id, spec_version, source_format, physical_table_schema, physical_table_name, dataset_name, source_case_count, imported_at) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )->execute([self::DATASET_ID, '1.0', 'fixture', null, 'respondents', 'survey', 5, '2026-07-31 00:00:00']);
+        $insertVariable = $this->pdo->prepare(
+            'INSERT INTO variable '
+            . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind) '
+            . 'VALUES (?, ?, ?, ?, ?, ?)',
+        );
+        $insertVariable->execute(['018f47f2-8b6a-7c3d-9e1f-123456789abd', self::DATASET_ID, 1, 'SourceValue', 'source_value', 'numeric']);
+        $insertVariable->execute(['018f47f2-8b6a-7c3d-9e1f-123456789abe', self::DATASET_ID, 2, 'Destination', 'destination', 'numeric']);
+        $insertCase = $this->pdo->prepare(
+            'INSERT INTO respondents (__case_ordinal, source_value, destination) VALUES (?, ?, ?)',
+        );
+        foreach ([[1, 1.0, -1.0], [2, 2.0, -1.0], [3, 3.0, -1.0], [4, 9.0, -1.0], [5, null, -1.0]] as $case) {
+            $insertCase->execute($case);
+        }
+        CatalogOwnership::markCurrentVersion($this->pdo);
+    }
+
+    public function testCanonicalOperationsMutateDataAndMetadataInPlace(): void
+    {
+        $tablesBefore = $this->tableNames();
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new RecodeOperation('SourceValue', 'Destination', [
+                new RecodeRule(
+                    new ExactValueSelector(ScalarValue::number(1)),
+                    new AssignValueAction(ScalarValue::number(10)),
+                ),
+                new RecodeRule(
+                    new NumericRangeSelector(2.0, 3.0),
+                    new AssignValueAction(ScalarValue::number(20)),
+                ),
+                new RecodeRule(
+                    new MissingValueSelector(),
+                    new AssignValueAction(ScalarValue::number(99)),
+                ),
+                new RecodeRule(new ElseSelector(), new CopySourceAction()),
+            ]),
+            new SetVariableLabelOperation('Destination', 'Recoded destination'),
+            new SetValueLabelsOperation('Destination', [
+                new ValueLabel(ScalarValue::number(10), 'Ten'),
+                new ValueLabel(ScalarValue::number(20), 'Twenty'),
+                new ValueLabel(ScalarValue::number(99), 'Missing source'),
+            ]),
+        ]);
+
+        $result = (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame(self::DATASET_ID, $result->datasetId());
+        self::assertSame($plan->hash(), $result->planHash());
+        self::assertSame(3, $result->operationCount());
+        self::assertNull($result->auditOperationId(), 'Execution must not create a missing journal schema.');
+        self::assertSame([10.0, 20.0, 20.0, 9.0, 99.0], $this->query(
+            'SELECT destination FROM respondents ORDER BY __case_ordinal',
+        )->fetchAll(PDO::FETCH_COLUMN));
+        self::assertSame('Recoded destination', $this->query(
+            "SELECT variable_label FROM variable WHERE source_name = 'Destination'",
+        )->fetchColumn());
+        self::assertSame(
+            [['10.0', 'Ten'], ['20.0', 'Twenty'], ['99.0', 'Missing source']],
+            $this->query(
+                'SELECT CAST(vl.numeric_code AS TEXT), vl.label FROM value_label vl ORDER BY vl.ordinal',
+            )->fetchAll(PDO::FETCH_NUM),
+        );
+        self::assertSame($tablesBefore, $this->tableNames());
+        self::assertSame(1, (int) $this->query('SELECT COUNT(*) FROM dataset')->fetchColumn());
+        self::assertFalse(in_array('operation_catalog', $this->tableNames(), true));
+    }
+
+    public function testSqliteAddsANewTargetInsideTheSameWideTableAndTransaction(): void
+    {
+        $tablesBefore = $this->tableNames();
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new RecodeOperation('SourceValue', 'CreatedTarget', [
+                new RecodeRule(
+                    new ExactValueSelector(ScalarValue::number(1)),
+                    new AssignValueAction(ScalarValue::number(100)),
+                ),
+                new RecodeRule(new ElseSelector(), new CopySourceAction()),
+            ]),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame($tablesBefore, $this->tableNames(), 'A transformation must not create a table or snapshot.');
+        self::assertSame(1, (int) $this->query('SELECT COUNT(*) FROM dataset')->fetchColumn());
+        self::assertSame(3, (int) $this->query('SELECT COUNT(*) FROM variable')->fetchColumn());
+        self::assertSame('createdtarget', $this->query(
+            "SELECT physical_name FROM variable WHERE source_name = 'CreatedTarget'",
+        )->fetchColumn());
+        self::assertSame([100.0, 2.0, 3.0, 9.0, null], $this->query(
+            'SELECT createdtarget FROM respondents ORDER BY __case_ordinal',
+        )->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    public function testNewStringTargetRequiresExplicitCatalogWidth(): void
+    {
+        $this->pdo->exec('ALTER TABLE respondents ADD COLUMN source_text TEXT NULL');
+        $this->pdo->prepare(
+            'INSERT INTO variable '
+            . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind, declared_string_width) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )->execute([
+            '018f47f2-8b6a-7c3d-9e1f-123456789abf',
+            self::DATASET_ID,
+            3,
+            'SourceText',
+            'source_text',
+            'string',
+            8,
+        ]);
+        $tablesBefore = $this->tableNames();
+        $variablesBefore = (int) $this->query('SELECT COUNT(*) FROM variable')->fetchColumn();
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new RecodeOperation('SourceText', 'CreatedText', [
+                new RecodeRule(
+                    new ExactValueSelector(ScalarValue::string('a')),
+                    new AssignValueAction(ScalarValue::string('b')),
+                ),
+                new RecodeRule(new ElseSelector(), new CopySourceAction()),
+            ]),
+        ]);
+
+        try {
+            (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+            self::fail('A string target without declared_string_width unexpectedly executed.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
+        }
+
+        self::assertSame($tablesBefore, $this->tableNames());
+        self::assertSame($variablesBefore, (int) $this->query('SELECT COUNT(*) FROM variable')->fetchColumn());
+        self::assertFalse(in_array('createdtext', $this->tableColumns(), true));
+    }
+
+    public function testExistingStringTargetEnforcesNormativeByteWidthBeforeMutation(): void
+    {
+        $this->pdo->exec('ALTER TABLE respondents ADD COLUMN source_text TEXT NULL');
+        $this->pdo->exec('ALTER TABLE respondents ADD COLUMN destination_text TEXT NULL');
+        $insertVariable = $this->pdo->prepare(
+            'INSERT INTO variable '
+            . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind, declared_string_width) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?)',
+        );
+        $insertVariable->execute([
+            '018f47f2-8b6a-7c3d-9e1f-123456789abf',
+            self::DATASET_ID,
+            3,
+            'SourceText',
+            'source_text',
+            'string',
+            4,
+        ]);
+        $insertVariable->execute([
+            '018f47f2-8b6a-7c3d-9e1f-123456789ac0',
+            self::DATASET_ID,
+            4,
+            'DestinationText',
+            'destination_text',
+            'string',
+            1,
+        ]);
+
+        $plans = [
+            new TransformationPlan(self::DATASET_ID, [
+                new RecodeOperation('SourceText', 'DestinationText', [
+                    new RecodeRule(
+                        new ExactValueSelector(ScalarValue::string('a')),
+                        new AssignValueAction(ScalarValue::string('long')),
+                    ),
+                    new RecodeRule(new ElseSelector(), new AssignValueAction(ScalarValue::string('x'))),
+                ]),
+            ]),
+            new TransformationPlan(self::DATASET_ID, [
+                new RecodeOperation('SourceText', 'DestinationText', [
+                    new RecodeRule(
+                        new ExactValueSelector(ScalarValue::string('a')),
+                        new AssignValueAction(ScalarValue::string('x')),
+                    ),
+                    new RecodeRule(new ElseSelector(), new CopySourceAction()),
+                ]),
+            ]),
+            new TransformationPlan(self::DATASET_ID, [
+                new SetValueLabelsOperation('DestinationText', [
+                    new ValueLabel(ScalarValue::string('long'), 'Too wide'),
+                ]),
+            ]),
+        ];
+
+        foreach ($plans as $plan) {
+            try {
+                (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+                self::fail('A string operation wider than declared_string_width unexpectedly executed.');
+            } catch (UnsupportedOperation $exception) {
+                self::assertSame(DiagnosticCode::InvalidSourceDataset, $exception->diagnosticCode);
+            }
+        }
+        self::assertSame(
+            [null, null, null, null, null],
+            $this->query('SELECT destination_text FROM respondents ORDER BY __case_ordinal')
+                ->fetchAll(PDO::FETCH_COLUMN),
+        );
+    }
+
+    /** @return list<string> */
+    private function tableNames(): array
+    {
+        $names = $this->query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+        )->fetchAll(PDO::FETCH_COLUMN);
+
+        return array_values(array_map(static fn(mixed $name): string => (string) $name, $names));
+    }
+
+    /** @return list<string> */
+    private function tableColumns(): array
+    {
+        $names = $this->query('PRAGMA table_info(respondents)')->fetchAll(PDO::FETCH_ASSOC);
+
+        return array_values(array_map(
+            static fn(array $column): string => (string) $column['name'],
+            $names,
+        ));
+    }
+
+    private function query(string $sql): PDOStatement
+    {
+        $statement = $this->pdo->query($sql);
+        self::assertInstanceOf(PDOStatement::class, $statement);
+
+        return $statement;
+    }
+}
