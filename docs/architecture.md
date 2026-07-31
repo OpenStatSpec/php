@@ -82,6 +82,26 @@ Encrypted files, Portable (`.por`) files and arbitrary external-engine formats a
 
 `src/Spss` owns SAV/ZSAV extension gating, external-engine normalization, typed php-spss V3 bridging and the public `SpssAdapter` API.
 
+### Transformations
+
+The src/Transformation package owns the statistics-package-neutral canonical
+plan, validation, deterministic plan identity, and PDO in-place executor. An
+apply preserves the canonical dataset UUID and registered wide-table identity.
+It does not publish a derived dataset or create a persistent data copy,
+snapshot, rollback table, or OpenStatSpec-managed version.
+
+The src/Frontend/Spss package is a separate language boundary that turns the
+documented SPSS subset into a canonical plan. The executor accepts that plan
+and does not import or invoke the SPSS frontend. The Stata and SAS directories
+are documented placeholders only; they contain no implementation and make no
+support claim.
+
+All implemented PDO profiles remain eligible transformation targets. Dolt adds
+active-branch, HEAD, and clean-working-set guards; it is not a gateway for the
+feature. Dolt owns history and rollback. See the
+[transformation manual](transformations.md) for the complete contract and
+operational guidance.
+
 ## External engine
 
 The selected engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss), Composer dependency `tiamo/spss` 3.x. It is external. If a compatible reader or writer is unavailable, the adapter produces an explicit `external_engine_unavailable` diagnostic rather than pretending conversion succeeded.
