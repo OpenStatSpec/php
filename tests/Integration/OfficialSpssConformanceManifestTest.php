@@ -134,7 +134,7 @@ final class OfficialSpssConformanceManifestTest extends TestCase
         self::assertTrue($declaration['active_connection']['claimed_supported'], $profile . ': active server version is outside the claimed profile');
         self::assertSame($declaration['sql_profiles'][$profile]['claimed_server_versions'], $declaration['active_connection']['matched_claim']);
         self::assertTrue($declaration['engine']['claimed_supported']);
-        self::assertSame(['3.0.0'], $declaration['engine']['ci_tested_versions']);
+        self::assertSame(['3.0.2'], $declaration['engine']['ci_tested_versions']);
         self::assertContains($profile, array_keys($declaration['sql_profiles'] ?? []));
         self::assertContains('import', $declaration['directions'] ?? []);
         self::assertContains('export', $declaration['directions'] ?? []);

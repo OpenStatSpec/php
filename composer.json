@@ -14,12 +14,12 @@
   "require": {
     "ext-pdo": "*",
     "php": "^8.4.1",
-    "tiamo/spss": "^3.0"
+    "openstatspec/spss-sav": "^3.0"
   },
   "repositories": [
     {
       "type": "vcs",
-      "url": "https://github.com/TonisOrmisson/php-spss.git"
+      "url": "https://github.com/OpenStatSpec/php-spss.git"
     }
   ],
   "require-dev": {

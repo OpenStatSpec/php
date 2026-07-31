@@ -13,11 +13,11 @@ use SPSS\Sav\VariableMetadata;
 /** Typed boundary around the Composer-installed php-spss V3 engine. */
 final class PhpSpssEngine implements SpssEngine
 {
-    public const PACKAGE = 'tiamo/spss';
+    public const PACKAGE = 'openstatspec/spss-sav';
     public const READER_CLASS = 'SPSS\\Sav\\Reader';
     public const WRITER_CLASS = 'SPSS\\Sav\\Writer';
     public const CLAIMED_VERSION_RANGE = '>=3.0.0 <4.0.0';
-    public const CI_TESTED_VERSIONS = ['3.0.0'];
+    public const CI_TESTED_VERSIONS = ['3.0.2'];
 
     public function isAvailable(): bool
     {
@@ -74,7 +74,7 @@ final class PhpSpssEngine implements SpssEngine
         if (!$this->isAvailable()) {
             throw new UnsupportedOperation(
                 DiagnosticCode::ExternalEngineUnavailable,
-                'The selected SPSS engine is not installed. Install Composer dependencies including tiamo/spss before importing SAV data.',
+                'The selected SPSS engine is not installed. Install Composer dependencies including openstatspec/spss-sav before importing SAV data.',
             );
         }
 
@@ -88,7 +88,7 @@ final class PhpSpssEngine implements SpssEngine
         if (!class_exists(self::WRITER_CLASS)) {
             throw new UnsupportedOperation(
                 DiagnosticCode::ExternalEngineUnavailable,
-                'The selected SPSS engine is not installed. Install Composer dependencies including tiamo/spss before exporting SAV data.',
+                'The selected SPSS engine is not installed. Install Composer dependencies including openstatspec/spss-sav before exporting SAV data.',
             );
         }
 

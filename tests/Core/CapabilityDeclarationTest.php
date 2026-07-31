@@ -46,9 +46,9 @@ final class CapabilityDeclarationTest extends TestCase
             'maximum_source_file_bytes' => null,
             'limit_basis' => 'runtime_memory_limit',
         ], $declaration['resource_behavior']);
-        self::assertSame('3.0.0', $declaration['engine']['active_version']);
+        self::assertSame('3.0.2', $declaration['engine']['active_version']);
         self::assertSame('>=3.0.0 <4.0.0', $declaration['engine']['claimed_version_range']);
-        self::assertSame(['3.0.0'], $declaration['engine']['ci_tested_versions']);
+        self::assertSame(['3.0.2'], $declaration['engine']['ci_tested_versions']);
         self::assertTrue($declaration['engine']['claimed_supported']);
         self::assertNotEmpty($declaration['required_capabilities']);
         foreach ($declaration['required_capabilities'] as $supported) {

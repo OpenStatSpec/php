@@ -4,20 +4,20 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "c112e0f537f6f33704cfc44daf538bab",
+    "content-hash": "70656320a6598594d04aefc21dfb1b74",
     "packages": [
         {
-            "name": "tiamo/spss",
-            "version": "3.0.0",
+            "name": "openstatspec/spss-sav",
+            "version": "3.0.2",
             "source": {
                 "type": "git",
-                "url": "https://github.com/TonisOrmisson/php-spss.git",
-                "reference": "cf6f017ad2ce4b3d76a63eda88b9b3e84e525af5"
+                "url": "https://github.com/OpenStatSpec/php-spss.git",
+                "reference": "07a5f4a100700f9b049dddbffedb1df94518db47"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/TonisOrmisson/php-spss/zipball/cf6f017ad2ce4b3d76a63eda88b9b3e84e525af5",
-                "reference": "cf6f017ad2ce4b3d76a63eda88b9b3e84e525af5",
+                "url": "https://api.github.com/repos/OpenStatSpec/php-spss/zipball/07a5f4a100700f9b049dddbffedb1df94518db47",
+                "reference": "07a5f4a100700f9b049dddbffedb1df94518db47",
                 "shasum": ""
             },
             "require": {
@@ -25,6 +25,9 @@
                 "ext-mbstring": "*",
                 "ext-zlib": "*",
                 "php": "^8.4.1"
+            },
+            "replace": {
+                "tiamo/spss": "self.version"
             },
             "require-dev": {
                 "friendsofphp/php-cs-fixer": "^3.95",
@@ -127,10 +130,17 @@
             "authors": [
                 {
                     "name": "Korniienko Vladyslav",
-                    "email": "vk.tiamo@gmail.com"
+                    "email": "vk.tiamo@gmail.com",
+                    "role": "Original author"
+                },
+                {
+                    "name": "OpenStatSpec contributors",
+                    "homepage": "https://github.com/OpenStatSpec",
+                    "role": "Maintainer"
                 }
             ],
-            "description": "SPSS is a php-based implementation of IBM SPSS Statistics Standard",
+            "description": "PHP reader and writer for IBM SPSS Statistics SAV and ZSAV files",
+            "homepage": "https://github.com/OpenStatSpec/php-spss",
             "keywords": [
                 "DataSet",
                 "IBM",
@@ -145,15 +155,10 @@
                 "writer"
             ],
             "support": {
-                "source": "https://github.com/TonisOrmisson/php-spss/tree/3.0.0"
+                "issues": "https://github.com/OpenStatSpec/php-spss/issues",
+                "source": "https://github.com/OpenStatSpec/php-spss"
             },
-            "funding": [
-                {
-                    "type": "custom",
-                    "url": "https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=9UFPH5MGUD7LS&source=url"
-                }
-            ],
-            "time": "2026-07-26T12:11:35+00:00"
+            "time": "2026-07-31T17:34:01+00:00"
         }
     ],
     "packages-dev": [
@@ -4674,5 +4679,5 @@
     "platform-overrides": {
         "php": "8.4.1"
     },
-    "plugin-api-version": "2.9.0"
+    "plugin-api-version": "2.6.0"
 }

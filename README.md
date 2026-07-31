@@ -49,7 +49,7 @@ Only unencrypted SAV and ZSAV are supported. Encrypted files, Portable (`.por`) 
 - PHP 8.4.1 or later
 - `ext-pdo`
 - Selected PDO driver: `pdo_sqlite`, `pdo_pgsql`, or `pdo_mysql`
-- `tiamo/spss` 3.x, installed by Composer. The php-spss V3 engine needs `ext-bcmath`, `ext-mbstring` and `ext-zlib`.
+- `openstatspec/spss-sav` 3.x, installed by Composer. The php-spss V3 engine needs `ext-bcmath`, `ext-mbstring` and `ext-zlib`.
 
 Composer resolves dependencies against PHP 8.4.1, the package minimum.
 
@@ -209,4 +209,4 @@ The package is framework-neutral and has no Yii2 or Laravel dependency. Applicat
 
 ## SPSS engine
 
-The selected engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss), consumed as Composer dependency `tiamo/spss` 3.x. It is an external dependency, not an OpenStatSpec-maintained codebase.
+The selected engine is [OpenStatSpec/php-spss](https://github.com/OpenStatSpec/php-spss), consumed as Composer dependency `openstatspec/spss-sav` 3.x and maintained alongside this adapter.
