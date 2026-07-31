@@ -48,6 +48,12 @@ final class InPlaceTransformationExecutor
     {
         $this->validator->assertValid($plan);
         $this->connection->assertClaimedSupported();
+        if ($this->connection->pdo->inTransaction()) {
+            throw new UnsupportedOperation(
+                DiagnosticCode::UnsupportedOperation,
+                'An in-place transformation cannot start inside a caller-owned active transaction.',
+            );
+        }
         CatalogOwnership::assertReadyForUse($this->connection->pdo);
 
         $dataset = $this->resolveDataset($plan->datasetId());
@@ -470,7 +476,10 @@ final class InPlaceTransformationExecutor
     {
         $parameters[] = $this->boundScalar($selector->value());
 
-        return $sourceSql . ' = ?';
+        return $this->connection->profile->exactValueCondition(
+            $sourceSql,
+            $selector->value()->type() === 'string',
+        );
     }
 
     /** @param list<float|string> $parameters */

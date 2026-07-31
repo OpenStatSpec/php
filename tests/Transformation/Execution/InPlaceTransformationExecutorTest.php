@@ -223,6 +223,44 @@ final class InPlaceTransformationExecutorTest extends TestCase
         );
     }
 
+    public function testCallerOwnedTransactionIsRejectedWithoutRollbackOrJournalWork(): void
+    {
+        $tablesBefore = $this->tableNames();
+        $this->pdo->beginTransaction();
+        $this->pdo->exec('UPDATE respondents SET source_value = 42 WHERE __case_ordinal = 1');
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new RecodeOperation('SourceValue', 'Destination', [
+                new RecodeRule(new ElseSelector(), new AssignValueAction(ScalarValue::number(7))),
+            ]),
+        ]);
+
+        try {
+            (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+            self::fail('Execution unexpectedly joined a caller-owned transaction.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::UnsupportedOperation, $exception->diagnosticCode);
+            self::assertStringContainsString('caller-owned active transaction', $exception->getMessage());
+        }
+
+        self::assertTrue($this->pdo->inTransaction());
+        self::assertSame(42.0, $this->query(
+            'SELECT source_value FROM respondents WHERE __case_ordinal = 1',
+        )->fetchColumn());
+        self::assertSame($tablesBefore, $this->tableNames());
+        self::assertFalse(in_array('operation_catalog', $this->tableNames(), true));
+        self::assertSame(
+            [-1.0, -1.0, -1.0, -1.0, -1.0],
+            $this->query('SELECT destination FROM respondents ORDER BY __case_ordinal')
+                ->fetchAll(PDO::FETCH_COLUMN),
+        );
+
+        self::assertTrue($this->pdo->commit());
+        self::assertFalse($this->pdo->inTransaction());
+        self::assertSame(42.0, $this->query(
+            'SELECT source_value FROM respondents WHERE __case_ordinal = 1',
+        )->fetchColumn());
+    }
+
     public function testSystemMissingActionForStringTargetFailsBeforeMutation(): void
     {
         $this->pdo->exec("ALTER TABLE respondents ADD COLUMN source_text TEXT NOT NULL DEFAULT ''");
@@ -266,6 +304,43 @@ final class InPlaceTransformationExecutorTest extends TestCase
 
         self::assertSame(
             ['original', 'original', 'original', 'original', 'original'],
+            $this->query('SELECT destination_text FROM respondents ORDER BY __case_ordinal')
+                ->fetchAll(PDO::FETCH_COLUMN),
+        );
+    }
+
+    public function testExactStringSelectorIgnoresCaseInsensitiveColumnCollation(): void
+    {
+        $this->pdo->exec('ALTER TABLE respondents ADD COLUMN source_text TEXT COLLATE NOCASE NULL');
+        $this->pdo->exec('ALTER TABLE respondents ADD COLUMN destination_text TEXT NULL');
+        $insertVariable = $this->pdo->prepare(
+            'INSERT INTO variable '
+            . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind, declared_string_width) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?)',
+        );
+        $insertVariable->execute([
+            '018f47f2-8b6a-7c3d-9e1f-123456789abf', self::DATASET_ID, 3,
+            'SourceText', 'source_text', 'string', 8,
+        ]);
+        $insertVariable->execute([
+            '018f47f2-8b6a-7c3d-9e1f-123456789ac0', self::DATASET_ID, 4,
+            'DestinationText', 'destination_text', 'string', 8,
+        ]);
+        $this->pdo->exec("UPDATE respondents SET source_text = CASE __case_ordinal WHEN 1 THEN 'Match' WHEN 2 THEN 'match' ELSE 'other' END");
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new RecodeOperation('SourceText', 'DestinationText', [
+                new RecodeRule(
+                    new ExactValueSelector(ScalarValue::string('Match')),
+                    new AssignValueAction(ScalarValue::string('exact')),
+                ),
+                new RecodeRule(new ElseSelector(), new AssignValueAction(ScalarValue::string('else'))),
+            ]),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame(
+            ['exact', 'else', 'else', 'else', 'else'],
             $this->query('SELECT destination_text FROM respondents ORDER BY __case_ordinal')
                 ->fetchAll(PDO::FETCH_COLUMN),
         );

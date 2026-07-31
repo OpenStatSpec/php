@@ -62,6 +62,12 @@ class MySqlProfile extends AbstractPdoSqlProfile
     {
         return 'LONGTEXT';
     }
+    public function exactValueCondition(string $expression, bool $stringValue): string
+    {
+        return $stringValue
+            ? 'BINARY ' . $expression . ' = BINARY ?'
+            : parent::exactValueCondition($expression, false);
+    }
     public function effectiveMaximumValueBytes(PDO $pdo): int
     {
         $packet = $this->packetPayloadBytes($pdo);

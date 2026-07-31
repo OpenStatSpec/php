@@ -10,6 +10,11 @@ use PDO;
 
 abstract class AbstractPdoSqlProfile implements PdoSqlProfile
 {
+    public function exactValueCondition(string $expression, bool $stringValue): string
+    {
+        return $expression . ' = ?';
+    }
+
     public function physicalIdentifier(string $source, array $used = []): string
     {
         $base = trim(strtolower((string) preg_replace('/[^a-zA-Z0-9_]+/', '_', $source)), '_');

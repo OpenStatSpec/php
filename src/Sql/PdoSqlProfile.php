@@ -45,6 +45,9 @@ interface PdoSqlProfile
 
     public function textType(): string;
 
+    /** Returns an exact-value predicate containing exactly one value placeholder. */
+    public function exactValueCondition(string $expression, bool $stringValue): string;
+
     /**
      * Creates a deterministic, dialect-safe physical identifier. The source name
      * itself remains authoritative in the variables catalogue.
