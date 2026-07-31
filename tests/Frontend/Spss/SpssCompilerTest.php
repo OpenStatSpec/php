@@ -83,6 +83,22 @@ final class SpssCompilerTest extends TestCase
         );
     }
 
+    public function testRejectsParallelRecodeThatWouldOverwriteALaterSource(): void
+    {
+        try {
+            (new SpssCompiler())->compile(
+                'RECODE a b (ELSE=COPY) INTO b c.',
+                self::DATASET_ID,
+            );
+            self::fail('A dependency-unsafe parallel RECODE unexpectedly compiled.');
+        } catch (SpssSyntaxException $exception) {
+            self::assertStringContainsString(
+                'overwrite a source used by a later pair',
+                $exception->diagnostics[0]->message,
+            );
+        }
+    }
+
     public function testBinderRejectsInvalidElsePositionAndIntoArity(): void
     {
         foreach ([

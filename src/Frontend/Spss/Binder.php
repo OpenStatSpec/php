@@ -35,6 +35,16 @@ final class Binder
                 if (count($statement->sources) !== count($targets)) {
                     $this->fail($statement->line(), 'RECODE INTO must have exactly one target for each source variable.');
                 }
+                foreach ($targets as $targetIndex => $target) {
+                    foreach (array_slice($statement->sources, $targetIndex + 1) as $laterSource) {
+                        if ($target === $laterSource) {
+                            $this->fail(
+                                $statement->line(),
+                                'RECODE INTO targets must not overwrite a source used by a later pair in the same statement.',
+                            );
+                        }
+                    }
+                }
                 $elseSeen = false;
                 foreach ($statement->rules as $index => $rule) {
                     if ($rule->input instanceof MissingInput) {

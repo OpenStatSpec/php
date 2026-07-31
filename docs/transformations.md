@@ -91,6 +91,12 @@ commands fail closed with a frontend diagnostic; they are not silently skipped
 or passed to an external statistics engine. This package does not claim full
 SPSS syntax compatibility.
 
+A multi-variable RECODE with INTO targets is expanded into ordered canonical
+operations only when an earlier target does not overwrite a source needed by a
+later pair in the same statement. Dependency-overlapping lists fail closed
+because preserving SPSS simultaneous-input semantics would otherwise require
+hidden row snapshots.
+
 ## SQL profiles and Dolt
 
 Transformations are not restricted to Dolt. The executor uses every SQL
