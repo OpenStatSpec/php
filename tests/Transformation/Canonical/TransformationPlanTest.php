@@ -73,8 +73,8 @@ final class TransformationPlanTest extends TestCase
             new ValueLabel(ScalarValue::number(1.0), 'Still one'),
         ];
         $plan = new TransformationPlan('NOT-A-UUID', [
-            new SetVariableLabelOperation('1 invalid', "bad\0label"),
-            new SetVariableLabelOperation('1 invalid', 'again'),
+            new SetVariableLabelOperation("invalid\0name", "bad\0label"),
+            new SetVariableLabelOperation("invalid\0name", 'again'),
             new SetValueLabelsOperation('status', $duplicateLabels),
         ]);
 
@@ -106,6 +106,18 @@ final class TransformationPlanTest extends TestCase
             new RecodeOperation('status', 'status', [
                 new RecodeRule(new ElseSelector(), new AssignValueAction(ScalarValue::number(1))),
             ]),
+        ]);
+
+        self::assertTrue((new PlanValidator())->validate($plan)->isValid());
+    }
+
+    public function testValidatorAllowsSourceNeutralCatalogVariableNames(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new SetVariableLabelOperation('@score', 'At-prefixed variable'),
+            new SetVariableLabelOperation('#temp', 'Scratch variable'),
+            new SetVariableLabelOperation('$weight', 'System variable'),
+            new SetVariableLabelOperation('wave-1 score', 'Catalog name outside SPSS syntax'),
         ]);
 
         self::assertTrue((new PlanValidator())->validate($plan)->isValid());

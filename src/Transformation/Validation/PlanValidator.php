@@ -207,11 +207,11 @@ final class PlanValidator
 
     private function validateVariableName(string $name, string $path): void
     {
-        if (strlen($name) > 255 || preg_match('/\A[\p{L}_][\p{L}\p{N}_]*\z/uD', $name) !== 1) {
+        if ($name === '' || strlen($name) > 255 || str_contains($name, "\0") || preg_match('//u', $name) !== 1) {
             $this->violation(
                 'variable.invalid_name',
                 $path,
-                'Variable names must be 1-255 UTF-8 bytes and contain letters, numbers, or underscore, without a leading number.',
+                'Variable names must contain 1-255 bytes of valid UTF-8 scalar text without NUL.',
             );
         }
     }
