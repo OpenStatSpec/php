@@ -102,9 +102,9 @@ feature. Dolt owns history and rollback. See the
 [transformation manual](transformations.md) for the complete contract and
 operational guidance.
 
-## External engine
+## SPSS codec
 
-The selected engine is [TonisOrmisson/php-spss](https://github.com/TonisOrmisson/php-spss), Composer dependency `tiamo/spss` 3.x. It is external. If a compatible reader or writer is unavailable, the adapter produces an explicit `external_engine_unavailable` diagnostic rather than pretending conversion succeeded.
+The selected engine is [OpenStatSpec/php-spss](https://github.com/OpenStatSpec/php-spss), installed as Composer dependency `openstatspec/spss-sav` 3.x and maintained by OpenStatSpec. It remains a separately versioned package. If a compatible reader or writer is unavailable, the adapter produces an explicit `external_engine_unavailable` diagnostic rather than pretending conversion succeeded.
 
 ## Framework boundary
 
