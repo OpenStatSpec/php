@@ -17,7 +17,7 @@ final class PhpSpssEngine implements SpssEngine
     public const READER_CLASS = 'SPSS\\Sav\\Reader';
     public const WRITER_CLASS = 'SPSS\\Sav\\Writer';
     public const CLAIMED_VERSION_RANGE = '>=3.0.0 <4.0.0';
-    public const CI_TESTED_VERSIONS = ['3.0.2'];
+    public const CI_TESTED_VERSIONS = ['3.0.3'];
 
     public function isAvailable(): bool
     {
