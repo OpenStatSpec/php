@@ -8,16 +8,16 @@
     "packages": [
         {
             "name": "openstatspec/spss-sav",
-            "version": "3.0.2",
+            "version": "3.0.3",
             "source": {
                 "type": "git",
                 "url": "https://github.com/OpenStatSpec/php-spss.git",
-                "reference": "07a5f4a100700f9b049dddbffedb1df94518db47"
+                "reference": "6c42f7273c741c4117a841cd767eb4434ac92a4b"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/OpenStatSpec/php-spss/zipball/07a5f4a100700f9b049dddbffedb1df94518db47",
-                "reference": "07a5f4a100700f9b049dddbffedb1df94518db47",
+                "url": "https://api.github.com/repos/OpenStatSpec/php-spss/zipball/6c42f7273c741c4117a841cd767eb4434ac92a4b",
+                "reference": "6c42f7273c741c4117a841cd767eb4434ac92a4b",
                 "shasum": ""
             },
             "require": {
@@ -25,9 +25,6 @@
                 "ext-mbstring": "*",
                 "ext-zlib": "*",
                 "php": "^8.4.1"
-            },
-            "replace": {
-                "tiamo/spss": "self.version"
             },
             "require-dev": {
                 "friendsofphp/php-cs-fixer": "^3.95",
@@ -130,7 +127,6 @@
             "authors": [
                 {
                     "name": "Korniienko Vladyslav",
-                    "email": "vk.tiamo@gmail.com",
                     "role": "Original author"
                 },
                 {
@@ -158,7 +154,7 @@
                 "issues": "https://github.com/OpenStatSpec/php-spss/issues",
                 "source": "https://github.com/OpenStatSpec/php-spss"
             },
-            "time": "2026-07-31T17:34:01+00:00"
+            "time": "2026-08-03T08:08:43+00:00"
         }
     ],
     "packages-dev": [
@@ -4679,5 +4675,5 @@
     "platform-overrides": {
         "php": "8.4.1"
     },
-    "plugin-api-version": "2.6.0"
+    "plugin-api-version": "2.9.0"
 }
