@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Updated the installed and exact CI-tested `openstatspec/spss-sav` codec from
+  3.0.2 to 3.0.3, and aligned the reported engine identity and codec
+  documentation with the separately versioned OpenStatSpec package.
+
 ## [0.4.0] - 2026-07-31
 
 ### Added
