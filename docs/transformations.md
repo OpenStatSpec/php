@@ -2,6 +2,12 @@
 
 ## Purpose and boundary
 
+> Status: this PHP layer currently uses the package-local legacy contract
+> `openstatspec-transformation-plan-v1`. It does not claim conformance with
+> OpenStatSpec Transformation Plan or SPSS Frontend profile 0.1 or 0.2.
+> Migration to official 0.1 is required before the additive 0.2 conditional
+> profile can be implemented or claimed.
+
 The transformation layer applies small, deterministic edits to an existing
 OpenStatSpec dataset. Its canonical `TransformationPlan`, validation, and SQL
 executor do not depend on SPSS, Stata, SAS, or another statistics package.
