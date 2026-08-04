@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Updated the installed and exact CI-tested `openstatspec/spss-sav` codec from
+  3.0.2 to 3.0.3, and aligned the reported engine identity and codec
+  documentation with the separately versioned OpenStatSpec package.
+- Made the transformation capability boundary explicit: the current PHP API uses the package-local legacy `openstatspec-transformation-plan-v1` contract and does not yet claim official Transformation Plan or SPSS Frontend profile 0.1/0.2 conformance.
+
 ## [0.4.0] - 2026-07-31
 
 ### Added
