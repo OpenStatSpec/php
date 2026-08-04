@@ -13,6 +13,8 @@ use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 use OpenStatSpec\Transformation\Model\Action\AssignValueAction;
 use OpenStatSpec\Transformation\Model\Action\CopySourceAction;
 use OpenStatSpec\Transformation\Model\Action\SetMissingAction;
+use OpenStatSpec\Transformation\Model\CreateVariableOperation;
+use OpenStatSpec\Transformation\Model\DeleteVariableOperation;
 use OpenStatSpec\Transformation\Model\RecodeOperation;
 use OpenStatSpec\Transformation\Model\RecodeRule;
 use OpenStatSpec\Transformation\Model\ScalarValue;
@@ -152,6 +154,30 @@ final class InPlaceTransformationExecutorTest extends TestCase
             'SELECT createdtarget FROM respondents ORDER BY __case_ordinal',
         )->fetchAll(PDO::FETCH_COLUMN));
     }
+
+    public function testExplicitStringCreateAndDeleteRemovesDataAndMetadata(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new CreateVariableOperation('TempText', 'string', 20),
+            new SetVariableLabelOperation('TempText', 'Temporary text'),
+            new SetValueLabelsOperation('TempText', [
+                new ValueLabel(ScalarValue::string('yes'), 'Yes'),
+            ]),
+            new DeleteVariableOperation('TempText'),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame(2, (int) $this->query('SELECT COUNT(*) FROM variable')->fetchColumn());
+        self::assertFalse(in_array('temptext', $this->tableColumns(), true));
+        self::assertSame(0, (int) $this->query(
+            'SELECT COUNT(*) FROM variable_value_label_set',
+        )->fetchColumn());
+        self::assertSame(0, (int) $this->query(
+            'SELECT COUNT(*) FROM value_label',
+        )->fetchColumn());
+    }
+
 
     public function testNewTargetIsRejectedBeforeAlterAtTheEffectiveColumnLimit(): void
     {

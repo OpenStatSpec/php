@@ -7,6 +7,8 @@ namespace OpenStatSpec\Transformation\Validation;
 use OpenStatSpec\Transformation\Model\Action\AssignValueAction;
 use OpenStatSpec\Transformation\Model\Action\CopySourceAction;
 use OpenStatSpec\Transformation\Model\Action\SetMissingAction;
+use OpenStatSpec\Transformation\Model\CreateVariableOperation;
+use OpenStatSpec\Transformation\Model\DeleteVariableOperation;
 use OpenStatSpec\Transformation\Model\RecodeAction;
 use OpenStatSpec\Transformation\Model\RecodeOperation;
 use OpenStatSpec\Transformation\Model\RecodeSelector;
@@ -57,6 +59,8 @@ final class PlanValidator
     private function validateOperation(TransformationOperation $operation, string $path): void
     {
         if (!in_array($operation::class, [
+            CreateVariableOperation::class,
+            DeleteVariableOperation::class,
             RecodeOperation::class,
             SetVariableLabelOperation::class,
             SetValueLabelsOperation::class,
@@ -73,7 +77,13 @@ final class PlanValidator
         $this->validateVariableName($operation->sourceVariable(), $path . '.source_variable');
         $this->validateVariableName($operation->targetVariable(), $path . '.target_variable');
 
-        if ($operation instanceof RecodeOperation) {
+        if ($operation instanceof CreateVariableOperation) {
+            if ($operation->storageKind() === 'string' && ($operation->declaredStringWidth() === null || $operation->declaredStringWidth() < 1)) {
+                $this->violation('create_variable.string_width_required', $path . '.declared_string_width', 'String variables require a positive declared string width.');
+            }
+        } elseif ($operation instanceof DeleteVariableOperation) {
+            return;
+        } elseif ($operation instanceof RecodeOperation) {
             $this->validateRecode($operation, $path);
         } elseif ($operation instanceof SetVariableLabelOperation) {
             $this->validateText($operation->label(), $path . '.label');

@@ -18,7 +18,11 @@ use OpenStatSpec\Frontend\Spss\Binding\BoundProgram;
 use OpenStatSpec\Frontend\Spss\Binding\BoundRecode;
 use OpenStatSpec\Frontend\Spss\Binding\BoundValueLabels;
 use OpenStatSpec\Frontend\Spss\Binding\BoundVariableLabel;
+use OpenStatSpec\Frontend\Spss\Binding\BoundCreateVariable;
+use OpenStatSpec\Frontend\Spss\Binding\BoundDeleteVariable;
 use OpenStatSpec\Transformation\Model\Action\AssignValueAction;
+use OpenStatSpec\Transformation\Model\CreateVariableOperation;
+use OpenStatSpec\Transformation\Model\DeleteVariableOperation;
 use OpenStatSpec\Transformation\Model\Action\CopySourceAction;
 use OpenStatSpec\Transformation\Model\Action\SetMissingAction;
 use OpenStatSpec\Transformation\Model\RecodeAction;
@@ -45,6 +49,18 @@ final class Compiler
     {
         $operations = [];
         foreach ($program->statements as $statement) {
+            if ($statement instanceof BoundCreateVariable) {
+                $operations[] = new CreateVariableOperation(
+                    $statement->variable,
+                    $statement->storageKind,
+                    $statement->storageKind === 'string' ? $statement->declaredStringWidth : null,
+                );
+                continue;
+            }
+            if ($statement instanceof BoundDeleteVariable) {
+                $operations[] = new DeleteVariableOperation($statement->variable);
+                continue;
+            }
             if ($statement instanceof BoundRecode) {
                 $rules = [];
                 $hasElse = false;

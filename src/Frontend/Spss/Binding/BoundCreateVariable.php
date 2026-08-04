@@ -1,0 +1,14 @@
+<?php
+
+declare(strict_types=1);
+
+namespace OpenStatSpec\Frontend\Spss\Binding;
+
+final readonly class BoundCreateVariable implements BoundStatement
+{
+    public function __construct(
+        public string $variable,
+        public string $storageKind,
+        public int $declaredStringWidth,
+    ) {}
+}
