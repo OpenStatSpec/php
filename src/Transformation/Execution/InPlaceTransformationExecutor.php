@@ -11,6 +11,8 @@ use OpenStatSpec\Sql\CatalogOwnership;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Sql\OperationJournal;
+use OpenStatSpec\Transformation\Model\CreateVariableOperation;
+use OpenStatSpec\Transformation\Model\DeleteVariableOperation;
 use OpenStatSpec\Transformation\Model\Action\AssignValueAction;
 use OpenStatSpec\Transformation\Model\Action\CopySourceAction;
 use OpenStatSpec\Transformation\Model\Action\SetMissingAction;
@@ -29,12 +31,16 @@ use OpenStatSpec\Transformation\Validation\PlanValidator;
 use PDO;
 use PDOException;
 use PDOStatement;
+use SPSS\Sav\Variable;
 use Throwable;
 
 /** Executes a canonical plan against its registered wide table, in place. */
 final class InPlaceTransformationExecutor
 {
     private readonly PlanValidator $validator;
+
+    /** @var array<int, array<string, VariableBinding>> */
+    private array $operationBindings = [];
 
     public function __construct(
         private readonly Connection $connection,
@@ -58,7 +64,7 @@ final class InPlaceTransformationExecutor
 
         $dataset = $this->resolveDataset($plan->datasetId());
         $variables = $this->resolveVariables($dataset);
-        $plannedVariables = $this->preflight($plan, $variables);
+        $plannedVariables = $this->preflight($plan, $dataset, $variables);
 
         $guard = $this->doltGuard();
         $doltBefore = $guard?->beforeExecution();
@@ -77,8 +83,8 @@ final class InPlaceTransformationExecutor
                 throw new PDOException('The SQL driver did not start the transformation transaction.');
             }
             $created = [];
-            foreach ($plan->operations() as $operation) {
-                $this->applyOperation($operation, $dataset, $plannedVariables, $created);
+            foreach ($plan->operations() as $operationIndex => $operation) {
+                $this->applyOperation($operation, $dataset, $plannedVariables, $created, $operationIndex);
             }
             $doltAfter = $doltBefore === null
                 ? null
@@ -201,19 +207,67 @@ final class InPlaceTransformationExecutor
      * @param array<string, VariableBinding> $variables
      * @return array<string, VariableBinding>
      */
-    private function preflight(TransformationPlan $plan, array $variables): array
+    private function preflight(TransformationPlan $plan, DatasetBinding $dataset, array $variables): array
     {
-        $used = [];
+        $physicalColumnSlots = $this->connection->profileName === 'postgresql'
+            ? $this->postgresqlPhysicalColumnSlots($dataset)
+            : null;
+        $used = ['__case_ordinal' => true];
         $nextOrdinal = 1;
         foreach ($variables as $variable) {
             $used[$variable->physicalName] = true;
             $nextOrdinal = max($nextOrdinal, $variable->sourceOrdinal + 1);
         }
 
-        foreach ($plan->operations() as $operation) {
+        $active = array_fill_keys(array_keys($variables), true);
+        $this->operationBindings = [];
+        foreach ($plan->operations() as $operationIndex => $operation) {
+            if ($operation instanceof CreateVariableOperation) {
+                if (isset($variables[$operation->targetVariable()]) && isset($active[$operation->targetVariable()])) {
+                    throw $this->invalidCatalog(sprintf(
+                        'Create variable "%s" collides with an existing catalog variable.',
+                        $operation->targetVariable(),
+                    ));
+                }
+                $this->assertCanAlterSchema(count($active), true, $physicalColumnSlots);
+                if ($physicalColumnSlots !== null) {
+                    ++$physicalColumnSlots;
+                }
+                $physical = $this->connection->profile->physicalIdentifier($operation->targetVariable(), $used);
+                $variables[$operation->targetVariable()] = new VariableBinding(
+                    NormativeCatalog::uuid(),
+                    $operation->targetVariable(),
+                    $physical,
+                    $operation->storageKind(),
+                    $nextOrdinal++,
+                    $operation->declaredStringWidth(),
+                    false,
+                );
+                $used[$physical] = true;
+                $active[$operation->targetVariable()] = true;
+                $this->operationBindings[$operationIndex] = ['target' => $variables[$operation->targetVariable()]];
+                continue;
+            }
+            if ($operation instanceof DeleteVariableOperation) {
+                $variableName = $operation->targetVariable();
+                if (!isset($active[$variableName])) {
+                    throw $this->invalidCatalog(sprintf(
+                        'Delete variable "%s" is not registered for dataset_id %s.',
+                        $variableName,
+                        $plan->datasetId(),
+                    ));
+                }
+                if (count($active) === 1 && !$this->hasFutureCreateOperation($plan->operations(), $operationIndex)) {
+                    throw $this->invalidCatalog('A transformation cannot delete the final dataset variable.');
+                }
+                $this->assertCanAlterSchema(count($active), false);
+                $this->operationBindings[$operationIndex] = ['target' => $variables[$variableName]];
+                unset($active[$variableName]);
+                continue;
+            }
             if ($operation instanceof RecodeOperation) {
                 $source = $variables[$operation->sourceVariable()] ?? null;
-                if ($source === null) {
+                if ($source === null || !isset($active[$operation->sourceVariable()])) {
                     throw $this->invalidCatalog(sprintf(
                         'Recode source variable "%s" is not registered for dataset_id %s.',
                         $operation->sourceVariable(),
@@ -221,8 +275,14 @@ final class InPlaceTransformationExecutor
                     ));
                 }
                 $target = $variables[$operation->targetVariable()] ?? null;
+                if ($target !== null && !isset($active[$operation->targetVariable()])) {
+                    $target = null;
+                }
                 if ($target === null) {
-                    $this->assertCanCreateTarget($source, count($variables));
+                    $this->assertCanCreateTarget($source, count($active), $physicalColumnSlots);
+                    if ($physicalColumnSlots !== null) {
+                        ++$physicalColumnSlots;
+                    }
                     $physical = $this->connection->profile->physicalIdentifier($operation->targetVariable(), $used);
                     $target = new VariableBinding(
                         NormativeCatalog::uuid(),
@@ -235,19 +295,22 @@ final class InPlaceTransformationExecutor
                     );
                     $variables[$operation->targetVariable()] = $target;
                     $used[$physical] = true;
+                    $active[$operation->targetVariable()] = true;
                 }
                 $this->assertRecodeKinds($operation, $source, $target);
+                $this->operationBindings[$operationIndex] = ['source' => $source, 'target' => $target];
                 continue;
             }
 
             $target = $variables[$operation->targetVariable()] ?? null;
-            if ($target === null) {
+            if ($target === null || !isset($active[$operation->targetVariable()])) {
                 throw $this->invalidCatalog(sprintf(
                     'Metadata target variable "%s" is not registered for dataset_id %s.',
                     $operation->targetVariable(),
                     $plan->datasetId(),
                 ));
             }
+            $this->operationBindings[$operationIndex] = ['target' => $target];
             if ($operation instanceof SetValueLabelsOperation) {
                 foreach ($operation->labels() as $label) {
                     $this->assertScalarKind($label->value(), $target, 'value label');
@@ -258,7 +321,68 @@ final class InPlaceTransformationExecutor
         return $variables;
     }
 
-    private function assertCanCreateTarget(VariableBinding $source, int $registeredVariableCount): void
+    /** @param list<TransformationOperation> $operations */
+    private function hasFutureCreateOperation(array $operations, int $operationIndex): bool
+    {
+        foreach ($operations as $futureIndex => $operation) {
+            if ($futureIndex > $operationIndex && $operation instanceof CreateVariableOperation) {
+                return true;
+            }
+        }
+        return false;
+    }
+    private function assertCanAlterSchema(int $registeredVariableCount, bool $creation, ?int $physicalColumnSlots = null): void
+    {
+        if (!in_array($this->connection->profileName, ['sqlite', 'postgresql'], true)
+            || !$this->connection->profile->ddlAtomic()
+        ) {
+            throw new UnsupportedOperation(
+                DiagnosticCode::TargetCapabilityExceeded,
+                sprintf(
+                    '%s cannot atomically alter an existing wide table for an in-place variable transformation.',
+                    $this->connection->profileName,
+                ),
+            );
+        }
+        if (!$creation) {
+            if ($this->connection->profileName === 'sqlite'
+                && version_compare($this->connection->serverVersion, '3.35.0', '<')
+            ) {
+                throw new UnsupportedOperation(
+                    DiagnosticCode::TargetCapabilityExceeded,
+                    'SQLite versions below 3.35.0 do not support DROP COLUMN for DELETE VARIABLES.',
+                );
+            }
+
+            return;
+        }
+
+        $maximum = $this->connection->profile->effectiveMaximumSourceVariables($this->connection->pdo);
+        if ($this->connection->profileName === 'postgresql'
+            && $physicalColumnSlots !== null
+            && $physicalColumnSlots >= $maximum + 1
+        ) {
+            throw new UnsupportedOperation(
+                DiagnosticCode::TargetCapabilityExceeded,
+                sprintf(
+                    'PostgreSQL cannot add a source variable because the wide table already uses %d physical PostgreSQL column slots, including dropped columns; the table limit is %d.',
+                    $physicalColumnSlots,
+                    $maximum + 1,
+                ),
+            );
+        }
+        if ($registeredVariableCount >= $maximum) {
+            throw new UnsupportedOperation(
+                DiagnosticCode::TargetCapabilityExceeded,
+                sprintf(
+                    '%s supports at most %d source variables in one OpenStatSpec wide table.',
+                    $this->connection->profileName,
+                    $maximum,
+                ),
+            );
+        }
+    }
+    private function assertCanCreateTarget(VariableBinding $source, int $registeredVariableCount, ?int $physicalColumnSlots = null): void
     {
         if ($source->storageKind === 'string') {
             throw new UnsupportedOperation(
@@ -278,17 +402,19 @@ final class InPlaceTransformationExecutor
             );
         }
 
-        $maximum = $this->connection->profile->effectiveMaximumSourceVariables($this->connection->pdo);
-        if ($registeredVariableCount >= $maximum) {
-            throw new UnsupportedOperation(
-                DiagnosticCode::TargetCapabilityExceeded,
-                sprintf(
-                    '%s supports at most %d source variables in one OpenStatSpec wide table.',
-                    $this->connection->profileName,
-                    $maximum,
-                ),
-            );
+        $this->assertCanAlterSchema($registeredVariableCount, true, $physicalColumnSlots);
+    }
+
+    private function postgresqlPhysicalColumnSlots(DatasetBinding $dataset): int
+    {
+        $statement = $this->statement('SELECT COUNT(*) FROM pg_attribute WHERE attrelid = to_regclass(?) AND attnum > 0');
+        $statement->execute([$this->qualifiedTable($dataset)]);
+        $slots = filter_var($statement->fetchColumn(), FILTER_VALIDATE_INT);
+        if (!is_int($slots) || $slots < 1) {
+            throw $this->invalidCatalog('The PostgreSQL wide table has no physical column slots.');
         }
+
+        return $slots;
     }
 
     private function assertRecodeKinds(
@@ -373,11 +499,24 @@ final class InPlaceTransformationExecutor
         DatasetBinding $dataset,
         array $variables,
         array &$created,
+        int $operationIndex,
     ): void {
-        $target = $variables[$operation->targetVariable()];
+        $bindings = $this->operationBindings[$operationIndex] ?? [];
+        if ($operation instanceof CreateVariableOperation) {
+            $target = $bindings['target'] ?? $variables[$operation->targetVariable()];
+            $this->ensureTargetExists($dataset, $target, $created);
+            return;
+        }
+        if ($operation instanceof DeleteVariableOperation) {
+            $target = $bindings['target'] ?? $variables[$operation->targetVariable()];
+            $this->deleteVariable($dataset, $target);
+            unset($created[$target->sourceName]);
+            return;
+        }
+        $target = $bindings['target'] ?? $variables[$operation->targetVariable()];
         if ($operation instanceof RecodeOperation) {
             $this->ensureTargetExists($dataset, $target, $created);
-            $this->applyRecode($operation, $dataset, $variables[$operation->sourceVariable()], $target);
+            $this->applyRecode($operation, $dataset, $bindings['source'] ?? $variables[$operation->sourceVariable()], $target);
         } elseif ($operation instanceof SetVariableLabelOperation) {
             $this->applyVariableLabel($operation, $dataset, $target);
         } elseif ($operation instanceof SetValueLabelsOperation) {
@@ -394,18 +533,25 @@ final class InPlaceTransformationExecutor
         $type = $target->storageKind === 'numeric'
             ? $this->connection->profile->numericType()
             : $this->connection->profile->textType();
+        $columnDefinition = $target->storageKind === 'string'
+            ? $type . " NOT NULL DEFAULT ''"
+            : $type . ' NULL';
         $this->connection->pdo->exec(sprintf(
-            'ALTER TABLE %s ADD COLUMN %s %s NULL',
+            'ALTER TABLE %s ADD COLUMN %s %s',
             $this->qualifiedTable($dataset),
             $this->quote($target->physicalName),
-            $type,
+            $columnDefinition,
         ));
+        $formatFamily = $target->storageKind === 'string' ? Variable::FORMAT_TYPE_A : 5;
+        $formatWidth = $target->storageKind === 'string'
+            ? min(255, $this->stringWidth($target))
+            : 8;
         $this->statement(
             'INSERT INTO variable '
-            . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind, '
+            . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind, declared_string_width, '
             . 'print_format_family, print_format_width, print_format_decimals, '
             . 'write_format_family, write_format_width, write_format_decimals) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         )->execute([
             $target->variableId,
             $dataset->datasetId,
@@ -413,16 +559,92 @@ final class InPlaceTransformationExecutor
             $target->sourceName,
             $target->physicalName,
             $target->storageKind,
-            5,
-            8,
+            $target->declaredStringWidth,
+            $formatFamily,
+            $formatWidth,
             0,
-            5,
-            8,
+            $formatFamily,
+            $formatWidth,
             0,
         ]);
         $created[$target->sourceName] = true;
     }
 
+    private function deleteVariable(DatasetBinding $dataset, VariableBinding $target): void
+    {
+        $this->connection->pdo->exec(sprintf(
+            'ALTER TABLE %s DROP COLUMN %s',
+            $this->qualifiedTable($dataset),
+            $this->quote($target->physicalName),
+        ));
+        $association = $this->statement(
+            'SELECT vvls.value_label_set_id, vls.dataset_id FROM variable_value_label_set vvls '
+            . 'JOIN value_label_set vls ON vls.value_label_set_id = vvls.value_label_set_id '
+            . 'WHERE vvls.variable_id = ?',
+        );
+        $association->execute([$target->variableId]);
+        $rows = $association->fetchAll(PDO::FETCH_ASSOC);
+        if (count($rows) > 1 || (isset($rows[0]['dataset_id']) && $rows[0]['dataset_id'] !== $dataset->datasetId)) {
+            throw $this->invalidCatalog('The variable value-label association is malformed or crosses dataset identity.');
+        }
+        $setId = isset($rows[0]['value_label_set_id']) && is_string($rows[0]['value_label_set_id'])
+            ? $rows[0]['value_label_set_id']
+            : null;
+
+        foreach ([
+            'DELETE FROM dataset_weight_variable WHERE variable_id = ?',
+            'DELETE FROM variable_set_member WHERE variable_id = ?',
+            'DELETE FROM multiple_response_member WHERE variable_id = ?',
+            'DELETE FROM variable_attribute WHERE variable_id = ?',
+            'DELETE FROM missing_rule WHERE variable_id = ?',
+            'DELETE FROM variable_value_label_set WHERE variable_id = ?',
+        ] as $sql) {
+            $this->statement($sql)->execute([$target->variableId]);
+        }
+        $this->statement('DELETE FROM variable WHERE variable_id = ? AND dataset_id = ?')->execute([
+            $target->variableId,
+            $dataset->datasetId,
+        ]);
+
+        $orphanedSets = $this->statement(
+            'SELECT multiple_response_set_id FROM multiple_response_set WHERE dataset_id = ? '
+            . 'AND NOT EXISTS (SELECT 1 FROM multiple_response_member WHERE multiple_response_set_id = multiple_response_set.multiple_response_set_id)',
+        );
+        $orphanedSets->execute([$dataset->datasetId]);
+        foreach ($orphanedSets->fetchAll(PDO::FETCH_COLUMN) as $orphanedSetId) {
+            if (!is_string($orphanedSetId)) {
+                continue;
+            }
+            $this->statement('DELETE FROM multiple_response_set WHERE multiple_response_set_id = ? AND dataset_id = ?')->execute([$orphanedSetId, $dataset->datasetId]);
+        }
+
+        $orphanedVariableSets = $this->statement(
+            'SELECT variable_set_id FROM variable_set WHERE dataset_id = ? '
+            . 'AND NOT EXISTS (SELECT 1 FROM variable_set_member WHERE variable_set_id = variable_set.variable_set_id)',
+        );
+        $orphanedVariableSets->execute([$dataset->datasetId]);
+        foreach ($orphanedVariableSets->fetchAll(PDO::FETCH_COLUMN) as $orphanedVariableSetId) {
+            if (!is_string($orphanedVariableSetId)) {
+                continue;
+            }
+            $this->statement('DELETE FROM variable_set WHERE variable_set_id = ? AND dataset_id = ?')->execute([$orphanedVariableSetId, $dataset->datasetId]);
+        }
+
+        if ($setId === null) {
+            return;
+        }
+        $references = $this->statement(
+            'SELECT COUNT(*) FROM variable_value_label_set WHERE value_label_set_id = ?',
+        );
+        $references->execute([$setId]);
+        if ((int) $references->fetchColumn() === 0) {
+            $this->statement('DELETE FROM value_label WHERE value_label_set_id = ?')->execute([$setId]);
+            $this->statement('DELETE FROM value_label_set WHERE value_label_set_id = ? AND dataset_id = ?')->execute([
+                $setId,
+                $dataset->datasetId,
+            ]);
+        }
+    }
     private function applyRecode(
         RecodeOperation $operation,
         DatasetBinding $dataset,

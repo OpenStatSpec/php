@@ -13,6 +13,8 @@ use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 use OpenStatSpec\Transformation\Model\Action\AssignValueAction;
 use OpenStatSpec\Transformation\Model\Action\CopySourceAction;
 use OpenStatSpec\Transformation\Model\Action\SetMissingAction;
+use OpenStatSpec\Transformation\Model\CreateVariableOperation;
+use OpenStatSpec\Transformation\Model\DeleteVariableOperation;
 use OpenStatSpec\Transformation\Model\RecodeOperation;
 use OpenStatSpec\Transformation\Model\RecodeRule;
 use OpenStatSpec\Transformation\Model\ScalarValue;
@@ -151,6 +153,245 @@ final class InPlaceTransformationExecutorTest extends TestCase
         self::assertSame([100.0, 2.0, 3.0, 9.0, null], $this->query(
             'SELECT createdtarget FROM respondents ORDER BY __case_ordinal',
         )->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    public function testImplicitRecodeTargetRemainsActiveForLaterMetadataOperation(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new RecodeOperation('SourceValue', 'CreatedTarget', [
+                new RecodeRule(new ElseSelector(), new CopySourceAction()),
+            ]),
+            new SetVariableLabelOperation('CreatedTarget', 'Created target'),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame('Created target', $this->query(
+            "SELECT variable_label FROM variable WHERE source_name = 'CreatedTarget'",
+        )->fetchColumn());
+    }
+
+    public function testDeleteThenRecodeCanReuseVariableName(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new DeleteVariableOperation('Destination'),
+            new RecodeOperation('SourceValue', 'Destination', [
+                new RecodeRule(new ElseSelector(), new AssignValueAction(ScalarValue::number(7))),
+            ]),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        $physicalName = (string) $this->query(
+            "SELECT physical_name FROM variable WHERE source_name = 'Destination'",
+        )->fetchColumn();
+        self::assertNotSame('destination', $physicalName);
+        self::assertSame(
+            [7.0, 7.0, 7.0, 7.0, 7.0],
+            $this->query('SELECT ' . $physicalName . ' FROM respondents ORDER BY __case_ordinal')->fetchAll(PDO::FETCH_COLUMN),
+        );
+    }
+
+    public function testExplicitStringCreateAndDeleteRemovesDataAndMetadata(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new CreateVariableOperation('TempText', 'string', 20),
+            new SetVariableLabelOperation('TempText', 'Temporary text'),
+            new SetValueLabelsOperation('TempText', [
+                new ValueLabel(ScalarValue::string('yes'), 'Yes'),
+            ]),
+            new DeleteVariableOperation('TempText'),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame(2, (int) $this->query('SELECT COUNT(*) FROM variable')->fetchColumn());
+        self::assertFalse(in_array('temptext', $this->tableColumns(), true));
+        self::assertSame(0, (int) $this->query(
+            'SELECT COUNT(*) FROM variable_value_label_set',
+        )->fetchColumn());
+        self::assertSame(0, (int) $this->query(
+            'SELECT COUNT(*) FROM value_label',
+        )->fetchColumn());
+    }
+
+
+    public function testDeletingOnlyVariableThenRecreatingWithinPlan(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new DeleteVariableOperation('Destination'),
+            new DeleteVariableOperation('SourceValue'),
+            new CreateVariableOperation('SourceValue', 'string', 20),
+        ]);
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+        self::assertSame(1, (int) $this->query('SELECT COUNT(*) FROM variable')->fetchColumn());
+        $physicalName = (string) $this->query("SELECT physical_name FROM variable WHERE source_name = 'SourceValue'")->fetchColumn();
+        self::assertNotSame('source_value', $physicalName);
+        self::assertSame('string', $this->query("SELECT storage_kind FROM variable WHERE source_name = 'SourceValue'")->fetchColumn());
+        self::assertTrue(in_array($physicalName, $this->tableColumns(), true));
+        self::assertFalse(in_array('source_value', $this->tableColumns(), true));
+    }
+    public function testCreatedVariableCannotUseCaseOrdinalColumn(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new CreateVariableOperation('__case_ordinal', 'string', 1),
+        ]);
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+        $physicalName = (string) $this->query("SELECT physical_name FROM variable WHERE source_name = '__case_ordinal'")->fetchColumn();
+        self::assertNotSame('__case_ordinal', $physicalName);
+        self::assertTrue(in_array($physicalName, $this->tableColumns(), true));
+    }
+    public function testDeleteThenCreateCanReuseVariableName(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new DeleteVariableOperation('SourceValue'),
+            new CreateVariableOperation('SourceValue', 'string', 20),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        $physicalName = (string) $this->query(
+            "SELECT physical_name FROM variable WHERE source_name = 'SourceValue'",
+        )->fetchColumn();
+        self::assertNotSame('source_value', $physicalName);
+        self::assertSame('string', $this->query(
+            "SELECT storage_kind FROM variable WHERE source_name = 'SourceValue'",
+        )->fetchColumn());
+        self::assertTrue(in_array($physicalName, $this->tableColumns(), true));
+        self::assertFalse(in_array('source_value', $this->tableColumns(), true));
+    }
+
+    public function testDeletingLastMultipleResponseMemberRemovesSet(): void
+    {
+        $this->pdo->prepare('INSERT INTO multiple_response_set (multiple_response_set_id, dataset_id, source_ordinal, set_name, set_kind) VALUES (?, ?, ?, ?, ?)')->execute(['mr-source', self::DATASET_ID, 1, '$MR', 'MC']);
+        $this->pdo->prepare('INSERT INTO multiple_response_member (multiple_response_set_id, variable_id, source_ordinal) VALUES (?, ?, ?)')->execute(['mr-source', '018f47f2-8b6a-7c3d-9e1f-123456789abd', 1]);
+
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new DeleteVariableOperation('SourceValue'),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame(0, (int) $this->query('SELECT COUNT(*) FROM multiple_response_set')->fetchColumn());
+        self::assertSame(0, (int) $this->query('SELECT COUNT(*) FROM multiple_response_member')->fetchColumn());
+    }
+
+    public function testDeletingLastVariableSetMemberRemovesSet(): void
+    {
+        $this->pdo->prepare('INSERT INTO variable_set (variable_set_id, dataset_id, source_ordinal, set_name) VALUES (?, ?, ?, ?)')->execute(['vs-source', self::DATASET_ID, 1, 'Core']);
+        $this->pdo->prepare('INSERT INTO variable_set_member (variable_set_id, variable_id, source_ordinal) VALUES (?, ?, ?)')->execute(['vs-source', '018f47f2-8b6a-7c3d-9e1f-123456789abd', 1]);
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new DeleteVariableOperation('SourceValue'),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame(0, (int) $this->query('SELECT COUNT(*) FROM variable_set')->fetchColumn());
+        self::assertSame(0, (int) $this->query('SELECT COUNT(*) FROM variable_set_member')->fetchColumn());
+    }
+
+    public function testCreateDeleteCreateRecreatesVariable(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new CreateVariableOperation('TempText', 'string', 20),
+            new DeleteVariableOperation('TempText'),
+            new CreateVariableOperation('TempText', 'string', 30),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertTrue(in_array('temptext_2', $this->tableColumns(), true));
+        self::assertSame(30, (int) $this->query(
+            "SELECT declared_string_width FROM variable WHERE source_name = 'TempText'",
+        )->fetchColumn());
+    }
+
+    public function testExplicitStringCreateInitializesBlankValuesAndAFormats(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new CreateVariableOperation('TempText', 'string', 20),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame(['', '', '', '', ''], $this->query(
+            'SELECT temptext FROM respondents ORDER BY __case_ordinal',
+        )->fetchAll(PDO::FETCH_COLUMN));
+        self::assertSame(0, (int) $this->query(
+            'SELECT COUNT(*) FROM respondents WHERE temptext IS NULL',
+        )->fetchColumn());
+        self::assertSame(
+            ['1', 20, 0, '1', 20, 0],
+            $this->query(
+                "SELECT print_format_family, print_format_width, print_format_decimals, "
+                . "write_format_family, write_format_width, write_format_decimals "
+                . "FROM variable WHERE source_name = 'TempText'",
+            )->fetch(PDO::FETCH_NUM),
+        );
+    }
+
+    public function testRecodeTargetCanReuseSlotFreedByEarlierDelete(): void
+    {
+        $connection = new Connection($this->pdo);
+        $maximum = $connection->profile->effectiveMaximumSourceVariables($this->pdo);
+        $columns = ['__case_ordinal INTEGER NOT NULL PRIMARY KEY'];
+        for ($ordinal = 1; $ordinal <= $maximum; ++$ordinal) {
+            $columns[] = 'v' . $ordinal . ' REAL NULL';
+        }
+
+        $this->pdo->exec('DROP TABLE respondents');
+        $this->pdo->exec('CREATE TABLE respondents (' . implode(', ', $columns) . ')');
+        $this->pdo->exec('DELETE FROM variable');
+        $insert = $this->pdo->prepare(
+            'INSERT INTO variable '
+            . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind) '
+            . 'VALUES (?, ?, ?, ?, ?, ?)',
+        );
+        $this->pdo->beginTransaction();
+        for ($ordinal = 1; $ordinal <= $maximum; ++$ordinal) {
+            $name = 'V' . $ordinal;
+            $insert->execute([
+                sprintf('00000000-0000-4000-8000-%012d', $ordinal),
+                self::DATASET_ID,
+                $ordinal,
+                $name,
+                strtolower($name),
+                'numeric',
+            ]);
+        }
+        $this->pdo->commit();
+
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new DeleteVariableOperation('V' . $maximum),
+            new RecodeOperation('V1', 'Replacement', [
+                new RecodeRule(new ElseSelector(), new CopySourceAction()),
+            ]),
+        ]);
+
+        (new InPlaceTransformationExecutor($connection))->execute($plan);
+
+        self::assertSame($maximum, (int) $this->query('SELECT COUNT(*) FROM variable')->fetchColumn());
+        self::assertSame($maximum, count($this->query('PRAGMA table_info(respondents)')->fetchAll()) - 1);
+        self::assertFalse(in_array('v' . $maximum, $this->tableColumns(), true));
+        self::assertTrue(in_array('replacement', $this->tableColumns(), true));
+    }
+
+    public function testExplicitLongStringCreateCapsAFormatWidthsButKeepsStorageWidth(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new CreateVariableOperation('LongText', 'string', 400),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame(
+            [400, '1', 255, '1', 255],
+            $this->query(
+                "SELECT declared_string_width, print_format_family, print_format_width, "
+                . "write_format_family, write_format_width "
+                . "FROM variable WHERE source_name = 'LongText'",
+            )->fetch(PDO::FETCH_NUM),
+        );
     }
 
     public function testNewTargetIsRejectedBeforeAlterAtTheEffectiveColumnLimit(): void

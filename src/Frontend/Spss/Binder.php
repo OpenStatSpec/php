@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace OpenStatSpec\Frontend\Spss;
 
 use OpenStatSpec\Frontend\Spss\Ast\ElseInput;
+use OpenStatSpec\Frontend\Spss\Ast\DeleteVariablesStatement;
 use OpenStatSpec\Frontend\Spss\Ast\ExecuteStatement;
 use OpenStatSpec\Frontend\Spss\Ast\MissingInput;
+use OpenStatSpec\Frontend\Spss\Ast\StringStatement;
 use OpenStatSpec\Frontend\Spss\Ast\Program;
 use OpenStatSpec\Frontend\Spss\Ast\RangeInput;
 use OpenStatSpec\Frontend\Spss\Ast\RecodeStatement;
@@ -15,6 +17,8 @@ use OpenStatSpec\Frontend\Spss\Ast\VariableLabelsStatement;
 use OpenStatSpec\Frontend\Spss\Binding\BoundProgram;
 use OpenStatSpec\Frontend\Spss\Binding\BoundRecode;
 use OpenStatSpec\Frontend\Spss\Binding\BoundValueLabels;
+use OpenStatSpec\Frontend\Spss\Binding\BoundCreateVariable;
+use OpenStatSpec\Frontend\Spss\Binding\BoundDeleteVariable;
 use OpenStatSpec\Frontend\Spss\Binding\BoundVariableLabel;
 
 final class Binder
@@ -28,6 +32,18 @@ final class Binder
         $bound = [];
         foreach ($program->statements as $statement) {
             if ($statement instanceof ExecuteStatement) {
+                continue;
+            }
+            if ($statement instanceof StringStatement) {
+                foreach ($statement->variables as $variable) {
+                    $bound[] = new BoundCreateVariable($variable, 'string', $statement->width);
+                }
+                continue;
+            }
+            if ($statement instanceof DeleteVariablesStatement) {
+                foreach ($statement->variables as $variable) {
+                    $bound[] = new BoundDeleteVariable($variable);
+                }
                 continue;
             }
             if ($statement instanceof RecodeStatement) {

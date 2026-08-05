@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if [[ ! -x vendor/bin/php-cs-fixer || ! -x vendor/bin/phpunit || ! -x vendor/bin/phpstan ]]; then
+    echo "Pre-commit checks require Composer dependencies. Run: composer install" >&2
+    exit 1
+fi
+
+if [[ -z "${OPENSTATSPEC_SPECIFICATION_DIR:-}" && -d "$repo_root/../specification" ]]; then
+    export OPENSTATSPEC_SPECIFICATION_DIR="$repo_root/../specification"
+fi
+
+check_dir="$(mktemp -d "${TMPDIR:-/tmp}/openstatspec-php-check.XXXXXX")"
+cleanup() {
+    rm -rf "$check_dir"
+}
+trap cleanup EXIT
+
+staged_tree="$(git write-tree)"
+git -c core.autocrlf=false archive "$staged_tree" | tar -x -C "$check_dir"
+mkdir "$check_dir/vendor"
+cp -a "$repo_root/vendor/." "$check_dir/vendor/"
+
+cd "$check_dir"
+composer check

@@ -187,6 +187,12 @@ composer install
 composer check
 ```
 
+Install the tracked pre-commit hook once per clone:
+
+```bash
+bash tools/install-git-hooks.sh
+```
+
 `composer check` validates Composer configuration, lints PHP, checks style, runs PHPStan and runs PHPUnit. Use `composer fix` for safe style fixes, then rerun `composer check`.
 
 GitHub Actions runs the regular suite on PHP 8.4 and 8.5. It also runs real
