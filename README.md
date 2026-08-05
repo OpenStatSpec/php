@@ -119,9 +119,7 @@ Pass only loss codes consciously accepted for that conversion. `operation_catalo
 - `src/Spss` - SAV/ZSAV gating, typed V3 engine bridge and public adapter API.
 
 See [docs/architecture.md](docs/architecture.md) for the complete relational contract.
-See [docs/transformations.md](docs/transformations.md) for the canonical
-transformation plan, frontend boundaries, in-place guarantees, supported
-syntax, and development commands.
+See [docs/transformations.md](docs/transformations.md) for the current package-local legacy transformation plan, frontend boundaries, in-place guarantees, supported syntax, and the required migration path to the official OpenStatSpec plan profiles. The capability declaration exposes no official plan or frontend contract claim yet.
 
 ## Upgrading an existing catalogue
 
