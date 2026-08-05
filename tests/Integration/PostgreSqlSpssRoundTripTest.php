@@ -129,7 +129,7 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
     public function testDeleteThenCreateAtThePostgreSqlPhysicalColumnLimitFailsBeforeMutation(): void
     {
         $pdo = $this->postgres();
-        $datasetId = NormativeCatalog::uuid();
+        $datasetId = '018f47f2-8b6a-7c3d-9e1f-123456789abc';
         $tableName = 'transform_slots_' . bin2hex(random_bytes(6));
 
         try {
