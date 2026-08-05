@@ -270,10 +270,7 @@ final class InPlaceTransformationExecutor
                 }
                 $target = $variables[$operation->targetVariable()] ?? null;
                 if ($target !== null && !isset($active[$operation->targetVariable()])) {
-                    throw $this->invalidCatalog(sprintf(
-                        'Recode target variable "%s" is no longer active.',
-                        $operation->targetVariable(),
-                    ));
+                    $target = null;
                 }
                 if ($target === null) {
                     $this->assertCanCreateTarget($source, count($active));

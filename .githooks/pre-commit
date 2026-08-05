@@ -21,7 +21,8 @@ trap cleanup EXIT
 
 staged_tree="$(git write-tree)"
 git -c core.autocrlf=false archive "$staged_tree" | tar -x -C "$check_dir"
-ln -s "$repo_root/vendor" "$check_dir/vendor"
+mkdir "$check_dir/vendor"
+cp -a "$repo_root/vendor/." "$check_dir/vendor/"
 
 cd "$check_dir"
 composer check

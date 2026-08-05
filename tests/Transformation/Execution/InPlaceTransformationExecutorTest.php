@@ -171,6 +171,27 @@ final class InPlaceTransformationExecutorTest extends TestCase
         )->fetchColumn());
     }
 
+    public function testDeleteThenRecodeCanReuseVariableName(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new DeleteVariableOperation('Destination'),
+            new RecodeOperation('SourceValue', 'Destination', [
+                new RecodeRule(new ElseSelector(), new AssignValueAction(ScalarValue::number(7))),
+            ]),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        $physicalName = (string) $this->query(
+            "SELECT physical_name FROM variable WHERE source_name = 'Destination'",
+        )->fetchColumn();
+        self::assertNotSame('destination', $physicalName);
+        self::assertSame(
+            [7.0, 7.0, 7.0, 7.0, 7.0],
+            $this->query('SELECT ' . $physicalName . ' FROM respondents ORDER BY __case_ordinal')->fetchAll(PDO::FETCH_COLUMN),
+        );
+    }
+
     public function testExplicitStringCreateAndDeleteRemovesDataAndMetadata(): void
     {
         $plan = new TransformationPlan(self::DATASET_ID, [
