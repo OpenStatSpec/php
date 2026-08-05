@@ -219,6 +219,52 @@ final class InPlaceTransformationExecutorTest extends TestCase
         );
     }
 
+    public function testRecodeTargetCanReuseSlotFreedByEarlierDelete(): void
+    {
+        $connection = new Connection($this->pdo);
+        $maximum = $connection->profile->effectiveMaximumSourceVariables($this->pdo);
+        $columns = ['__case_ordinal INTEGER NOT NULL PRIMARY KEY'];
+        for ($ordinal = 1; $ordinal <= $maximum; ++$ordinal) {
+            $columns[] = 'v' . $ordinal . ' REAL NULL';
+        }
+
+        $this->pdo->exec('DROP TABLE respondents');
+        $this->pdo->exec('CREATE TABLE respondents (' . implode(', ', $columns) . ')');
+        $this->pdo->exec('DELETE FROM variable');
+        $insert = $this->pdo->prepare(
+            'INSERT INTO variable '
+            . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind) '
+            . 'VALUES (?, ?, ?, ?, ?, ?)',
+        );
+        $this->pdo->beginTransaction();
+        for ($ordinal = 1; $ordinal <= $maximum; ++$ordinal) {
+            $name = 'V' . $ordinal;
+            $insert->execute([
+                sprintf('00000000-0000-4000-8000-%012d', $ordinal),
+                self::DATASET_ID,
+                $ordinal,
+                $name,
+                strtolower($name),
+                'numeric',
+            ]);
+        }
+        $this->pdo->commit();
+
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new DeleteVariableOperation('V' . $maximum),
+            new RecodeOperation('V1', 'Replacement', [
+                new RecodeRule(new ElseSelector(), new CopySourceAction()),
+            ]),
+        ]);
+
+        (new InPlaceTransformationExecutor($connection))->execute($plan);
+
+        self::assertSame($maximum, (int) $this->query('SELECT COUNT(*) FROM variable')->fetchColumn());
+        self::assertSame($maximum, count($this->query('PRAGMA table_info(respondents)')->fetchAll()) - 1);
+        self::assertFalse(in_array('v' . $maximum, $this->tableColumns(), true));
+        self::assertTrue(in_array('replacement', $this->tableColumns(), true));
+    }
+
     public function testNewTargetIsRejectedBeforeAlterAtTheEffectiveColumnLimit(): void
     {
         $connection = new Connection($this->pdo);

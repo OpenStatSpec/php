@@ -270,7 +270,7 @@ final class InPlaceTransformationExecutor
                     ));
                 }
                 if ($target === null) {
-                    $this->assertCanCreateTarget($source, count($variables));
+                    $this->assertCanCreateTarget($source, count($active));
                     $physical = $this->connection->profile->physicalIdentifier($operation->targetVariable(), $used);
                     $target = new VariableBinding(
                         NormativeCatalog::uuid(),
