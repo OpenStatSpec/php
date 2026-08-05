@@ -215,6 +215,21 @@ final class InPlaceTransformationExecutorTest extends TestCase
         self::assertFalse(in_array('source_value', $this->tableColumns(), true));
     }
 
+    public function testDeletingLastMultipleResponseMemberRemovesSet(): void
+    {
+        $this->pdo->prepare('INSERT INTO multiple_response_set (multiple_response_set_id, dataset_id, source_ordinal, set_name, set_kind) VALUES (?, ?, ?, ?, ?)')->execute(['mr-source', self::DATASET_ID, 1, '$MR', 'MC']);
+        $this->pdo->prepare('INSERT INTO multiple_response_member (multiple_response_set_id, variable_id, source_ordinal) VALUES (?, ?, ?)')->execute(['mr-source', '018f47f2-8b6a-7c3d-9e1f-123456789abd', 1]);
+
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new DeleteVariableOperation('SourceValue'),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame(0, (int) $this->query('SELECT COUNT(*) FROM multiple_response_set')->fetchColumn());
+        self::assertSame(0, (int) $this->query('SELECT COUNT(*) FROM multiple_response_member')->fetchColumn());
+    }
+
     public function testExplicitStringCreateInitializesBlankValuesAndAFormats(): void
     {
         $plan = new TransformationPlan(self::DATASET_ID, [

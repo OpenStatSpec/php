@@ -574,6 +574,18 @@ final class InPlaceTransformationExecutor
             $dataset->datasetId,
         ]);
 
+        $orphanedSets = $this->statement(
+            'SELECT multiple_response_set_id FROM multiple_response_set WHERE dataset_id = ? '
+            . 'AND NOT EXISTS (SELECT 1 FROM multiple_response_member WHERE multiple_response_set_id = multiple_response_set.multiple_response_set_id)',
+        );
+        $orphanedSets->execute([$dataset->datasetId]);
+        foreach ($orphanedSets->fetchAll(PDO::FETCH_COLUMN) as $orphanedSetId) {
+            if (!is_string($orphanedSetId)) {
+                continue;
+            }
+            $this->statement('DELETE FROM multiple_response_set WHERE multiple_response_set_id = ? AND dataset_id = ?')->execute([$orphanedSetId, $dataset->datasetId]);
+        }
+
         if ($setId === null) {
             return;
         }
