@@ -276,6 +276,20 @@ final class InPlaceTransformationExecutorTest extends TestCase
         self::assertSame(0, (int) $this->query('SELECT COUNT(*) FROM multiple_response_member')->fetchColumn());
     }
 
+    public function testDeletingLastVariableSetMemberRemovesSet(): void
+    {
+        $this->pdo->prepare('INSERT INTO variable_set (variable_set_id, dataset_id, source_ordinal, set_name) VALUES (?, ?, ?, ?)')->execute(['vs-source', self::DATASET_ID, 1, 'Core']);
+        $this->pdo->prepare('INSERT INTO variable_set_member (variable_set_id, variable_id, source_ordinal) VALUES (?, ?, ?)')->execute(['vs-source', '018f47f2-8b6a-7c3d-9e1f-123456789abd', 1]);
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new DeleteVariableOperation('SourceValue'),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame(0, (int) $this->query('SELECT COUNT(*) FROM variable_set')->fetchColumn());
+        self::assertSame(0, (int) $this->query('SELECT COUNT(*) FROM variable_set_member')->fetchColumn());
+    }
+
     public function testCreateDeleteCreateRecreatesVariable(): void
     {
         $plan = new TransformationPlan(self::DATASET_ID, [

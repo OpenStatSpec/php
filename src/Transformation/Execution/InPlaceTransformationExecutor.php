@@ -594,6 +594,18 @@ final class InPlaceTransformationExecutor
             $this->statement('DELETE FROM multiple_response_set WHERE multiple_response_set_id = ? AND dataset_id = ?')->execute([$orphanedSetId, $dataset->datasetId]);
         }
 
+        $orphanedVariableSets = $this->statement(
+            'SELECT variable_set_id FROM variable_set WHERE dataset_id = ? '
+            . 'AND NOT EXISTS (SELECT 1 FROM variable_set_member WHERE variable_set_id = variable_set.variable_set_id)',
+        );
+        $orphanedVariableSets->execute([$dataset->datasetId]);
+        foreach ($orphanedVariableSets->fetchAll(PDO::FETCH_COLUMN) as $orphanedVariableSetId) {
+            if (!is_string($orphanedVariableSetId)) {
+                continue;
+            }
+            $this->statement('DELETE FROM variable_set WHERE variable_set_id = ? AND dataset_id = ?')->execute([$orphanedVariableSetId, $dataset->datasetId]);
+        }
+
         if ($setId === null) {
             return;
         }
