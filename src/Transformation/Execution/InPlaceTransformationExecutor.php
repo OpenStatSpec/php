@@ -39,6 +39,9 @@ final class InPlaceTransformationExecutor
 {
     private readonly PlanValidator $validator;
 
+    /** @var array<int, array<string, VariableBinding>> */
+    private array $operationBindings = [];
+
     public function __construct(
         private readonly Connection $connection,
         ?PlanValidator $validator = null,
@@ -80,8 +83,8 @@ final class InPlaceTransformationExecutor
                 throw new PDOException('The SQL driver did not start the transformation transaction.');
             }
             $created = [];
-            foreach ($plan->operations() as $operation) {
-                $this->applyOperation($operation, $dataset, $plannedVariables, $created);
+            foreach ($plan->operations() as $operationIndex => $operation) {
+                $this->applyOperation($operation, $dataset, $plannedVariables, $created, $operationIndex);
             }
             $doltAfter = $doltBefore === null
                 ? null
@@ -214,9 +217,10 @@ final class InPlaceTransformationExecutor
         }
 
         $active = array_fill_keys(array_keys($variables), true);
-        foreach ($plan->operations() as $operation) {
+        $this->operationBindings = [];
+        foreach ($plan->operations() as $operationIndex => $operation) {
             if ($operation instanceof CreateVariableOperation) {
-                if (isset($variables[$operation->targetVariable()])) {
+                if (isset($variables[$operation->targetVariable()]) && isset($active[$operation->targetVariable()])) {
                     throw $this->invalidCatalog(sprintf(
                         'Create variable "%s" collides with an existing catalog variable.',
                         $operation->targetVariable(),
@@ -235,6 +239,7 @@ final class InPlaceTransformationExecutor
                 );
                 $used[$physical] = true;
                 $active[$operation->targetVariable()] = true;
+                $this->operationBindings[$operationIndex] = ['target' => $variables[$operation->targetVariable()]];
                 continue;
             }
             if ($operation instanceof DeleteVariableOperation) {
@@ -250,6 +255,7 @@ final class InPlaceTransformationExecutor
                     throw $this->invalidCatalog('A transformation cannot delete the final dataset variable.');
                 }
                 $this->assertCanAlterSchema(count($active), false);
+                $this->operationBindings[$operationIndex] = ['target' => $variables[$variableName]];
                 unset($active[$variableName]);
                 continue;
             }
@@ -286,6 +292,7 @@ final class InPlaceTransformationExecutor
                     $active[$operation->targetVariable()] = true;
                 }
                 $this->assertRecodeKinds($operation, $source, $target);
+                $this->operationBindings[$operationIndex] = ['source' => $source, 'target' => $target];
                 continue;
             }
 
@@ -297,6 +304,7 @@ final class InPlaceTransformationExecutor
                     $plan->datasetId(),
                 ));
             }
+            $this->operationBindings[$operationIndex] = ['target' => $target];
             if ($operation instanceof SetValueLabelsOperation) {
                 foreach ($operation->labels() as $label) {
                     $this->assertScalarKind($label->value(), $target, 'value label');
@@ -460,21 +468,23 @@ final class InPlaceTransformationExecutor
         DatasetBinding $dataset,
         array $variables,
         array &$created,
+        int $operationIndex,
     ): void {
+        $bindings = $this->operationBindings[$operationIndex] ?? [];
         if ($operation instanceof CreateVariableOperation) {
-            $target = $variables[$operation->targetVariable()];
+            $target = $bindings['target'] ?? $variables[$operation->targetVariable()];
             $this->ensureTargetExists($dataset, $target, $created);
             return;
         }
         if ($operation instanceof DeleteVariableOperation) {
-            $target = $variables[$operation->targetVariable()];
+            $target = $bindings['target'] ?? $variables[$operation->targetVariable()];
             $this->deleteVariable($dataset, $target);
             return;
         }
-        $target = $variables[$operation->targetVariable()];
+        $target = $bindings['target'] ?? $variables[$operation->targetVariable()];
         if ($operation instanceof RecodeOperation) {
             $this->ensureTargetExists($dataset, $target, $created);
-            $this->applyRecode($operation, $dataset, $variables[$operation->sourceVariable()], $target);
+            $this->applyRecode($operation, $dataset, $bindings['source'] ?? $variables[$operation->sourceVariable()], $target);
         } elseif ($operation instanceof SetVariableLabelOperation) {
             $this->applyVariableLabel($operation, $dataset, $target);
         } elseif ($operation instanceof SetValueLabelsOperation) {

@@ -215,7 +215,11 @@ final class Parser
     {
         $variables = [];
         do {
-            $variables[] = $this->consumeIdentifier('Expected a variable name in DELETE VARIABLES.')->lexeme;
+            $variable = $this->consumeIdentifier('Expected a variable name in DELETE VARIABLES.')->lexeme;
+            if (strcasecmp($variable, 'TO') === 0) {
+                $this->fail($this->previous(), 'DELETE VARIABLES ranges using TO are not supported.');
+            }
+            $variables[] = $variable;
         } while ($this->check(TokenType::Identifier));
 
         return new DeleteVariablesStatement($command->line, $variables);

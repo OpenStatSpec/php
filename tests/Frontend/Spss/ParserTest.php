@@ -82,6 +82,20 @@ final class ParserTest extends TestCase
         }
     }
 
+    public function testRejectsDeleteVariableRangesBeforeExecution(): void
+    {
+        try {
+            (new Parser())->parse('DELETE VARIABLES c1 TO c4.');
+            self::fail('DELETE VARIABLES ranges unexpectedly parsed.');
+        } catch (SpssSyntaxException $exception) {
+            self::assertCount(1, $exception->diagnostics);
+            self::assertSame(
+                'DELETE VARIABLES ranges using TO are not supported.',
+                $exception->diagnostics[0]->message,
+            );
+        }
+    }
+
     public function testFailsClosedForUnknownOrUnterminatedCommands(): void
     {
         foreach (['COMPUTE score=1.', 'RECODE score (1=2)'] as $syntax) {
