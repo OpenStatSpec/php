@@ -209,7 +209,7 @@ final class InPlaceTransformationExecutor
      */
     private function preflight(TransformationPlan $plan, array $variables): array
     {
-        $used = [];
+        $used = ['__case_ordinal' => true];
         $nextOrdinal = 1;
         foreach ($variables as $variable) {
             $used[$variable->physicalName] = true;

@@ -231,6 +231,16 @@ final class InPlaceTransformationExecutorTest extends TestCase
         self::assertTrue(in_array($physicalName, $this->tableColumns(), true));
         self::assertFalse(in_array('source_value', $this->tableColumns(), true));
     }
+    public function testCreatedVariableCannotUseCaseOrdinalColumn(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new CreateVariableOperation('__case_ordinal', 'string', 1),
+        ]);
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+        $physicalName = (string) $this->query("SELECT physical_name FROM variable WHERE source_name = '__case_ordinal'")->fetchColumn();
+        self::assertNotSame('__case_ordinal', $physicalName);
+        self::assertTrue(in_array($physicalName, $this->tableColumns(), true));
+    }
     public function testDeleteThenCreateCanReuseVariableName(): void
     {
         $plan = new TransformationPlan(self::DATASET_ID, [
