@@ -31,6 +31,7 @@ use OpenStatSpec\Transformation\Validation\PlanValidator;
 use PDO;
 use PDOException;
 use PDOStatement;
+use SPSS\Sav\Variable;
 use Throwable;
 
 /** Executes a canonical plan against its registered wide table, in place. */
@@ -282,6 +283,7 @@ final class InPlaceTransformationExecutor
                     );
                     $variables[$operation->targetVariable()] = $target;
                     $used[$physical] = true;
+                    $active[$operation->targetVariable()] = true;
                 }
                 $this->assertRecodeKinds($operation, $source, $target);
                 continue;
@@ -319,6 +321,15 @@ final class InPlaceTransformationExecutor
             );
         }
         if (!$creation) {
+            if ($this->connection->profileName === 'sqlite'
+                && version_compare($this->connection->serverVersion, '3.35.0', '<')
+            ) {
+                throw new UnsupportedOperation(
+                    DiagnosticCode::TargetCapabilityExceeded,
+                    'SQLite versions below 3.35.0 do not support DROP COLUMN for DELETE VARIABLES.',
+                );
+            }
+
             return;
         }
 
@@ -480,12 +491,17 @@ final class InPlaceTransformationExecutor
         $type = $target->storageKind === 'numeric'
             ? $this->connection->profile->numericType()
             : $this->connection->profile->textType();
+        $columnDefinition = $target->storageKind === 'string'
+            ? $type . " NOT NULL DEFAULT ''"
+            : $type . ' NULL';
         $this->connection->pdo->exec(sprintf(
-            'ALTER TABLE %s ADD COLUMN %s %s NULL',
+            'ALTER TABLE %s ADD COLUMN %s %s',
             $this->qualifiedTable($dataset),
             $this->quote($target->physicalName),
-            $type,
+            $columnDefinition,
         ));
+        $formatFamily = $target->storageKind === 'string' ? Variable::FORMAT_TYPE_A : 5;
+        $formatWidth = $target->storageKind === 'string' ? $this->stringWidth($target) : 8;
         $this->statement(
             'INSERT INTO variable '
             . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind, declared_string_width, '
@@ -500,11 +516,11 @@ final class InPlaceTransformationExecutor
             $target->physicalName,
             $target->storageKind,
             $target->declaredStringWidth,
-            5,
-            8,
+            $formatFamily,
+            $formatWidth,
             0,
-            5,
-            8,
+            $formatFamily,
+            $formatWidth,
             0,
         ]);
         $created[$target->sourceName] = true;

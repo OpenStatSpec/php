@@ -9,4 +9,19 @@ if [[ ! -x vendor/bin/php-cs-fixer || ! -x vendor/bin/phpunit || ! -x vendor/bin
     exit 1
 fi
 
+if [[ -z "${OPENSTATSPEC_SPECIFICATION_DIR:-}" && -d "$repo_root/../specification" ]]; then
+    export OPENSTATSPEC_SPECIFICATION_DIR="$repo_root/../specification"
+fi
+
+check_dir="$(mktemp -d "${TMPDIR:-/tmp}/openstatspec-php-check.XXXXXX")"
+cleanup() {
+    rm -rf "$check_dir"
+}
+trap cleanup EXIT
+
+staged_tree="$(git write-tree)"
+git -c core.autocrlf=false archive "$staged_tree" | tar -x -C "$check_dir"
+ln -s "$repo_root/vendor" "$check_dir/vendor"
+
+cd "$check_dir"
 composer check

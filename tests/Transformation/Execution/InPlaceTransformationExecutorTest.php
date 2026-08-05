@@ -155,6 +155,22 @@ final class InPlaceTransformationExecutorTest extends TestCase
         )->fetchAll(PDO::FETCH_COLUMN));
     }
 
+    public function testImplicitRecodeTargetRemainsActiveForLaterMetadataOperation(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new RecodeOperation('SourceValue', 'CreatedTarget', [
+                new RecodeRule(new ElseSelector(), new CopySourceAction()),
+            ]),
+            new SetVariableLabelOperation('CreatedTarget', 'Created target'),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame('Created target', $this->query(
+            "SELECT variable_label FROM variable WHERE source_name = 'CreatedTarget'",
+        )->fetchColumn());
+    }
+
     public function testExplicitStringCreateAndDeleteRemovesDataAndMetadata(): void
     {
         $plan = new TransformationPlan(self::DATASET_ID, [
@@ -178,6 +194,30 @@ final class InPlaceTransformationExecutorTest extends TestCase
         )->fetchColumn());
     }
 
+
+    public function testExplicitStringCreateInitializesBlankValuesAndAFormats(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new CreateVariableOperation('TempText', 'string', 20),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame(['', '', '', '', ''], $this->query(
+            'SELECT temptext FROM respondents ORDER BY __case_ordinal',
+        )->fetchAll(PDO::FETCH_COLUMN));
+        self::assertSame(0, (int) $this->query(
+            'SELECT COUNT(*) FROM respondents WHERE temptext IS NULL',
+        )->fetchColumn());
+        self::assertSame(
+            ['1', 20, 0, '1', 20, 0],
+            $this->query(
+                "SELECT print_format_family, print_format_width, print_format_decimals, "
+                . "write_format_family, write_format_width, write_format_decimals "
+                . "FROM variable WHERE source_name = 'TempText'",
+            )->fetch(PDO::FETCH_NUM),
+        );
+    }
 
     public function testNewTargetIsRejectedBeforeAlterAtTheEffectiveColumnLimit(): void
     {
