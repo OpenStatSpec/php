@@ -4,7 +4,16 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Tests\Integration;
 
+use OpenStatSpec\Core\DiagnosticCode;
+use OpenStatSpec\Core\UnsupportedOperation;
+use OpenStatSpec\Sql\CatalogOwnership;
+use OpenStatSpec\Sql\Connection;
+use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Spss\PhpSpssEngine;
+use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
+use OpenStatSpec\Transformation\Model\CreateVariableOperation;
+use OpenStatSpec\Transformation\Model\DeleteVariableOperation;
+use OpenStatSpec\Transformation\Model\TransformationPlan;
 use OpenStatSpec\Spss\SpssAdapter;
 use PDO;
 use PDOException;
@@ -114,6 +123,61 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
                 @unlink($sourcePath);
                 @unlink($targetPath);
             }
+        }
+    }
+
+    public function testDeleteThenCreateAtThePostgreSqlPhysicalColumnLimitFailsBeforeMutation(): void
+    {
+        $pdo = $this->postgres();
+        $datasetId = NormativeCatalog::uuid();
+        $tableName = 'transform_slots_' . bin2hex(random_bytes(6));
+
+        try {
+            (new NormativeCatalog($pdo))->createTables();
+            CatalogOwnership::markCurrentVersion($pdo);
+            $columns = ['__case_ordinal BIGINT NOT NULL PRIMARY KEY'];
+            for ($ordinal = 1; $ordinal <= 1599; ++$ordinal) {
+                $columns[] = 'v' . $ordinal . ' DOUBLE PRECISION NULL';
+            }
+            $pdo->exec('CREATE TABLE ' . $this->quote($tableName) . ' (' . implode(', ', $columns) . ')');
+            $pdo->prepare(
+                'INSERT INTO dataset '
+                . '(dataset_id, spec_version, source_format, physical_table_schema, physical_table_name, dataset_name, source_case_count, imported_at) '
+                . 'VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)',
+            )->execute([$datasetId, '1.0', 'fixture', null, $tableName, 'PostgreSQL slot fixture', 0]);
+            $insert = $pdo->prepare(
+                'INSERT INTO variable '
+                . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind) '
+                . 'VALUES (?, ?, ?, ?, ?, ?)',
+            );
+            $pdo->beginTransaction();
+            for ($ordinal = 1; $ordinal <= 1599; ++$ordinal) {
+                $insert->execute([NormativeCatalog::uuid(), $datasetId, $ordinal, 'V' . $ordinal, 'v' . $ordinal, 'numeric']);
+            }
+            $pdo->commit();
+
+            $plan = new TransformationPlan($datasetId, [
+                new DeleteVariableOperation('V1599'),
+                new CreateVariableOperation('Replacement', 'string', 1),
+            ]);
+
+            try {
+                (new InPlaceTransformationExecutor(new Connection($pdo)))->execute($plan);
+                self::fail('PostgreSQL accepted a replacement after the physical column limit was reached.');
+            } catch (UnsupportedOperation $exception) {
+                self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
+                self::assertStringContainsString('physical PostgreSQL column slots', $exception->getMessage());
+            }
+
+            self::assertSame(1599, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable WHERE dataset_id = ?', [$datasetId]));
+            self::assertSame(
+                1600,
+                (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM pg_attribute WHERE attrelid = to_regclass(?) AND attnum > 0', ['"' . $tableName . '"']),
+            );
+        } finally {
+            $pdo->prepare('DELETE FROM variable WHERE dataset_id = ?')->execute([$datasetId]);
+            $pdo->prepare('DELETE FROM dataset WHERE dataset_id = ?')->execute([$datasetId]);
+            $pdo->exec('DROP TABLE IF EXISTS ' . $this->quote($tableName));
         }
     }
 

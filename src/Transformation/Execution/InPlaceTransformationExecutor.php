@@ -64,7 +64,7 @@ final class InPlaceTransformationExecutor
 
         $dataset = $this->resolveDataset($plan->datasetId());
         $variables = $this->resolveVariables($dataset);
-        $plannedVariables = $this->preflight($plan, $variables);
+        $plannedVariables = $this->preflight($plan, $dataset, $variables);
 
         $guard = $this->doltGuard();
         $doltBefore = $guard?->beforeExecution();
@@ -207,8 +207,11 @@ final class InPlaceTransformationExecutor
      * @param array<string, VariableBinding> $variables
      * @return array<string, VariableBinding>
      */
-    private function preflight(TransformationPlan $plan, array $variables): array
+    private function preflight(TransformationPlan $plan, DatasetBinding $dataset, array $variables): array
     {
+        $physicalColumnSlots = $this->connection->profileName === 'postgresql'
+            ? $this->postgresqlPhysicalColumnSlots($dataset)
+            : null;
         $used = ['__case_ordinal' => true];
         $nextOrdinal = 1;
         foreach ($variables as $variable) {
@@ -226,7 +229,10 @@ final class InPlaceTransformationExecutor
                         $operation->targetVariable(),
                     ));
                 }
-                $this->assertCanAlterSchema(count($active), true);
+                $this->assertCanAlterSchema(count($active), true, $physicalColumnSlots);
+                if ($physicalColumnSlots !== null) {
+                    ++$physicalColumnSlots;
+                }
                 $physical = $this->connection->profile->physicalIdentifier($operation->targetVariable(), $used);
                 $variables[$operation->targetVariable()] = new VariableBinding(
                     NormativeCatalog::uuid(),
@@ -273,7 +279,10 @@ final class InPlaceTransformationExecutor
                     $target = null;
                 }
                 if ($target === null) {
-                    $this->assertCanCreateTarget($source, count($active));
+                    $this->assertCanCreateTarget($source, count($active), $physicalColumnSlots);
+                    if ($physicalColumnSlots !== null) {
+                        ++$physicalColumnSlots;
+                    }
                     $physical = $this->connection->profile->physicalIdentifier($operation->targetVariable(), $used);
                     $target = new VariableBinding(
                         NormativeCatalog::uuid(),
@@ -322,7 +331,7 @@ final class InPlaceTransformationExecutor
         }
         return false;
     }
-    private function assertCanAlterSchema(int $registeredVariableCount, bool $creation): void
+    private function assertCanAlterSchema(int $registeredVariableCount, bool $creation, ?int $physicalColumnSlots = null): void
     {
         if (!in_array($this->connection->profileName, ['sqlite', 'postgresql'], true)
             || !$this->connection->profile->ddlAtomic()
@@ -349,6 +358,19 @@ final class InPlaceTransformationExecutor
         }
 
         $maximum = $this->connection->profile->effectiveMaximumSourceVariables($this->connection->pdo);
+        if ($this->connection->profileName === 'postgresql'
+            && $physicalColumnSlots !== null
+            && $physicalColumnSlots >= $maximum + 1
+        ) {
+            throw new UnsupportedOperation(
+                DiagnosticCode::TargetCapabilityExceeded,
+                sprintf(
+                    'PostgreSQL cannot add a source variable because the wide table already uses %d physical PostgreSQL column slots, including dropped columns; the table limit is %d.',
+                    $physicalColumnSlots,
+                    $maximum + 1,
+                ),
+            );
+        }
         if ($registeredVariableCount >= $maximum) {
             throw new UnsupportedOperation(
                 DiagnosticCode::TargetCapabilityExceeded,
@@ -360,7 +382,7 @@ final class InPlaceTransformationExecutor
             );
         }
     }
-    private function assertCanCreateTarget(VariableBinding $source, int $registeredVariableCount): void
+    private function assertCanCreateTarget(VariableBinding $source, int $registeredVariableCount, ?int $physicalColumnSlots = null): void
     {
         if ($source->storageKind === 'string') {
             throw new UnsupportedOperation(
@@ -380,17 +402,19 @@ final class InPlaceTransformationExecutor
             );
         }
 
-        $maximum = $this->connection->profile->effectiveMaximumSourceVariables($this->connection->pdo);
-        if ($registeredVariableCount >= $maximum) {
-            throw new UnsupportedOperation(
-                DiagnosticCode::TargetCapabilityExceeded,
-                sprintf(
-                    '%s supports at most %d source variables in one OpenStatSpec wide table.',
-                    $this->connection->profileName,
-                    $maximum,
-                ),
-            );
+        $this->assertCanAlterSchema($registeredVariableCount, true, $physicalColumnSlots);
+    }
+
+    private function postgresqlPhysicalColumnSlots(DatasetBinding $dataset): int
+    {
+        $statement = $this->statement('SELECT COUNT(*) FROM pg_attribute WHERE attrelid = to_regclass(?) AND attnum > 0');
+        $statement->execute([$this->qualifiedTable($dataset)]);
+        $slots = filter_var($statement->fetchColumn(), FILTER_VALIDATE_INT);
+        if (!is_int($slots) || $slots < 1) {
+            throw $this->invalidCatalog('The PostgreSQL wide table has no physical column slots.');
         }
+
+        return $slots;
     }
 
     private function assertRecodeKinds(
