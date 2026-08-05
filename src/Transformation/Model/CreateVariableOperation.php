@@ -7,6 +7,7 @@ namespace OpenStatSpec\Transformation\Model;
 /** Declares and adds one variable to the existing dataset. */
 final readonly class CreateVariableOperation implements TransformationOperation
 {
+    public const MAX_STRING_WIDTH = 32767;
     public function __construct(
         private string $variable,
         private string $storageKind,
@@ -17,6 +18,11 @@ final readonly class CreateVariableOperation implements TransformationOperation
         }
         if ($storageKind === 'string' && ($declaredStringWidth === null || $declaredStringWidth < 1)) {
             throw new \InvalidArgumentException('String variables require a positive declared string width.');
+        }
+        if ($storageKind === 'string' && $declaredStringWidth > self::MAX_STRING_WIDTH) {
+            throw new \InvalidArgumentException(
+                'String variables support at most ' . self::MAX_STRING_WIDTH . ' bytes.',
+            );
         }
         if ($storageKind === 'numeric' && $declaredStringWidth !== null) {
             throw new \InvalidArgumentException('Numeric variables cannot declare a string width.');

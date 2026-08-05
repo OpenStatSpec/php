@@ -501,7 +501,9 @@ final class InPlaceTransformationExecutor
             $columnDefinition,
         ));
         $formatFamily = $target->storageKind === 'string' ? Variable::FORMAT_TYPE_A : 5;
-        $formatWidth = $target->storageKind === 'string' ? $this->stringWidth($target) : 8;
+        $formatWidth = $target->storageKind === 'string'
+            ? min(255, $this->stringWidth($target))
+            : 8;
         $this->statement(
             'INSERT INTO variable '
             . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind, declared_string_width, '

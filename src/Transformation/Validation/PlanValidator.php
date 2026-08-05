@@ -78,8 +78,13 @@ final class PlanValidator
         $this->validateVariableName($operation->targetVariable(), $path . '.target_variable');
 
         if ($operation instanceof CreateVariableOperation) {
-            if ($operation->storageKind() === 'string' && ($operation->declaredStringWidth() === null || $operation->declaredStringWidth() < 1)) {
-                $this->violation('create_variable.string_width_required', $path . '.declared_string_width', 'String variables require a positive declared string width.');
+            if ($operation->storageKind() === 'string') {
+                $width = $operation->declaredStringWidth();
+                if ($width === null || $width < 1) {
+                    $this->violation('create_variable.string_width_required', $path . '.declared_string_width', 'String variables require a positive declared string width.');
+                } elseif ($width > CreateVariableOperation::MAX_STRING_WIDTH) {
+                    $this->violation('create_variable.string_width_too_large', $path . '.declared_string_width', 'String variables support at most ' . CreateVariableOperation::MAX_STRING_WIDTH . ' bytes.');
+                }
             }
         } elseif ($operation instanceof DeleteVariableOperation) {
             return;

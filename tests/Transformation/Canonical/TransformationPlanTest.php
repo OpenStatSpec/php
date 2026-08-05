@@ -7,6 +7,7 @@ namespace OpenStatSpec\Tests\Transformation\Canonical;
 use OpenStatSpec\Transformation\Model\Action\AssignValueAction;
 use OpenStatSpec\Transformation\Model\Action\CopySourceAction;
 use OpenStatSpec\Transformation\Model\Action\SetMissingAction;
+use OpenStatSpec\Transformation\Model\CreateVariableOperation;
 use OpenStatSpec\Transformation\Model\RecodeOperation;
 use OpenStatSpec\Transformation\Model\RecodeRule;
 use OpenStatSpec\Transformation\Model\ScalarValue;
@@ -93,6 +94,23 @@ final class TransformationPlanTest extends TestCase
 
         $this->expectException(InvalidTransformationPlan::class);
         $result->throwIfInvalid();
+    }
+
+    public function testCreateVariableRejectsStringWidthAboveSpssMaximum(): void
+    {
+        $this->expectException('InvalidArgumentException');
+        $this->expectExceptionMessage('at most 32767');
+
+        new CreateVariableOperation('TooWide', 'string', 32768);
+    }
+
+    public function testValidatorAllowsMaximumCanonicalStringWidth(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new CreateVariableOperation('MaxText', 'string', 32767),
+        ]);
+
+        self::assertTrue((new PlanValidator())->validate($plan)->isValid());
     }
 
     public function testValidatorAllowsSequentialOperationsOnTheSameTarget(): void

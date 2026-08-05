@@ -265,6 +265,24 @@ final class InPlaceTransformationExecutorTest extends TestCase
         self::assertTrue(in_array('replacement', $this->tableColumns(), true));
     }
 
+    public function testExplicitLongStringCreateCapsAFormatWidthsButKeepsStorageWidth(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new CreateVariableOperation('LongText', 'string', 400),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertSame(
+            [400, '1', 255, '1', 255],
+            $this->query(
+                "SELECT declared_string_width, print_format_family, print_format_width, "
+                . "write_format_family, write_format_width "
+                . "FROM variable WHERE source_name = 'LongText'",
+            )->fetch(PDO::FETCH_NUM),
+        );
+    }
+
     public function testNewTargetIsRejectedBeforeAlterAtTheEffectiveColumnLimit(): void
     {
         $connection = new Connection($this->pdo);
