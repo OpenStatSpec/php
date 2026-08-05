@@ -191,7 +191,11 @@ final class Parser
     {
         $variables = [];
         do {
-            $variables[] = $this->consumeIdentifier('Expected a variable name in STRING.')->lexeme;
+            $variable = $this->consumeIdentifier('Expected a variable name in STRING.')->lexeme;
+            if (strcasecmp($variable, 'TO') === 0) {
+                $this->fail($this->previous(), 'STRING variable ranges using TO are not supported.');
+            }
+            $variables[] = $variable;
         } while ($this->check(TokenType::Identifier));
         $this->consume(TokenType::LeftParenthesis, 'Expected a width declaration in STRING.');
         $width = $this->consume(TokenType::Identifier, 'Expected a string width such as A20.')->lexeme;
