@@ -479,6 +479,7 @@ final class InPlaceTransformationExecutor
         if ($operation instanceof DeleteVariableOperation) {
             $target = $bindings['target'] ?? $variables[$operation->targetVariable()];
             $this->deleteVariable($dataset, $target);
+            unset($created[$target->sourceName]);
             return;
         }
         $target = $bindings['target'] ?? $variables[$operation->targetVariable()];

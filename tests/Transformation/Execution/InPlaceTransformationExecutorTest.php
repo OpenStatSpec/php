@@ -230,6 +230,22 @@ final class InPlaceTransformationExecutorTest extends TestCase
         self::assertSame(0, (int) $this->query('SELECT COUNT(*) FROM multiple_response_member')->fetchColumn());
     }
 
+    public function testCreateDeleteCreateRecreatesVariable(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new CreateVariableOperation('TempText', 'string', 20),
+            new DeleteVariableOperation('TempText'),
+            new CreateVariableOperation('TempText', 'string', 30),
+        ]);
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+
+        self::assertTrue(in_array('temptext_2', $this->tableColumns(), true));
+        self::assertSame(30, (int) $this->query(
+            "SELECT declared_string_width FROM variable WHERE source_name = 'TempText'",
+        )->fetchColumn());
+    }
+
     public function testExplicitStringCreateInitializesBlankValuesAndAFormats(): void
     {
         $plan = new TransformationPlan(self::DATASET_ID, [
