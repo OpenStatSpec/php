@@ -8,9 +8,18 @@ namespace OpenStatSpec\Transformation\Model;
 final readonly class DeleteVariableOperation implements TransformationOperation
 {
     public function __construct(private string $variable) {}
-    public function type(): string { return 'delete_variable'; }
-    public function sourceVariable(): string { return $this->variable; }
-    public function targetVariable(): string { return $this->variable; }
+    public function type(): string
+    {
+        return 'delete_variable';
+    }
+    public function sourceVariable(): string
+    {
+        return $this->variable;
+    }
+    public function targetVariable(): string
+    {
+        return $this->variable;
+    }
     public function canonicalArray(): array
     {
         return [

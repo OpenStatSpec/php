@@ -23,11 +23,26 @@ final readonly class CreateVariableOperation implements TransformationOperation
         }
     }
 
-    public function type(): string { return 'create_variable'; }
-    public function sourceVariable(): string { return $this->variable; }
-    public function targetVariable(): string { return $this->variable; }
-    public function storageKind(): string { return $this->storageKind; }
-    public function declaredStringWidth(): ?int { return $this->declaredStringWidth; }
+    public function type(): string
+    {
+        return 'create_variable';
+    }
+    public function sourceVariable(): string
+    {
+        return $this->variable;
+    }
+    public function targetVariable(): string
+    {
+        return $this->variable;
+    }
+    public function storageKind(): string
+    {
+        return $this->storageKind;
+    }
+    public function declaredStringWidth(): ?int
+    {
+        return $this->declaredStringWidth;
+    }
 
     public function canonicalArray(): array
     {

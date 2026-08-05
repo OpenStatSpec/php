@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if [[ ! -x vendor/bin/php-cs-fixer || ! -x vendor/bin/phpunit || ! -x vendor/bin/phpstan ]]; then
+    echo "Pre-commit checks require Composer dependencies. Run: composer install" >&2
+    exit 1
+fi
+
+composer check
