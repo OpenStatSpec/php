@@ -216,6 +216,21 @@ final class InPlaceTransformationExecutorTest extends TestCase
     }
 
 
+    public function testDeletingOnlyVariableThenRecreatingWithinPlan(): void
+    {
+        $plan = new TransformationPlan(self::DATASET_ID, [
+            new DeleteVariableOperation('Destination'),
+            new DeleteVariableOperation('SourceValue'),
+            new CreateVariableOperation('SourceValue', 'string', 20),
+        ]);
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($plan);
+        self::assertSame(1, (int) $this->query('SELECT COUNT(*) FROM variable')->fetchColumn());
+        $physicalName = (string) $this->query("SELECT physical_name FROM variable WHERE source_name = 'SourceValue'")->fetchColumn();
+        self::assertNotSame('source_value', $physicalName);
+        self::assertSame('string', $this->query("SELECT storage_kind FROM variable WHERE source_name = 'SourceValue'")->fetchColumn());
+        self::assertTrue(in_array($physicalName, $this->tableColumns(), true));
+        self::assertFalse(in_array('source_value', $this->tableColumns(), true));
+    }
     public function testDeleteThenCreateCanReuseVariableName(): void
     {
         $plan = new TransformationPlan(self::DATASET_ID, [

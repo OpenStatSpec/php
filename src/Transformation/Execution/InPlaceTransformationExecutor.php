@@ -251,7 +251,7 @@ final class InPlaceTransformationExecutor
                         $plan->datasetId(),
                     ));
                 }
-                if (count($active) === 1) {
+                if (count($active) === 1 && !$this->hasFutureCreateOperation($plan->operations(), $operationIndex)) {
                     throw $this->invalidCatalog('A transformation cannot delete the final dataset variable.');
                 }
                 $this->assertCanAlterSchema(count($active), false);
@@ -312,6 +312,16 @@ final class InPlaceTransformationExecutor
         return $variables;
     }
 
+    /** @param list<TransformationOperation> $operations */
+    private function hasFutureCreateOperation(array $operations, int $operationIndex): bool
+    {
+        foreach ($operations as $futureIndex => $operation) {
+            if ($futureIndex > $operationIndex && $operation instanceof CreateVariableOperation) {
+                return true;
+            }
+        }
+        return false;
+    }
     private function assertCanAlterSchema(int $registeredVariableCount, bool $creation): void
     {
         if (!in_array($this->connection->profileName, ['sqlite', 'postgresql'], true)
