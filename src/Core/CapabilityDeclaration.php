@@ -19,8 +19,9 @@ use PDO;
 /** Machine-readable SPSS 1.0 and SQL-profile capability declaration. */
 final readonly class CapabilityDeclaration implements JsonSerializable
 {
-    public const SPECIFICATION_RELEASE = 'v0.1.0';
-    public const SPECIFICATION_COMMIT = 'd287c2cde9ade71f04e27dd012caec876901aed5';
+    public const SPECIFICATION_STATUS = 'stable';
+    public const SPECIFICATION_RELEASE = 'v0.3.0';
+    public const SPECIFICATION_COMMIT = 'cd8f198c68b849eb8ed018a894670a0904c2181d';
 
     private Connection $connection;
 
@@ -40,7 +41,7 @@ final readonly class CapabilityDeclaration implements JsonSerializable
 
         return [
             'specification' => 'OpenStatSpec',
-            'specification_status' => 'released',
+            'specification_status' => self::SPECIFICATION_STATUS,
             'specification_release' => self::SPECIFICATION_RELEASE,
             'specification_commit' => self::SPECIFICATION_COMMIT,
             'profile' => 'SPSS SAV/ZSAV 1.0',
@@ -146,7 +147,7 @@ final readonly class CapabilityDeclaration implements JsonSerializable
             'dialect' => $name === 'dolt' ? 'mysql' : $name,
             'transport' => $name === 'dolt' ? 'mysql_compatible' : $name,
             'specification_commit' => self::SPECIFICATION_COMMIT,
-            'specification_status' => 'released',
+            'specification_status' => self::SPECIFICATION_STATUS,
             'specification_release' => self::SPECIFICATION_RELEASE,
             'driver' => $name === 'postgresql' ? 'pgsql' : ($name === 'mariadb' ? 'mysql' : $profile->driverName()),
             'identity' => $name === 'dolt' ? [
