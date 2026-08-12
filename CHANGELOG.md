@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Pinned the active conformance fixtures and machine-readable capability
+  declarations to stable OpenStatSpec specification `v0.3.0` at immutable
+  commit `cd8f198c68b849eb8ed018a894670a0904c2181d`.
+
 - Updated the installed and exact CI-tested `openstatspec/spss-sav` codec from
   3.0.2 to 3.0.3, and aligned the reported engine identity and codec
   documentation with the separately versioned OpenStatSpec package.
