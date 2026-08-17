@@ -7,8 +7,19 @@ namespace OpenStatSpec\Transformation\Plan;
 use JsonException;
 use OpenStatSpec\Transformation\Canonical\CanonicalJson;
 use OpenStatSpec\Transformation\Diagnostic\TransformationFailure;
+use OpenStatSpec\Transformation\Plan\Expression\BooleanPredicate;
+use OpenStatSpec\Transformation\Plan\Expression\Comparison;
+use OpenStatSpec\Transformation\Plan\Expression\LiteralOperand;
+use OpenStatSpec\Transformation\Plan\Expression\Operand;
+use OpenStatSpec\Transformation\Plan\Expression\Predicate;
+use OpenStatSpec\Transformation\Plan\Expression\VariableOperand;
+use OpenStatSpec\Transformation\Plan\Operation\AssignOperation;
+use OpenStatSpec\Transformation\Plan\Operation\ConditionalAssignOperation;
+use OpenStatSpec\Transformation\Plan\Operation\ExecuteOperation;
 use OpenStatSpec\Transformation\Plan\Operation\RecodeOperation;
 use OpenStatSpec\Transformation\Plan\Operation\ReplaceValueLabelsOperation;
+use OpenStatSpec\Transformation\Plan\Operation\SetFormatOperation;
+use OpenStatSpec\Transformation\Plan\Operation\SetMeasurementLevelOperation;
 use OpenStatSpec\Transformation\Plan\Operation\SetVariableLabelOperation;
 use OpenStatSpec\Transformation\Plan\Operation\ValueLabel;
 use OpenStatSpec\Transformation\Plan\Recode\CopyResult;
@@ -45,19 +56,24 @@ final class PlanCodec
     public function fromArray(array $plan): TransformationPlan
     {
         $this->exactKeys($plan, ['contract', 'input_alias', 'operations'], '$');
-        $contract = $this->string($plan['contract'], '$.contract');
-        if ($contract !== PlanContract::V01->value) {
-            $this->schema('$.contract', 'Plan contract must be openstatspec-transformation-plan-v0.1.');
+        $contract = PlanContract::tryFrom($this->string($plan['contract'], '$.contract'));
+        if ($contract === null) {
+            $this->schema('$.contract', 'Plan contract must be openstatspec-transformation-plan-v0.1 or openstatspec-transformation-plan-v0.2.');
         }
 
         $inputAlias = $this->nonEmptyString($plan['input_alias'], '$.input_alias');
         $rawOperations = $this->nonEmptyList($plan['operations'], '$.operations');
         $operations = [];
         foreach ($rawOperations as $index => $rawOperation) {
-            $operations[] = $this->operation($rawOperation, '$.operations[' . $index . ']');
+            $path = '$.operations[' . $index . ']';
+            $operation = $this->operation($rawOperation, $path);
+            if ($contract === PlanContract::V01 && $operation->minimumContract() !== PlanContract::V01) {
+                $this->schema($path, 'Plan contract v0.1 cannot contain v0.2 operations.');
+            }
+            $operations[] = $operation;
         }
 
-        return new TransformationPlan(PlanContract::V01, $inputAlias, $operations);
+        return new TransformationPlan($contract, $inputAlias, $operations);
     }
 
     public function canonicalJson(TransformationPlan $plan): string
@@ -77,10 +93,169 @@ final class PlanCodec
 
         return match ($op) {
             'recode' => $this->recodeOperation($object, $path),
+            'assign' => $this->assignOperation($object, $path),
+            'conditional_assign' => $this->conditionalAssignOperation($object, $path),
             'set_variable_label' => $this->setVariableLabelOperation($object, $path),
             'replace_value_labels' => $this->replaceValueLabelsOperation($object, $path),
+            'set_format' => $this->setFormatOperation($object, $path),
+            'set_measurement_level' => $this->setMeasurementLevelOperation($object, $path),
+            'execute' => $this->executeOperation($object, $path),
             default => $this->schema($path . '.op', 'Unknown operation.'),
         };
+    }
+
+    /** @param array<string, mixed> $object */
+    private function assignOperation(array $object, string $path): AssignOperation
+    {
+        $this->exactKeys($object, ['op', 'target', 'target_mode', 'value'], $path);
+        $mode = TargetMode::tryFrom($this->string($object['target_mode'], $path . '.target_mode'));
+        if ($mode === null) {
+            $this->schema($path . '.target_mode', 'Assign target mode must be create or replace.');
+        }
+
+        return new AssignOperation(
+            $this->targetName($object['target'], $path . '.target'),
+            $mode,
+            $this->numericOperand($object['value'], $path . '.value'),
+        );
+    }
+
+    /** @param array<string, mixed> $object */
+    private function conditionalAssignOperation(array $object, string $path): ConditionalAssignOperation
+    {
+        $this->exactKeys($object, ['op', 'condition', 'target', 'value'], $path);
+
+        return new ConditionalAssignOperation(
+            $this->predicate($object['condition'], $path . '.condition'),
+            $this->targetName($object['target'], $path . '.target'),
+            $this->numericOperand($object['value'], $path . '.value'),
+        );
+    }
+
+    /** @param array<string, mixed> $object */
+    private function setFormatOperation(array $object, string $path): SetFormatOperation
+    {
+        $this->exactKeys($object, ['op', 'variable', 'family', 'width', 'decimals'], $path);
+        $family = $this->string($object['family'], $path . '.family');
+        if ($family !== 'F') {
+            $this->schema($path . '.family', 'The bounded format profile supports numeric F formats only.');
+        }
+
+        $operation = new SetFormatOperation(
+            $this->nonEmptyString($object['variable'], $path . '.variable'),
+            $family,
+            $this->integer($object['width'], $path . '.width'),
+            $this->integer($object['decimals'], $path . '.decimals'),
+        );
+        if ($operation->width < 1 || $operation->width > 40
+            || $operation->decimals < 0 || $operation->decimals > 16
+            || ($operation->decimals > 0 && $operation->width < $operation->decimals + 2)) {
+            throw TransformationFailure::at('invalid_format', $path, 'Invalid SPSS F format.');
+        }
+
+        return $operation;
+    }
+
+    /** @param array<string, mixed> $object */
+    private function setMeasurementLevelOperation(array $object, string $path): SetMeasurementLevelOperation
+    {
+        $this->exactKeys($object, ['op', 'variable', 'level'], $path);
+        $level = $this->string($object['level'], $path . '.level');
+        if (!in_array($level, ['nominal', 'ordinal', 'scale'], true)) {
+            $this->schema($path . '.level', 'Measurement level must be nominal, ordinal, or scale.');
+        }
+
+        return new SetMeasurementLevelOperation(
+            $this->nonEmptyString($object['variable'], $path . '.variable'),
+            $level,
+        );
+    }
+
+    /** @param array<string, mixed> $object */
+    private function executeOperation(array $object, string $path): ExecuteOperation
+    {
+        $this->exactKeys($object, ['op'], $path);
+        return new ExecuteOperation();
+    }
+
+    private function predicate(mixed $raw, string $path): Predicate
+    {
+        $object = $this->object($raw, $path);
+        $expression = $this->string($object['expression'] ?? null, $path . '.expression');
+
+        if ($expression === 'comparison') {
+            $this->exactKeys($object, ['expression', 'left', 'operator', 'right'], $path);
+            return new Comparison(
+                $this->numericOperand($object['left'], $path . '.left'),
+                $this->string($object['operator'], $path . '.operator'),
+                $this->numericOperand($object['right'], $path . '.right'),
+            );
+        }
+
+        if ($expression === 'boolean') {
+            $this->exactKeys($object, ['expression', 'operator', 'operands'], $path);
+            $operator = $this->string($object['operator'], $path . '.operator');
+            $rawOperands = $this->nonEmptyList($object['operands'], $path . '.operands');
+            if (count($rawOperands) < 2) {
+                $this->schema($path . '.operands', 'A boolean expression requires at least two operands.');
+            }
+            $operands = [];
+            foreach ($rawOperands as $index => $rawOperand) {
+                $operand = $this->predicate($rawOperand, $path . '.operands[' . $index . ']');
+                if ($operand instanceof BooleanPredicate && $operand->operator === $operator) {
+                    throw TransformationFailure::at(
+                        'noncanonical_boolean_shape',
+                        $path . '.operands[' . $index . ']',
+                        'A same-operator boolean chain must be flattened in source order.',
+                    );
+                }
+                $operands[] = $operand;
+            }
+
+            return new BooleanPredicate($operator, ...$operands);
+        }
+
+        $this->schema($path . '.expression', 'Unknown predicate expression.');
+    }
+
+    private function numericOperand(mixed $raw, string $path): Operand
+    {
+        $operand = $this->operand($raw, $path);
+        if ($operand instanceof LiteralOperand && $operand->value instanceof StringValue) {
+            throw TransformationFailure::at(
+                'expression_type_unsupported',
+                $path,
+                'String literal operands are outside the bounded expression profile.',
+            );
+        }
+
+        return $operand;
+    }
+
+    private function operand(mixed $raw, string $path): Operand
+    {
+        $object = $this->object($raw, $path);
+        $kind = $this->string($object['kind'] ?? null, $path . '.kind');
+        if ($kind === 'variable') {
+            $this->exactKeys($object, ['kind', 'variable'], $path);
+            return new VariableOperand($this->nonEmptyString($object['variable'], $path . '.variable'));
+        }
+        if ($kind === 'literal') {
+            $this->exactKeys($object, ['kind', 'value'], $path);
+            return new LiteralOperand($this->typedValue($object['value'], $path . '.value'));
+        }
+
+        $this->schema($path . '.kind', 'Operand kind must be variable or literal.');
+    }
+
+    private function targetName(mixed $value, string $path): string
+    {
+        $target = $this->nonEmptyString($value, $path);
+        if (str_starts_with($target, '__')) {
+            throw TransformationFailure::at('reserved_target_name', $path, 'Target name is reserved.');
+        }
+
+        return $target;
     }
 
     /** @param array<string, mixed> $object */
@@ -270,6 +445,15 @@ final class PlanCodec
         if (!is_array($value) || !array_is_list($value) || $value === []) {
             $this->schema($path, 'Value must be a non-empty array.');
         }
+        return $value;
+    }
+
+    private function integer(mixed $value, string $path): int
+    {
+        if (!is_int($value)) {
+            $this->schema($path, 'Value must be an integer.');
+        }
+
         return $value;
     }
 
