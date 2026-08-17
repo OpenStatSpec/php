@@ -151,6 +151,7 @@ final class InPlaceTransformationServiceTest extends TestCase
 
         try {
             self::assertSame(self::DATASET_ID, $fixture['dataset_id']);
+            $datasetCountBefore = (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []);
             $doltBefore = $this->doltRepositoryEvidence($pdo, $connection);
             if ($expectedProfile === 'dolt') {
                 self::assertNotNull($doltBefore);
@@ -233,7 +234,7 @@ final class InPlaceTransformationServiceTest extends TestCase
                 ],
                 $this->destinationValueLabels($pdo),
             );
-            self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_id = ?', [$fixture['dataset_id']]));
+            self::assertSame($datasetCountBefore, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []));
             self::assertSame(2, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable WHERE dataset_id = ?', [$fixture['dataset_id']]));
             $this->assertNoArtifactTables($fixture['tables']);
         } finally {
@@ -256,6 +257,7 @@ final class InPlaceTransformationServiceTest extends TestCase
         $fixture = $this->installFixture($pdo, $connection);
 
         try {
+            $datasetCountBefore = (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []);
             $plan = $this->createTargetPlan();
             $result = (new InPlaceTransformationExecutor($connection))->execute($plan);
 
@@ -346,7 +348,7 @@ final class InPlaceTransformationServiceTest extends TestCase
                 ],
                 $this->valueLabelsForVariable($pdo, 'CreatedTarget'),
             );
-            self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_id = ?', [$fixture['dataset_id']]));
+            self::assertSame($datasetCountBefore, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []));
             self::assertSame(count($fixture['tables']), count($this->tableNames($pdo)));
             $this->assertNoArtifactTables($fixture['tables']);
         } finally {
