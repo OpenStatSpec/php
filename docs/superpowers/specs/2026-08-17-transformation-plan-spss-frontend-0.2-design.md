@@ -1,6 +1,6 @@
 # Transformation Plan and SPSS Frontend 0.2 Design
 
-**Date:** 2026-08-17  
+**Date:** 2026-08-17
 **Status:** Approved for implementation planning
 
 ## Goal
