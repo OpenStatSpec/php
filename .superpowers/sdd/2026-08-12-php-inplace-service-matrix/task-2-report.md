@@ -59,3 +59,30 @@ Observed results:
 ## Concerns
 
 - This shell session has no `OPENSTATSPEC_*` DSN environment variables configured, so the fresh local execution covered SQLite plus the related SQLite executor unit path; PostgreSQL/MySQL/MariaDB/Dolt branches remain encoded in the integration matrix tests for configured environments and CI.
+
+## Fix Round 1
+
+- Extended the rejected create-target evidence to snapshot and re-assert `value_label_set`, `value_label`, and `variable_value_label_set` rows for the fixture dataset before and after the expected `UnsupportedOperation`.
+- This closes the review gap where the rejected plan included `SetVariableLabelOperation` and `SetValueLabelsOperation` for `CreatedTarget`, but the unchanged-state proof did not include the value-label catalog tables those operations would touch.
+
+Commands run:
+
+```bash
+vendor/bin/phpunit --filter "InPlaceTransformationServiceTest|InPlaceTransformationExecutorTest"
+php -l tests/Integration/InPlaceTransformationServiceTest.php
+git diff --check
+```
+
+Observed results:
+
+- `vendor/bin/phpunit --filter "InPlaceTransformationServiceTest|InPlaceTransformationExecutorTest"`
+  - `OK, but some tests were skipped!`
+  - `Tests: 42, Assertions: 212, Skipped: 16.`
+- `php -l tests/Integration/InPlaceTransformationServiceTest.php`
+  - `No syntax errors detected`
+- `git diff --check`
+  - no whitespace or patch-shape errors
+
+Round-specific concern:
+
+- The MySQL/MariaDB/Dolt rejection branches are still skipped in this shell because their `OPENSTATSPEC_*` DSNs are not configured locally, so the new preflight-rejection value-label assertions remain encoded for configured environments and CI rather than executed here.

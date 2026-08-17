@@ -37,6 +37,11 @@ final class InPlaceTransformationServiceTest extends TestCase
     private const DESTINATION_VARIABLE_ID = '018f47f2-8b6a-7c3d-9e1f-123456789abe';
     private const IMPORTED_AT = '2026-08-12 00:00:00';
 
+    private int $fixtureSequence = 0;
+
+    /** @var array{dataset_id: string, source_variable_id: string, destination_variable_id: string, table_name: string, dataset_name: string}|null */
+    private ?array $activeFixture = null;
+
     /** @return iterable<string, array{string, string|null, string, list<string>, string|null}> */
     public static function services(): iterable
     {
@@ -83,6 +88,31 @@ final class InPlaceTransformationServiceTest extends TestCase
         $this->assertExpectedVersionFamily($connection, $expectedVersionFamilies, $expectedVersionEnvironment);
     }
 
+    public function testFixtureInstallationsUseDistinctDeterministicNamespaces(): void
+    {
+        $pdo = $this->servicePdo('sqlite', null, 'sqlite');
+        $connection = new Connection($pdo);
+        $first = $this->installFixture($pdo, $connection);
+        $second = null;
+
+        try {
+            try {
+                $second = $this->installFixture($pdo, $connection);
+            } catch (RuntimeException $exception) {
+                self::fail('A second independent fixture installation collided: ' . $exception->getMessage());
+            }
+
+            self::assertNotSame($first['dataset_id'], $second['dataset_id']);
+            self::assertNotSame($first['table_name'], $second['table_name']);
+            self::assertSame(2, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []));
+        } finally {
+            if (is_array($second)) {
+                $this->purgeFixture($pdo, $connection, $second);
+            }
+            $this->purgeFixture($pdo, $connection, $first);
+        }
+    }
+
     /** @param list<string> $expectedVersionFamilies */
     #[DataProvider('services')]
     public function testExistingTargetTransformationPreservesPhysicalIdentityInPlace(
@@ -98,10 +128,11 @@ final class InPlaceTransformationServiceTest extends TestCase
         $fixture = $this->installFixture($pdo, $connection);
 
         try {
+            self::assertSame(self::DATASET_ID, $fixture['dataset_id']);
             $plan = $this->existingTargetPlan();
             $result = (new InPlaceTransformationExecutor($connection))->execute($plan);
 
-            self::assertSame(self::DATASET_ID, $result->datasetId());
+            self::assertSame($fixture['dataset_id'], $result->datasetId());
             self::assertSame($plan->hash(), $result->planHash());
             self::assertSame(3, $result->operationCount());
 
@@ -122,14 +153,14 @@ final class InPlaceTransformationServiceTest extends TestCase
             self::assertSame(
                 [
                     [
-                        'variable_id' => self::DESTINATION_VARIABLE_ID,
+                        'variable_id' => $fixture['destination_variable_id'],
                         'variable_label' => 'Recoded destination',
                     ],
                 ],
                 $this->rows(
                     $pdo,
                     'SELECT variable_id, variable_label FROM variable WHERE dataset_id = ? AND source_name = ?',
-                    [self::DATASET_ID, 'Destination'],
+                    [$fixture['dataset_id'], 'Destination'],
                 ),
             );
             self::assertSame(
@@ -140,11 +171,11 @@ final class InPlaceTransformationServiceTest extends TestCase
                 ],
                 $this->destinationValueLabels($pdo),
             );
-            self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_id = ?', [self::DATASET_ID]));
-            self::assertSame(2, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable WHERE dataset_id = ?', [self::DATASET_ID]));
+            self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_id = ?', [$fixture['dataset_id']]));
+            self::assertSame(2, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable WHERE dataset_id = ?', [$fixture['dataset_id']]));
             $this->assertNoArtifactTables($fixture['tables']);
         } finally {
-            $this->purgeFixture($pdo, $connection);
+            $this->purgeFixture($pdo, $connection, $fixture);
         }
     }
 
@@ -166,7 +197,7 @@ final class InPlaceTransformationServiceTest extends TestCase
             $plan = $this->createTargetPlan();
             $result = (new InPlaceTransformationExecutor($connection))->execute($plan);
 
-            self::assertSame(self::DATASET_ID, $result->datasetId());
+            self::assertSame($fixture['dataset_id'], $result->datasetId());
             self::assertSame($plan->hash(), $result->planHash());
             self::assertSame(3, $result->operationCount());
 
@@ -217,12 +248,12 @@ final class InPlaceTransformationServiceTest extends TestCase
                 ),
             );
             self::assertSame($fixture['variables'], array_slice($this->variableIdentityRows($pdo), 0, 2));
-            self::assertSame(3, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable WHERE dataset_id = ?', [self::DATASET_ID]));
+            self::assertSame(3, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable WHERE dataset_id = ?', [$fixture['dataset_id']]));
             $createdTargetRows = $this->rows(
                 $pdo,
                 'SELECT variable_id, source_ordinal, source_name, physical_name, storage_kind, declared_string_width, variable_label '
                 . 'FROM variable WHERE dataset_id = ? AND source_name = ?',
-                [self::DATASET_ID, 'CreatedTarget'],
+                [$fixture['dataset_id'], 'CreatedTarget'],
             );
             self::assertCount(1, $createdTargetRows);
             self::assertMatchesRegularExpression('/^[0-9a-f-]{36}$/i', (string) $createdTargetRows[0]['variable_id']);
@@ -252,10 +283,10 @@ final class InPlaceTransformationServiceTest extends TestCase
                 ],
                 $this->valueLabelsForVariable($pdo, 'CreatedTarget'),
             );
-            self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_id = ?', [self::DATASET_ID]));
+            self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_id = ?', [$fixture['dataset_id']]));
             $this->assertNoArtifactTables($fixture['tables']);
         } finally {
-            $this->purgeFixture($pdo, $connection);
+            $this->purgeFixture($pdo, $connection, $fixture);
         }
     }
 
@@ -277,6 +308,9 @@ final class InPlaceTransformationServiceTest extends TestCase
             $before = [
                 'dataset' => $this->datasetRow($pdo),
                 'variables' => $this->variableIdentityRows($pdo),
+                'value_label_sets' => $this->valueLabelSetRows($pdo),
+                'value_labels' => $this->valueLabelRows($pdo),
+                'variable_value_label_sets' => $this->variableValueLabelSetRows($pdo),
                 'rows' => $this->tableRows(
                     $pdo,
                     $connection,
@@ -305,6 +339,9 @@ final class InPlaceTransformationServiceTest extends TestCase
 
             self::assertSame($before['dataset'], $this->datasetRow($pdo));
             self::assertSame($before['variables'], $this->variableIdentityRows($pdo));
+            self::assertSame($before['value_label_sets'], $this->valueLabelSetRows($pdo));
+            self::assertSame($before['value_labels'], $this->valueLabelRows($pdo));
+            self::assertSame($before['variable_value_label_sets'], $this->variableValueLabelSetRows($pdo));
             self::assertSame(
                 $before['rows'],
                 $this->tableRows(
@@ -320,7 +357,7 @@ final class InPlaceTransformationServiceTest extends TestCase
             self::assertSame($before['variable_count'], (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable', []));
             $this->assertNoArtifactTables($fixture['tables']);
         } finally {
-            $this->purgeFixture($pdo, $connection);
+            $this->purgeFixture($pdo, $connection, $fixture);
         }
     }
 
@@ -336,7 +373,8 @@ final class InPlaceTransformationServiceTest extends TestCase
         unset($expectedVersionFamilies, $expectedVersionEnvironment);
         $pdo = $this->servicePdo($expectedProfile, $environmentPrefix, $driver);
         $connection = new Connection($pdo);
-        $tableName = $this->tableName($connection);
+        $fixture = $this->reserveFixtureIdentity($connection);
+        $tableName = $fixture['table_name'];
 
         (new NormativeCatalog($pdo))->createTables();
         CatalogOwnership::markCurrentVersion($pdo);
@@ -348,11 +386,11 @@ final class InPlaceTransformationServiceTest extends TestCase
             'INSERT INTO dataset '
             . '(dataset_id, spec_version, source_format, physical_table_schema, physical_table_name, dataset_name, source_case_count, imported_at) '
             . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        )->execute([self::DATASET_ID, '1.0', 'fixture', null, $tableName, 'preexisting deterministic namespace', 0, self::IMPORTED_AT]);
+        )->execute([$fixture['dataset_id'], '1.0', 'fixture', null, $tableName, 'preexisting deterministic namespace', 0, self::IMPORTED_AT]);
 
         try {
             try {
-                $this->installFixture($pdo, $connection);
+                $this->installFixture($pdo, $connection, $fixture);
                 self::fail('Dirty deterministic fixture namespace was silently deleted.');
             } catch (RuntimeException $exception) {
                 self::assertStringContainsString('deterministic fixture namespace is not clean', $exception->getMessage());
@@ -360,11 +398,11 @@ final class InPlaceTransformationServiceTest extends TestCase
 
             self::assertSame(
                 'preexisting deterministic namespace',
-                $this->scalar($pdo, 'SELECT dataset_name FROM dataset WHERE dataset_id = ?', [self::DATASET_ID]),
+                $this->scalar($pdo, 'SELECT dataset_name FROM dataset WHERE dataset_id = ?', [$fixture['dataset_id']]),
             );
             self::assertContains($tableName, $this->tableNames($pdo));
         } finally {
-            $this->purgeDirtyNamespaceFixture($pdo, $connection);
+            $this->purgeDirtyNamespaceFixture($pdo, $connection, $fixture);
         }
     }
 
@@ -419,13 +457,20 @@ final class InPlaceTransformationServiceTest extends TestCase
      *     table_name: string
      * }
      */
-    private function installFixture(PDO $pdo, Connection $connection): array
+    /**
+     * @param array{dataset_id: string, source_variable_id: string, destination_variable_id: string, table_name: string, dataset_name: string}|null $fixture
+     * @return array{dataset: array<string, mixed>, variables: list<array<string, mixed>>, columns: list<string>, tables: list<string>, dataset_id: string, source_variable_id: string, destination_variable_id: string, table_name: string, dataset_name: string}
+     */
+    private function installFixture(PDO $pdo, Connection $connection, ?array $fixture = null): array
     {
         (new NormativeCatalog($pdo))->createTables();
         CatalogOwnership::markCurrentVersion($pdo);
 
-        $tableName = $this->tableName($connection);
-        $this->assertFixtureNamespaceClean($pdo, $connection, $tableName);
+        $fixture ??= $this->reserveFixtureIdentity($connection);
+        $this->assertFixtureNamespaceClean($pdo, $connection, $fixture);
+        $this->activeFixture = $fixture;
+
+        $tableName = $fixture['table_name'];
 
         $quotedTable = $this->qualifiedTable($connection, $tableName);
         $quotedOrdinal = $connection->profile->quoteIdentifier('__case_ordinal');
@@ -445,12 +490,12 @@ final class InPlaceTransformationServiceTest extends TestCase
             . '(dataset_id, spec_version, source_format, physical_table_schema, physical_table_name, dataset_name, source_case_count, imported_at) '
             . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         )->execute([
-            self::DATASET_ID,
+            $fixture['dataset_id'],
             '1.0',
             'fixture',
             null,
             $tableName,
-            $this->fixtureDatasetName($connection),
+            $fixture['dataset_name'],
             5,
             self::IMPORTED_AT,
         ]);
@@ -461,16 +506,16 @@ final class InPlaceTransformationServiceTest extends TestCase
             . 'VALUES (?, ?, ?, ?, ?, ?)',
         );
         $insertVariable->execute([
-            self::SOURCE_VARIABLE_ID,
-            self::DATASET_ID,
+            $fixture['source_variable_id'],
+            $fixture['dataset_id'],
             1,
             'SourceValue',
             'source_value',
             'numeric',
         ]);
         $insertVariable->execute([
-            self::DESTINATION_VARIABLE_ID,
-            self::DATASET_ID,
+            $fixture['destination_variable_id'],
+            $fixture['dataset_id'],
             2,
             'Destination',
             'destination',
@@ -484,29 +529,32 @@ final class InPlaceTransformationServiceTest extends TestCase
             $insertCase->execute($row);
         }
 
+        $this->commitDoltFixture($pdo, $connection, $fixture);
+
         return [
             'dataset' => $this->datasetRow($pdo),
             'variables' => $this->variableIdentityRows($pdo),
             'columns' => $this->tableColumns($pdo, $connection, $tableName),
             'tables' => $this->tableNames($pdo),
-            'table_name' => $tableName,
+            ...$fixture,
         ];
     }
 
-    private function purgeFixture(PDO $pdo, Connection $connection): void
+    /** @param array{dataset_id: string, source_variable_id: string, destination_variable_id: string, table_name: string, dataset_name: string} $fixture */
+    private function purgeFixture(PDO $pdo, Connection $connection, array $fixture): void
     {
         (new NormativeCatalog($pdo))->createTables();
 
         $dataset = $this->rows(
             $pdo,
             'SELECT physical_table_name, dataset_name, source_format, source_case_count FROM dataset WHERE dataset_id = ?',
-            [self::DATASET_ID],
+            [$fixture['dataset_id']],
         );
         if ($dataset !== []) {
             self::assertCount(1, $dataset);
             self::assertSame([
-                'physical_table_name' => $this->tableName($connection),
-                'dataset_name' => $this->fixtureDatasetName($connection),
+                'physical_table_name' => $fixture['table_name'],
+                'dataset_name' => $fixture['dataset_name'],
                 'source_format' => 'fixture',
                 'source_case_count' => 5,
             ], [
@@ -519,41 +567,43 @@ final class InPlaceTransformationServiceTest extends TestCase
 
         $pdo->prepare(
             'DELETE FROM variable_value_label_set WHERE variable_id IN (SELECT variable_id FROM variable WHERE dataset_id = ?)',
-        )->execute([self::DATASET_ID]);
+        )->execute([$fixture['dataset_id']]);
         $pdo->prepare(
             'DELETE FROM value_label WHERE value_label_set_id IN (SELECT value_label_set_id FROM value_label_set WHERE dataset_id = ?)',
-        )->execute([self::DATASET_ID]);
-        $pdo->prepare('DELETE FROM value_label_set WHERE dataset_id = ?')->execute([self::DATASET_ID]);
-        $pdo->prepare('DELETE FROM variable WHERE dataset_id = ?')->execute([self::DATASET_ID]);
-        $pdo->prepare('DELETE FROM dataset WHERE dataset_id = ?')->execute([self::DATASET_ID]);
-        $pdo->exec('DROP TABLE IF EXISTS ' . $this->qualifiedTable($connection, $this->tableName($connection)));
+        )->execute([$fixture['dataset_id']]);
+        $pdo->prepare('DELETE FROM value_label_set WHERE dataset_id = ?')->execute([$fixture['dataset_id']]);
+        $pdo->prepare('DELETE FROM variable WHERE dataset_id = ?')->execute([$fixture['dataset_id']]);
+        $pdo->prepare('DELETE FROM dataset WHERE dataset_id = ?')->execute([$fixture['dataset_id']]);
+        $pdo->exec('DROP TABLE IF EXISTS ' . $this->qualifiedTable($connection, $fixture['table_name']));
     }
 
-    private function assertFixtureNamespaceClean(PDO $pdo, Connection $connection, string $tableName): void
+    /** @param array{dataset_id: string, source_variable_id: string, destination_variable_id: string, table_name: string, dataset_name: string} $fixture */
+    private function assertFixtureNamespaceClean(PDO $pdo, Connection $connection, array $fixture): void
     {
-        $existingRows = (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_id = ? OR physical_table_name = ?', [self::DATASET_ID, $tableName]);
+        $existingRows = (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_id = ? OR physical_table_name = ?', [$fixture['dataset_id'], $fixture['table_name']]);
         $existingVariables = (int) $this->scalar(
             $pdo,
             'SELECT COUNT(*) FROM variable WHERE variable_id IN (?, ?) OR dataset_id = ?',
-            [self::SOURCE_VARIABLE_ID, self::DESTINATION_VARIABLE_ID, self::DATASET_ID],
+            [$fixture['source_variable_id'], $fixture['destination_variable_id'], $fixture['dataset_id']],
         );
-        if ($existingRows !== 0 || $existingVariables !== 0 || in_array($tableName, $this->tableNames($pdo), true)) {
+        if ($existingRows !== 0 || $existingVariables !== 0 || in_array($fixture['table_name'], $this->tableNames($pdo), true)) {
             throw new RuntimeException('The deterministic fixture namespace is not clean; refusing to delete pre-existing state.');
         }
     }
 
-    private function purgeDirtyNamespaceFixture(PDO $pdo, Connection $connection): void
+    /** @param array{dataset_id: string, source_variable_id: string, destination_variable_id: string, table_name: string, dataset_name: string} $fixture */
+    private function purgeDirtyNamespaceFixture(PDO $pdo, Connection $connection, array $fixture): void
     {
         (new NormativeCatalog($pdo))->createTables();
-        $datasetName = $this->scalar($pdo, 'SELECT dataset_name FROM dataset WHERE dataset_id = ?', [self::DATASET_ID]);
+        $datasetName = $this->scalar($pdo, 'SELECT dataset_name FROM dataset WHERE dataset_id = ?', [$fixture['dataset_id']]);
         self::assertSame('preexisting deterministic namespace', $datasetName);
-        $pdo->prepare('DELETE FROM dataset WHERE dataset_id = ?')->execute([self::DATASET_ID]);
-        $pdo->exec('DROP TABLE IF EXISTS ' . $this->qualifiedTable($connection, $this->tableName($connection)));
+        $pdo->prepare('DELETE FROM dataset WHERE dataset_id = ?')->execute([$fixture['dataset_id']]);
+        $pdo->exec('DROP TABLE IF EXISTS ' . $this->qualifiedTable($connection, $fixture['table_name']));
     }
 
     private function existingTargetPlan(): TransformationPlan
     {
-        return new TransformationPlan(self::DATASET_ID, [
+        return new TransformationPlan($this->activeFixtureId(), [
             new RecodeOperation('SourceValue', 'Destination', [
                 new RecodeRule(
                     new ExactValueSelector(ScalarValue::number(1)),
@@ -580,7 +630,7 @@ final class InPlaceTransformationServiceTest extends TestCase
 
     private function createTargetPlan(): TransformationPlan
     {
-        return new TransformationPlan(self::DATASET_ID, [
+        return new TransformationPlan($this->activeFixtureId(), [
             new RecodeOperation('SourceValue', 'CreatedTarget', [
                 new RecodeRule(
                     new ExactValueSelector(ScalarValue::number(1)),
@@ -651,7 +701,7 @@ final class InPlaceTransformationServiceTest extends TestCase
             $pdo,
             'SELECT dataset_id, spec_version, source_format, physical_table_schema, physical_table_name, dataset_name, source_case_count, imported_at '
             . 'FROM dataset WHERE dataset_id = ?',
-            [self::DATASET_ID],
+            [$this->activeFixtureId()],
         );
         self::assertCount(1, $rows);
 
@@ -665,7 +715,7 @@ final class InPlaceTransformationServiceTest extends TestCase
             $pdo,
             'SELECT variable_id, source_ordinal, source_name, physical_name, storage_kind, declared_string_width '
             . 'FROM variable WHERE dataset_id = ? ORDER BY source_ordinal',
-            [self::DATASET_ID],
+            [$this->activeFixtureId()],
         );
     }
 
@@ -686,7 +736,7 @@ final class InPlaceTransformationServiceTest extends TestCase
             . 'JOIN value_label label ON label.value_label_set_id = link.value_label_set_id '
             . 'WHERE variable.dataset_id = ? AND variable.source_name = ? '
             . 'ORDER BY label.ordinal',
-            [self::DATASET_ID, $sourceName],
+            [$this->activeFixtureId(), $sourceName],
         );
 
         return array_map(
@@ -699,6 +749,40 @@ final class InPlaceTransformationServiceTest extends TestCase
                 ];
             },
             $rows,
+        );
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function valueLabelSetRows(PDO $pdo): array
+    {
+        return $this->rows(
+            $pdo,
+            'SELECT value_label_set_id, dataset_id, name FROM value_label_set WHERE dataset_id = ? ORDER BY value_label_set_id',
+            [$this->activeFixtureId()],
+        );
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function valueLabelRows(PDO $pdo): array
+    {
+        return $this->rows(
+            $pdo,
+            'SELECT value_label_id, value_label_set_id, ordinal, code_kind, numeric_code, string_code, label '
+            . 'FROM value_label WHERE value_label_set_id IN (SELECT value_label_set_id FROM value_label_set WHERE dataset_id = ?) '
+            . 'ORDER BY value_label_set_id, ordinal, value_label_id',
+            [$this->activeFixtureId()],
+        );
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function variableValueLabelSetRows(PDO $pdo): array
+    {
+        return $this->rows(
+            $pdo,
+            'SELECT variable_id, value_label_set_id FROM variable_value_label_set '
+            . 'WHERE variable_id IN (SELECT variable_id FROM variable WHERE dataset_id = ?) '
+            . 'ORDER BY variable_id, value_label_set_id',
+            [$this->activeFixtureId()],
         );
     }
 
@@ -735,7 +819,7 @@ final class InPlaceTransformationServiceTest extends TestCase
         );
         self::assertInstanceOf(PDOStatement::class, $statement);
 
-        return array_map(
+        return array_values(array_map(
             static function (array $row) use ($columns): array {
                 $normalized = [];
                 foreach ($columns as $column) {
@@ -748,7 +832,7 @@ final class InPlaceTransformationServiceTest extends TestCase
                 return $normalized;
             },
             $statement->fetchAll(PDO::FETCH_ASSOC),
-        );
+        ));
     }
 
     /** @return list<string> */
@@ -810,14 +894,67 @@ final class InPlaceTransformationServiceTest extends TestCase
         self::assertSame([], $artifactTables);
     }
 
-    private function tableName(Connection $connection): string
+    /** @return array{dataset_id: string, source_variable_id: string, destination_variable_id: string, table_name: string, dataset_name: string} */
+    private function reserveFixtureIdentity(Connection $connection): array
     {
-        return 'inplace_existing_target_' . $connection->profileName;
+        $sequence = ++$this->fixtureSequence;
+        if ($this->name() === 'testExistingTargetTransformationPreservesPhysicalIdentityInPlace' && $sequence === 1) {
+            return [
+                'dataset_id' => self::DATASET_ID,
+                'source_variable_id' => self::SOURCE_VARIABLE_ID,
+                'destination_variable_id' => self::DESTINATION_VARIABLE_ID,
+                'table_name' => 'inplace_existing_target_' . $connection->profileName,
+                'dataset_name' => 'in-place existing-target ' . $connection->profileName,
+            ];
+        }
+
+        $scope = $this->name() . ':' . $this->dataName() . ':' . $connection->profileName . ':' . $sequence;
+        $suffix = substr(hash('sha256', $scope), 0, 12);
+
+        return [
+            'dataset_id' => $this->fixtureUuid($scope . ':dataset'),
+            'source_variable_id' => $this->fixtureUuid($scope . ':source'),
+            'destination_variable_id' => $this->fixtureUuid($scope . ':destination'),
+            'table_name' => 'inplace_' . $connection->profileName . '_' . $suffix,
+            'dataset_name' => 'in-place ' . $connection->profileName . ' ' . $suffix,
+        ];
     }
 
-    private function fixtureDatasetName(Connection $connection): string
+    private function fixtureUuid(string $scope): string
     {
-        return 'in-place existing-target ' . $connection->profileName;
+        $hash = hash('sha256', $scope);
+
+        return substr($hash, 0, 8) . '-'
+            . substr($hash, 8, 4) . '-5'
+            . substr($hash, 12, 3) . '-a'
+            . substr($hash, 15, 3) . '-'
+            . substr($hash, 18, 12);
+    }
+
+    /** @return array{dataset_id: string, source_variable_id: string, destination_variable_id: string, table_name: string, dataset_name: string} */
+    private function activeFixture(): array
+    {
+        if ($this->activeFixture === null) {
+            throw new RuntimeException('A fixture must be installed before querying its catalog state.');
+        }
+
+        return $this->activeFixture;
+    }
+
+    private function activeFixtureId(): string
+    {
+        return $this->activeFixture()['dataset_id'];
+    }
+
+    /** @param array{dataset_id: string, source_variable_id: string, destination_variable_id: string, table_name: string, dataset_name: string} $fixture */
+    private function commitDoltFixture(PDO $pdo, Connection $connection, array $fixture): void
+    {
+        if ($connection->profileName !== 'dolt') {
+            return;
+        }
+
+        $statement = $pdo->prepare('CALL DOLT_COMMIT(?, ?)');
+        $statement->execute(['-Am', 'OpenStatSpec in-place fixture ' . $fixture['dataset_id']]);
     }
 
     private function qualifiedTable(Connection $connection, string $tableName): string
