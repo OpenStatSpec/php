@@ -229,6 +229,7 @@ final class InPlaceTransformationServiceTest extends TestCase
                 [...$fixture['columns'], 'createdtarget'],
                 $this->tableColumns($pdo, $connection, $fixture['table_name']),
             );
+            $this->assertProfileNumericColumnType($pdo, $connection, $fixture['table_name'], 'createdtarget');
             self::assertSame(
                 [
                     [
@@ -306,6 +307,7 @@ final class InPlaceTransformationServiceTest extends TestCase
                 $this->valueLabelsForVariable($pdo, 'CreatedTarget'),
             );
             self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_id = ?', [$fixture['dataset_id']]));
+            self::assertSame(count($fixture['tables']), count($this->tableNames($pdo)));
             $this->assertNoArtifactTables($fixture['tables']);
         } finally {
             $this->purgeFixture($pdo, $connection, $fixture);
@@ -328,12 +330,8 @@ final class InPlaceTransformationServiceTest extends TestCase
 
         try {
             $before = [
-                'dataset' => $this->datasetRow($pdo),
-                'variables' => $this->variableIdentityRows($pdo),
-                'value_label_sets' => $this->valueLabelSetRows($pdo),
-                'value_labels' => $this->valueLabelRows($pdo),
-                'variable_value_label_sets' => $this->variableValueLabelSetRows($pdo),
-                'rows' => $this->tableRows(
+                'catalog' => $this->fullCatalogSnapshot($pdo),
+                'rows' => $this->rawTableRows(
                     $pdo,
                     $connection,
                     $fixture['table_name'],
@@ -341,6 +339,7 @@ final class InPlaceTransformationServiceTest extends TestCase
                 ),
                 'columns' => $this->tableColumns($pdo, $connection, $fixture['table_name']),
                 'tables' => $this->tableNames($pdo),
+                'table_count' => count($this->tableNames($pdo)),
                 'dataset_count' => (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []),
                 'variable_count' => (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable', []),
             ];
@@ -359,14 +358,10 @@ final class InPlaceTransformationServiceTest extends TestCase
                 );
             }
 
-            self::assertSame($before['dataset'], $this->datasetRow($pdo));
-            self::assertSame($before['variables'], $this->variableIdentityRows($pdo));
-            self::assertSame($before['value_label_sets'], $this->valueLabelSetRows($pdo));
-            self::assertSame($before['value_labels'], $this->valueLabelRows($pdo));
-            self::assertSame($before['variable_value_label_sets'], $this->variableValueLabelSetRows($pdo));
+            self::assertSame($before['catalog'], $this->fullCatalogSnapshot($pdo));
             self::assertSame(
                 $before['rows'],
-                $this->tableRows(
+                $this->rawTableRows(
                     $pdo,
                     $connection,
                     $fixture['table_name'],
@@ -375,6 +370,7 @@ final class InPlaceTransformationServiceTest extends TestCase
             );
             self::assertSame($before['columns'], $this->tableColumns($pdo, $connection, $fixture['table_name']));
             self::assertSame($before['tables'], $this->tableNames($pdo));
+            self::assertSame($before['table_count'], count($this->tableNames($pdo)));
             self::assertSame($before['dataset_count'], (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []));
             self::assertSame($before['variable_count'], (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable', []));
             $this->assertNoArtifactTables($fixture['tables']);
@@ -927,8 +923,7 @@ final class InPlaceTransformationServiceTest extends TestCase
     {
         $rows = $this->rows(
             $pdo,
-            'SELECT dataset_id, spec_version, source_format, physical_table_schema, physical_table_name, dataset_name, source_case_count, imported_at '
-            . 'FROM dataset WHERE dataset_id = ?',
+            'SELECT * FROM dataset WHERE dataset_id = ?',
             [$this->activeFixtureId()],
         );
         self::assertCount(1, $rows);
@@ -1014,6 +1009,26 @@ final class InPlaceTransformationServiceTest extends TestCase
         );
     }
 
+    /** @return array{dataset: list<array<string, mixed>>, variables: list<array<string, mixed>>, value_label_sets: list<array<string, mixed>>, value_labels: list<array<string, mixed>>, variable_value_label_sets: list<array<string, mixed>>} */
+    private function fullCatalogSnapshot(PDO $pdo): array
+    {
+        return [
+            'dataset' => $this->rows(
+                $pdo,
+                'SELECT * FROM dataset WHERE dataset_id = ? ORDER BY dataset_id',
+                [$this->activeFixtureId()],
+            ),
+            'variables' => $this->rows(
+                $pdo,
+                'SELECT * FROM variable WHERE dataset_id = ? ORDER BY source_ordinal, variable_id',
+                [$this->activeFixtureId()],
+            ),
+            'value_label_sets' => $this->valueLabelSetRows($pdo),
+            'value_labels' => $this->valueLabelRows($pdo),
+            'variable_value_label_sets' => $this->variableValueLabelSetRows($pdo),
+        ];
+    }
+
     /** @return list<float|null> */
     private function numericColumn(
         PDO $pdo,
@@ -1063,6 +1078,24 @@ final class InPlaceTransformationServiceTest extends TestCase
         ));
     }
 
+    /**
+     * Preserves the values and PHP types returned by the configured PDO driver.
+     *
+     * @param list<string> $columns
+     * @return list<array<string, mixed>>
+     */
+    private function rawTableRows(PDO $pdo, Connection $connection, string $tableName, array $columns): array
+    {
+        $statement = $pdo->query(
+            'SELECT ' . implode(', ', array_map($connection->profile->quoteIdentifier(...), $columns))
+            . ' FROM ' . $this->qualifiedTable($connection, $tableName)
+            . ' ORDER BY ' . $connection->profile->quoteIdentifier('__case_ordinal'),
+        );
+        self::assertInstanceOf(PDOStatement::class, $statement);
+
+        return array_values($statement->fetchAll(PDO::FETCH_ASSOC));
+    }
+
     /** @return list<string> */
     private function tableNames(PDO $pdo): array
     {
@@ -1109,6 +1142,46 @@ final class InPlaceTransformationServiceTest extends TestCase
             static fn(array $column): string => (string) $column['column_name'],
             $rows,
         ));
+    }
+
+    private function assertProfileNumericColumnType(PDO $pdo, Connection $connection, string $tableName, string $column): void
+    {
+        $driver = (string) $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        $rows = match ($driver) {
+            'sqlite' => $this->query($pdo, 'PRAGMA table_info(' . $connection->profile->quoteIdentifier($tableName) . ')')->fetchAll(PDO::FETCH_ASSOC),
+            'pgsql' => $this->rows(
+                $pdo,
+                'SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? ORDER BY ordinal_position',
+                [$tableName],
+            ),
+            'mysql' => $this->rows(
+                $pdo,
+                'SELECT column_name, column_type FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? ORDER BY ordinal_position',
+                [$tableName],
+            ),
+            default => throw new RuntimeException('Unsupported integration driver.'),
+        };
+
+        foreach ($rows as $row) {
+            $name = $driver === 'sqlite' ? (string) $row['name'] : (string) $row['column_name'];
+            if ($name !== $column) {
+                continue;
+            }
+
+            $actual = $driver === 'sqlite'
+                ? (string) $row['type']
+                : (string) ($row['data_type'] ?? $row['column_type']);
+            self::assertSame($this->normalizedSqlType($connection->profile->numericType()), $this->normalizedSqlType($actual));
+
+            return;
+        }
+
+        self::fail(sprintf('Expected physical column "%s" to exist.', $column));
+    }
+
+    private function normalizedSqlType(string $type): string
+    {
+        return strtoupper(preg_replace('/\\s+/', ' ', trim($type)) ?? '');
     }
 
     /** @param list<string> $tables */

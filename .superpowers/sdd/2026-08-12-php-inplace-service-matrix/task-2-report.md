@@ -86,3 +86,34 @@ Observed results:
 Round-specific concern:
 
 - The MySQL/MariaDB/Dolt rejection branches are still skipped in this shell because their `OPENSTATSPEC_*` DSNs are not configured locally, so the new preflight-rejection value-label assertions remain encoded for configured environments and CI rather than executed here.
+
+## Fix Round 1 Follow-up
+
+- Replaced the rejected-plan snapshots with a full raw catalog snapshot: `SELECT *` for the dataset and variables, plus complete value-label catalog rows.
+- Replaced normalized rejected-plan row comparisons with raw PDO rows, retaining the driver-returned value representation and PHP types.
+- Added a profile-aware physical SQL type assertion for `createdtarget`; SQLite verifies `REAL` and PostgreSQL verifies `DOUBLE PRECISION` through its catalog.
+- Added explicit physical-table-count assertions for both creation and rejection paths.
+
+## TDD Evidence
+
+- Temporarily mutated numeric target creation to use the text type. The SQLite create-target test failed as intended with expected `REAL`, actual `TEXT`; the mutation was reverted before verification.
+
+## Verification
+
+```bash
+vendor/bin/phpunit --filter "InPlaceTransformationServiceTest|InPlaceTransformationExecutorTest"
+php -l tests/Integration/InPlaceTransformationServiceTest.php
+composer lint
+composer analyse
+composer style
+git diff --check
+```
+
+- Focused PHPUnit: `Tests: 43, Assertions: 228, Skipped: 16.`
+- PHP lint and PHPStan passed.
+- `git diff --check` passed.
+- `composer style` remains non-zero because the repository baseline has CRLF line endings in all 146 checked files; its dry-run output proposes only line-ending changes, including untouched files.
+
+## Concern
+
+- PostgreSQL/MySQL/MariaDB/Dolt DSNs are not configured locally. Their matrix cases remain encoded but skipped in this shell.
