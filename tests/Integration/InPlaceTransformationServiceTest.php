@@ -127,6 +127,50 @@ final class InPlaceTransformationServiceTest extends TestCase
     }
 
     /** @param list<string> $expectedVersionFamilies */
+    #[DataProvider('services')]
+    public function testFixtureSetupRejectsDirtyDeterministicNamespaceWithoutDeletingIt(
+        string $expectedProfile,
+        ?string $environmentPrefix,
+        string $driver,
+        array $expectedVersionFamilies,
+        ?string $expectedVersionEnvironment,
+    ): void {
+        unset($expectedVersionFamilies, $expectedVersionEnvironment);
+        $pdo = $this->servicePdo($expectedProfile, $environmentPrefix, $driver);
+        $connection = new Connection($pdo);
+        $tableName = $this->tableName($connection);
+
+        (new NormativeCatalog($pdo))->createTables();
+        CatalogOwnership::markCurrentVersion($pdo);
+        $pdo->exec(
+            'CREATE TABLE ' . $this->qualifiedTable($connection, $tableName)
+            . ' (' . $connection->profile->quoteIdentifier('__case_ordinal') . ' BIGINT NOT NULL PRIMARY KEY)',
+        );
+        $pdo->prepare(
+            'INSERT INTO dataset '
+            . '(dataset_id, spec_version, source_format, physical_table_schema, physical_table_name, dataset_name, source_case_count, imported_at) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )->execute([self::DATASET_ID, '1.0', 'fixture', null, $tableName, 'preexisting deterministic namespace', 0, self::IMPORTED_AT]);
+
+        try {
+            try {
+                $this->installFixture($pdo, $connection);
+                self::fail('Dirty deterministic fixture namespace was silently deleted.');
+            } catch (RuntimeException $exception) {
+                self::assertStringContainsString('deterministic fixture namespace is not clean', $exception->getMessage());
+            }
+
+            self::assertSame(
+                'preexisting deterministic namespace',
+                $this->scalar($pdo, 'SELECT dataset_name FROM dataset WHERE dataset_id = ?', [self::DATASET_ID]),
+            );
+            self::assertContains($tableName, $this->tableNames($pdo));
+        } finally {
+            $this->purgeDirtyNamespaceFixture($pdo, $connection);
+        }
+    }
+
+    /** @param list<string> $expectedVersionFamilies */
     private function assertExpectedVersionFamily(
         Connection $connection,
         array $expectedVersionFamilies,
@@ -179,12 +223,12 @@ final class InPlaceTransformationServiceTest extends TestCase
      */
     private function installFixture(PDO $pdo, Connection $connection): array
     {
-        $this->purgeFixture($pdo, $connection);
-
         (new NormativeCatalog($pdo))->createTables();
         CatalogOwnership::markCurrentVersion($pdo);
 
         $tableName = $this->tableName($connection);
+        $this->assertFixtureNamespaceClean($pdo, $connection, $tableName);
+
         $quotedTable = $this->qualifiedTable($connection, $tableName);
         $quotedOrdinal = $connection->profile->quoteIdentifier('__case_ordinal');
         $quotedSource = $connection->profile->quoteIdentifier('source_value');
@@ -208,7 +252,7 @@ final class InPlaceTransformationServiceTest extends TestCase
             'fixture',
             null,
             $tableName,
-            'in-place existing-target ' . $connection->profileName,
+            $this->fixtureDatasetName($connection),
             5,
             self::IMPORTED_AT,
         ]);
@@ -255,15 +299,25 @@ final class InPlaceTransformationServiceTest extends TestCase
     {
         (new NormativeCatalog($pdo))->createTables();
 
-        $datasetTable = $this->scalar(
+        $dataset = $this->rows(
             $pdo,
-            'SELECT physical_table_name FROM dataset WHERE dataset_id = ?',
+            'SELECT physical_table_name, dataset_name, source_format, source_case_count FROM dataset WHERE dataset_id = ?',
             [self::DATASET_ID],
         );
-        if (is_string($datasetTable) && $datasetTable !== '') {
-            $pdo->exec('DROP TABLE IF EXISTS ' . $this->qualifiedTable($connection, $datasetTable));
+        if ($dataset !== []) {
+            self::assertCount(1, $dataset);
+            self::assertSame([
+                'physical_table_name' => $this->tableName($connection),
+                'dataset_name' => $this->fixtureDatasetName($connection),
+                'source_format' => 'fixture',
+                'source_case_count' => 5,
+            ], [
+                'physical_table_name' => (string) $dataset[0]['physical_table_name'],
+                'dataset_name' => (string) $dataset[0]['dataset_name'],
+                'source_format' => (string) $dataset[0]['source_format'],
+                'source_case_count' => (int) $dataset[0]['source_case_count'],
+            ]);
         }
-        $pdo->exec('DROP TABLE IF EXISTS ' . $this->qualifiedTable($connection, $this->tableName($connection)));
 
         $pdo->prepare(
             'DELETE FROM variable_value_label_set WHERE variable_id IN (SELECT variable_id FROM variable WHERE dataset_id = ?)',
@@ -274,6 +328,29 @@ final class InPlaceTransformationServiceTest extends TestCase
         $pdo->prepare('DELETE FROM value_label_set WHERE dataset_id = ?')->execute([self::DATASET_ID]);
         $pdo->prepare('DELETE FROM variable WHERE dataset_id = ?')->execute([self::DATASET_ID]);
         $pdo->prepare('DELETE FROM dataset WHERE dataset_id = ?')->execute([self::DATASET_ID]);
+        $pdo->exec('DROP TABLE IF EXISTS ' . $this->qualifiedTable($connection, $this->tableName($connection)));
+    }
+
+    private function assertFixtureNamespaceClean(PDO $pdo, Connection $connection, string $tableName): void
+    {
+        $existingRows = (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_id = ? OR physical_table_name = ?', [self::DATASET_ID, $tableName]);
+        $existingVariables = (int) $this->scalar(
+            $pdo,
+            'SELECT COUNT(*) FROM variable WHERE variable_id IN (?, ?) OR dataset_id = ?',
+            [self::SOURCE_VARIABLE_ID, self::DESTINATION_VARIABLE_ID, self::DATASET_ID],
+        );
+        if ($existingRows !== 0 || $existingVariables !== 0 || in_array($tableName, $this->tableNames($pdo), true)) {
+            throw new RuntimeException('The deterministic fixture namespace is not clean; refusing to delete pre-existing state.');
+        }
+    }
+
+    private function purgeDirtyNamespaceFixture(PDO $pdo, Connection $connection): void
+    {
+        (new NormativeCatalog($pdo))->createTables();
+        $datasetName = $this->scalar($pdo, 'SELECT dataset_name FROM dataset WHERE dataset_id = ?', [self::DATASET_ID]);
+        self::assertSame('preexisting deterministic namespace', $datasetName);
+        $pdo->prepare('DELETE FROM dataset WHERE dataset_id = ?')->execute([self::DATASET_ID]);
+        $pdo->exec('DROP TABLE IF EXISTS ' . $this->qualifiedTable($connection, $this->tableName($connection)));
     }
 
     private function existingTargetPlan(): TransformationPlan
@@ -476,6 +553,11 @@ final class InPlaceTransformationServiceTest extends TestCase
     private function tableName(Connection $connection): string
     {
         return 'inplace_existing_target_' . $connection->profileName;
+    }
+
+    private function fixtureDatasetName(Connection $connection): string
+    {
+        return 'in-place existing-target ' . $connection->profileName;
     }
 
     private function qualifiedTable(Connection $connection, string $tableName): string
