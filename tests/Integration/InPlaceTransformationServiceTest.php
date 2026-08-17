@@ -113,6 +113,14 @@ final class InPlaceTransformationServiceTest extends TestCase
         }
     }
 
+    /** @return iterable<string, array{string, string|null, string, list<string>, string|null}> */
+    public static function physicalCaseOrderServices(): iterable
+    {
+        foreach (self::createTargetRejectedServices() as $label => $service) {
+            yield $label => $service;
+        }
+    }
+
     /** @return iterable<string, array{string, string, string}> */
     public static function transactionalMySqlServices(): iterable
     {
@@ -275,6 +283,42 @@ final class InPlaceTransformationServiceTest extends TestCase
             self::assertSame($datasetCountBefore, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []));
             self::assertSame(2, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable WHERE dataset_id = ?', [$fixture['dataset_id']]));
             $this->assertNoArtifactTables($fixture['tables']);
+        } finally {
+            $this->purgeFixture($pdo, $connection, $fixture);
+        }
+    }
+
+    /** @param list<string> $expectedVersionFamilies */
+    #[DataProvider('physicalCaseOrderServices')]
+    public function testMySqlFamilyRejectsMissingPhysicalCaseOrderColumnBeforeMutation(
+        string $expectedProfile,
+        ?string $environmentPrefix,
+        string $driver,
+        array $expectedVersionFamilies,
+        ?string $expectedVersionEnvironment,
+    ): void {
+        unset($expectedVersionFamilies, $expectedVersionEnvironment);
+        $pdo = $this->servicePdo($expectedProfile, $environmentPrefix, $driver);
+        $connection = new Connection($pdo);
+        $fixture = $this->installFixture($pdo, $connection);
+
+        try {
+            $quotedTable = $this->qualifiedTable($connection, $fixture['table_name']);
+            $quotedOrdinal = $connection->profile->quoteIdentifier('__case_ordinal');
+            $pdo->exec('ALTER TABLE ' . $quotedTable . ' DROP PRIMARY KEY, DROP COLUMN ' . $quotedOrdinal);
+            $auditBefore = (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM transformation_apply', []);
+
+            try {
+                (new InPlaceTransformationExecutor($connection))->execute(
+                    $this->applyRequest($this->existingTargetPlan()),
+                );
+                self::fail('An apply without the physical case-order column was accepted.');
+            } catch (TransformationFailure $failure) {
+                self::assertSame('invalid_catalog', $failure->diagnosticCode());
+            }
+
+            self::assertSame($auditBefore, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM transformation_apply', []));
+            self::assertFalse($pdo->inTransaction());
         } finally {
             $this->purgeFixture($pdo, $connection, $fixture);
         }

@@ -270,11 +270,13 @@ final class Binder
         $targetNames = $targetMode === TargetMode::Create
             ? $statement->targets
             : array_map(static fn(InputVariable $source): string => $source->name, $sources);
-        if ($targetMode === TargetMode::Create) {
-            $seenTargets = [];
-            foreach ($targetNames as $index => $targetName) {
-                $targetSpan = $statement->targetSpans[$index];
-                $this->validateTargetName($targetName, $targetSpan);
+        $seenTargets = [];
+        foreach ($targetNames as $index => $targetName) {
+            $targetSpan = $targetMode === TargetMode::Create
+                ? $statement->targetSpans[$index]
+                : $statement->sourceSpans[$index];
+            $this->validateTargetName($targetName, $targetSpan);
+            if ($targetMode === TargetMode::Create) {
                 $key = strtolower($targetName);
                 if ($schema->contains($targetName) || isset($seenTargets[$key])) {
                     $this->fail(

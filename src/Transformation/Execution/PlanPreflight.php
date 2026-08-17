@@ -618,13 +618,21 @@ final readonly class PlanPreflight
             CheckedPdo::execute($statement, [$dataset->schema, $dataset->table], 'PostgreSQL physical columns could not be queried.');
             return array_values(array_map('strval', $statement->fetchAll(PDO::FETCH_COLUMN)));
         }
+        if (in_array($this->connection->profileName, ['mysql', 'mariadb', 'dolt'], true)) {
+            $statement = $this->statement(
+                'SELECT column_name FROM information_schema.columns '
+                . 'WHERE table_schema = COALESCE(?, DATABASE()) AND table_name = ? ORDER BY ordinal_position',
+            );
+            try {
+                CheckedPdo::execute($statement, [$dataset->schema, $dataset->table], 'MySQL-family physical columns could not be queried.');
+            } catch (PDOException) {
+                throw TransformationFailure::at('invalid_catalog', '$.dataset_id', 'MySQL-family physical columns could not be queried.');
+            }
 
-        // Existing-target plans on MySQL-family profiles need only prove the
-        // cataloged columns readable; generated identifiers are never used.
-        return ['__case_ordinal', ...array_map(
-            static fn(VariableBinding $variable): string => $variable->physicalName,
-            array_values($this->resolveVariables($dataset)),
-        )];
+            return array_values(array_map('strval', $statement->fetchAll(PDO::FETCH_COLUMN)));
+        }
+
+        throw TransformationFailure::at('invalid_catalog', '$.dataset_id', 'Physical columns could not be queried.');
     }
 
     private function postgresqlPhysicalColumnSlots(DatasetBinding $dataset): int

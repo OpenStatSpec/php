@@ -239,6 +239,13 @@ final class SpssCompilerTest extends TestCase
             16,
             24,
         ];
+        yield 'reserved existing recode target' => [
+            'RECODE __Hidden (1 = 2).',
+            [['name' => '__Hidden', 'storage_kind' => 'numeric']],
+            'reserved_target_name',
+            7,
+            15,
+        ];
         yield 'string compute expression' => [
             'COMPUTE target = color.',
             [['name' => 'color', 'storage_kind' => 'string']],
