@@ -42,6 +42,28 @@ final class InPlaceTransformationServiceTest extends TestCase
     /** @var array{dataset_id: string, source_variable_id: string, destination_variable_id: string, table_name: string, dataset_name: string}|null */
     private ?array $activeFixture = null;
 
+    /** @var list<array{admin: PDO, database: string}> */
+    private array $doltTestDatabases = [];
+
+    private ?string $doltDatabaseRunId = null;
+
+    private int $doltDatabaseSequence = 0;
+
+    protected function tearDown(): void
+    {
+        try {
+            foreach (array_reverse($this->doltTestDatabases) as $testDatabase) {
+                $testDatabase['admin']->exec(
+                    'DROP DATABASE ' . $this->quoteDoltDatabaseName($testDatabase['database']),
+                );
+            }
+        } finally {
+            $this->doltTestDatabases = [];
+            $this->activeFixture = null;
+            parent::tearDown();
+        }
+    }
+
     /** @return iterable<string, array{string, string|null, string, list<string>, string|null}> */
     public static function services(): iterable
     {
@@ -408,6 +430,41 @@ final class InPlaceTransformationServiceTest extends TestCase
         }
     }
 
+    public function testDoltDatabaseIsolationUsesExclusiveNamesWithoutLosingDsnSettings(): void
+    {
+        self::assertNull($this->doltAdminCredentials(false, 'root'));
+        self::assertNull($this->doltAdminCredentials('root', false));
+        self::assertSame(
+            ['user' => 'root', 'password' => 'root'],
+            $this->doltAdminCredentials('root', 'root'),
+        );
+
+        $firstDatabase = $this->newDoltDatabaseName();
+        $secondDatabase = $this->newDoltDatabaseName();
+
+        self::assertNotSame($firstDatabase, $secondDatabase);
+        foreach ([$firstDatabase, $secondDatabase] as $database) {
+            self::assertLessThanOrEqual(64, strlen($database));
+            self::assertMatchesRegularExpression('/^[a-z][a-z0-9_]*$/', $database);
+        }
+        $configuredDsn = 'mysql:host=127.0.0.1;port=3306;dbname=openstatspec;charset=utf8mb4';
+        self::assertSame(
+            [
+                'admin' => ['dsn' => $configuredDsn, 'user' => 'root', 'password' => 'root'],
+                'isolated' => [
+                    'dsn' => 'mysql:host=127.0.0.1;port=3306;dbname=' . $firstDatabase . ';charset=utf8mb4',
+                    'user' => 'root',
+                    'password' => 'root',
+                ],
+            ],
+            $this->doltConnectionConfiguration($configuredDsn, 'root', 'root', $firstDatabase),
+        );
+        self::assertSame(
+            'mysql:unix_socket=/tmp/dolt.sock;charset=utf8mb4;dbname=' . $secondDatabase,
+            $this->dsnForDoltDatabase('mysql:unix_socket=/tmp/dolt.sock;charset=utf8mb4', $secondDatabase),
+        );
+    }
+
     /** @param list<string> $expectedVersionFamilies */
     private function assertExpectedVersionFamily(
         Connection $connection,
@@ -694,15 +751,156 @@ final class InPlaceTransformationServiceTest extends TestCase
         $user = getenv($environmentPrefix . '_USER');
         $password = getenv($environmentPrefix . '_PASSWORD');
 
+        $options = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_STRINGIFY_FETCHES => false,
+        ];
+
+        if ($expectedProfile === 'dolt') {
+            $adminCredentials = $this->doltAdminCredentials(
+                getenv($environmentPrefix . '_ADMIN_USER'),
+                getenv($environmentPrefix . '_ADMIN_PASSWORD'),
+            );
+            if ($adminCredentials === null) {
+                self::markTestSkipped(
+                    $environmentPrefix . '_ADMIN_USER and ' . $environmentPrefix
+                    . '_ADMIN_PASSWORD must be explicitly configured for isolated Dolt test databases.',
+                );
+            }
+
+            return $this->isolatedDoltPdo(
+                $dsn,
+                $adminCredentials['user'],
+                $adminCredentials['password'],
+                $options,
+            );
+        }
+
         return new PDO(
             $dsn,
             is_string($user) ? $user : null,
             is_string($password) ? $password : null,
-            [
-                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_STRINGIFY_FETCHES => false,
-            ],
+            $options,
         );
+    }
+
+    /** @return array{user: string, password: string}|null */
+    private function doltAdminCredentials(string|false $user, string|false $password): ?array
+    {
+        if (!is_string($user) || $user === '' || !is_string($password)) {
+            return null;
+        }
+
+        return ['user' => $user, 'password' => $password];
+    }
+
+    /**
+     * @return array{
+     *     admin: array{dsn: string, user: string, password: string},
+     *     isolated: array{dsn: string, user: string, password: string}
+     * }
+     */
+    private function doltConnectionConfiguration(
+        string $dsn,
+        string $adminUser,
+        string $adminPassword,
+        string $database,
+    ): array {
+        return [
+            'admin' => ['dsn' => $dsn, 'user' => $adminUser, 'password' => $adminPassword],
+            'isolated' => [
+                'dsn' => $this->dsnForDoltDatabase($dsn, $database),
+                'user' => $adminUser,
+                'password' => $adminPassword,
+            ],
+        ];
+    }
+
+    /** @param array<int, mixed> $options */
+    private function isolatedDoltPdo(
+        string $dsn,
+        string $adminUser,
+        string $adminPassword,
+        array $options,
+    ): PDO {
+        $database = $this->newDoltDatabaseName();
+        $configuration = $this->doltConnectionConfiguration($dsn, $adminUser, $adminPassword, $database);
+        $admin = new PDO(
+            $configuration['admin']['dsn'],
+            $configuration['admin']['user'],
+            $configuration['admin']['password'],
+            $options,
+        );
+        if ((new Connection($admin))->profileName !== 'dolt') {
+            throw new RuntimeException('The configured Dolt DSN does not identify a Dolt server.');
+        }
+
+        $admin->exec('CREATE DATABASE ' . $this->quoteDoltDatabaseName($database));
+        $this->doltTestDatabases[] = ['admin' => $admin, 'database' => $database];
+
+        $pdo = new PDO(
+            $configuration['isolated']['dsn'],
+            $configuration['isolated']['user'],
+            $configuration['isolated']['password'],
+            $options,
+        );
+        self::assertSame($database, $this->scalar($pdo, 'SELECT DATABASE()', []));
+
+        return $pdo;
+    }
+
+    private function newDoltDatabaseName(): string
+    {
+        $this->doltDatabaseRunId ??= bin2hex(random_bytes(8));
+
+        return sprintf(
+            'openstatspec_it_%d_%s_%d',
+            getmypid(),
+            $this->doltDatabaseRunId,
+            ++$this->doltDatabaseSequence,
+        );
+    }
+
+    private function dsnForDoltDatabase(string $dsn, string $database): string
+    {
+        $this->quoteDoltDatabaseName($database);
+        if (!str_starts_with(strtolower($dsn), 'mysql:')) {
+            throw new RuntimeException('Dolt integration requires a mysql PDO DSN.');
+        }
+
+        $parts = explode(';', substr($dsn, strlen('mysql:')));
+        $databasePart = 'dbname=' . $database;
+        $databasePartIndex = null;
+        foreach ($parts as $index => $part) {
+            $key = strtolower(trim((string) explode('=', $part, 2)[0]));
+            if ($key !== 'dbname') {
+                continue;
+            }
+            if ($databasePartIndex !== null) {
+                throw new RuntimeException('Dolt integration DSN contains more than one dbname setting.');
+            }
+            $databasePartIndex = $index;
+        }
+
+        if ($databasePartIndex === null) {
+            if (end($parts) === '') {
+                array_pop($parts);
+            }
+            $parts[] = $databasePart;
+        } else {
+            $parts[$databasePartIndex] = $databasePart;
+        }
+
+        return 'mysql:' . implode(';', $parts);
+    }
+
+    private function quoteDoltDatabaseName(string $database): string
+    {
+        if (strlen($database) > 64 || preg_match('/^[a-z][a-z0-9_]*$/', $database) !== 1) {
+            throw new RuntimeException('Dolt test database name is not a safe SQL identifier.');
+        }
+
+        return '`' . $database . '`';
     }
 
     /** @return array<string, mixed> */
