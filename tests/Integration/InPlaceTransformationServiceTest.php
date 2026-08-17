@@ -10,6 +10,7 @@ use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\CatalogOwnership;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
+use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 use OpenStatSpec\Transformation\Model\Action\AssignValueAction;
 use OpenStatSpec\Transformation\Model\Action\CopySourceAction;
@@ -440,6 +441,7 @@ final class InPlaceTransformationServiceTest extends TestCase
 
         $this->assertDoltWorkingSetCleanBeforeFixture($pdo, $connection);
         (new NormativeCatalog($pdo))->createTables();
+        (new TransformationAuditMigrator($pdo))->migrate();
         CatalogOwnership::markCurrentVersion($pdo);
         $pdo->exec(
             'CREATE TABLE ' . $this->qualifiedTable($connection, $tableName)
@@ -613,6 +615,7 @@ final class InPlaceTransformationServiceTest extends TestCase
     {
         $this->assertDoltWorkingSetCleanBeforeFixture($pdo, $connection);
         (new NormativeCatalog($pdo))->createTables();
+        (new TransformationAuditMigrator($pdo))->migrate();
         CatalogOwnership::markCurrentVersion($pdo);
 
         $fixture ??= $this->reserveFixtureIdentity($connection);

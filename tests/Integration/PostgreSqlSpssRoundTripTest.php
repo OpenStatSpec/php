@@ -10,6 +10,7 @@ use OpenStatSpec\Sql\CatalogOwnership;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Spss\PhpSpssEngine;
+use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 use OpenStatSpec\Transformation\Model\CreateVariableOperation;
 use OpenStatSpec\Transformation\Model\DeleteVariableOperation;
@@ -134,6 +135,7 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
 
         try {
             (new NormativeCatalog($pdo))->createTables();
+            (new TransformationAuditMigrator($pdo))->migrate();
             CatalogOwnership::markCurrentVersion($pdo);
             $columns = ['__case_ordinal BIGINT NOT NULL PRIMARY KEY'];
             for ($ordinal = 1; $ordinal <= 1599; ++$ordinal) {

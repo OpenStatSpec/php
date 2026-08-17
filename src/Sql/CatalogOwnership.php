@@ -15,6 +15,7 @@ final class CatalogOwnership
     private const IDENTITY_TABLE = 'catalog_identity';
     private const CONTRACT_ID = 'openstatspec-strict-wide-table-v1';
     private const MIGRATION_TABLE = 'openstatspec_schema_migration';
+    private const AUDIT_TABLE = 'transformation_apply';
     private const SCHEMA_VERSION = 4;
 
     /** @return array<string, mixed> */
@@ -93,7 +94,7 @@ final class CatalogOwnership
     public static function assertReadyForUse(PDO $pdo): void
     {
         if (self::tableExists($pdo, self::IDENTITY_TABLE)) {
-            if (self::validateIdentity($pdo) < self::SCHEMA_VERSION) {
+            if (self::validateIdentity($pdo) < self::SCHEMA_VERSION || !self::currentMigrationComplete($pdo)) {
                 throw self::migrationRequired();
             }
             self::assertExclusiveNamespace($pdo);
@@ -148,8 +149,30 @@ final class CatalogOwnership
     public static function markCurrentVersion(PDO $pdo): void
     {
         self::validateIdentity($pdo);
+        if (!self::currentMigrationComplete($pdo)) {
+            throw self::migrationRequired();
+        }
         $statement = $pdo->prepare('UPDATE ' . self::IDENTITY_TABLE . ' SET schema_version = ? WHERE catalog_identity_key = 1');
         $statement->execute([self::SCHEMA_VERSION]);
+    }
+
+    private static function currentMigrationComplete(PDO $pdo): bool
+    {
+        return self::tableExists($pdo, self::MIGRATION_TABLE)
+            && self::tableExists($pdo, self::AUDIT_TABLE)
+            && self::validateLegacyMarker($pdo) === self::SCHEMA_VERSION
+            && self::canSelectColumns($pdo, self::AUDIT_TABLE, self::auditColumns());
+    }
+
+    /** @return list<string> */
+    private static function auditColumns(): array
+    {
+        return [
+            'apply_id', 'contract_id', 'database_profile', 'dataset_id', 'physical_table_schema',
+            'physical_table_name', 'source_hash', 'plan_hash', 'canonical_plan_json', 'actor',
+            'status', 'dolt_branch', 'dolt_head_before', 'dolt_head_after', 'operation_count',
+            'started_at', 'completed_at',
+        ];
     }
 
     /** @return array<string, mixed> */
@@ -235,13 +258,8 @@ final class CatalogOwnership
         $canonicalComplete = $canonical !== [] && self::matchesCompleteDefinition($pdo, $canonical, $canonicalDefinition);
         $legacyComplete = $legacy !== [] && self::matchesCompleteDefinition($pdo, $legacy, $legacyDefinition);
         $journalsComplete = $journals === [] || self::isRecognizedJournalOnlyLegacyCatalog($pdo, $journals);
-        $auditPresent = in_array('transformation_apply', $collisions, true);
-        $auditComplete = !$auditPresent || self::canSelectColumns($pdo, 'transformation_apply', [
-            'apply_id', 'contract_id', 'database_profile', 'dataset_id', 'physical_table_schema',
-            'physical_table_name', 'source_hash', 'plan_hash', 'canonical_plan_json', 'actor',
-            'status', 'dolt_branch', 'dolt_head_before', 'dolt_head_after', 'operation_count',
-            'started_at', 'completed_at',
-        ]);
+        $auditPresent = in_array(self::AUDIT_TABLE, $collisions, true);
+        $auditComplete = !$auditPresent || self::canSelectColumns($pdo, self::AUDIT_TABLE, self::auditColumns());
         if (($canonical !== [] && !$canonicalComplete)
             || ($legacy !== [] && !$legacyComplete)
             || !$journalsComplete

@@ -39,6 +39,14 @@ final class ServerCatalogMigrationTest extends TestCase
                 self::assertSame(1, (int) $this->scalar($pdo, 'SELECT source_ordinal FROM multiple_response_set WHERE dataset_id = ?', [$datasetId]), $name . ': MR-set source order');
                 self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM transformation_apply WHERE apply_id = ?', [$legacyApplyId]), $name . ': existing 0.1 audit row');
                 $this->assertAuditContracts($pdo, $name, $datasetId, 'unused_' . $token);
+                $this->assertUppercaseHashesRejected($pdo, $name, $datasetId, 'unused_' . $token);
+                if ($name !== 'postgresql') {
+                    $this->dropAuditContractChecks($pdo, $name);
+                    $pdo->exec('DELETE FROM openstatspec_schema_migration WHERE version = 4');
+
+                    $adapter->migrateCatalog();
+                    $this->assertUnknownAuditContractRejected($pdo, $name, $datasetId, 'unused_' . $token);
+                }
                 $this->assertNotNullAndUnique($pdo, $name);
                 foreach ([
                     ['INSERT INTO variable_set (variable_set_id, dataset_id, source_ordinal, set_name) VALUES (?, ?, ?, ?)', ['vs-duplicate-' . $token, $datasetId, 2, 'Duplicate variable set']],
@@ -71,8 +79,7 @@ final class ServerCatalogMigrationTest extends TestCase
         if ($driver === 'pgsql') {
             $pdo->exec('ALTER TABLE transformation_apply DROP CONSTRAINT chk_transformation_apply_contract');
         } else {
-            $drop = $profile === 'mariadb' ? 'DROP CONSTRAINT' : 'DROP CHECK';
-            $pdo->exec('ALTER TABLE transformation_apply ' . $drop . ' chk_transformation_apply_contract');
+            $this->dropAuditContractChecks($pdo, $profile);
         }
         $pdo->exec("ALTER TABLE transformation_apply ADD CONSTRAINT chk_transformation_apply_contract CHECK (contract_id = 'openstatspec-in-place-transformation-v0.1')");
         $pdo->exec('DELETE FROM openstatspec_schema_migration WHERE version = 4');
@@ -138,6 +145,80 @@ SQL);
             (int) $this->scalar($pdo, "SELECT COUNT(*) FROM transformation_apply WHERE dataset_id = ? AND actor = 'migration-test'", [$datasetId]),
             $profile . ': both official audit contracts',
         );
+    }
+
+    private function assertUppercaseHashesRejected(PDO $pdo, string $profile, string $datasetId, string $table): void
+    {
+        foreach (['source' => [str_repeat('A', 64), str_repeat('b', 64)], 'plan' => [str_repeat('a', 64), str_repeat('B', 64)]] as $hash => [$sourceHash, $planHash]) {
+            try {
+                $this->insertAudit($pdo, $profile, $datasetId, $table, 'openstatspec-in-place-transformation-v0.2', $sourceHash, $planHash);
+                self::fail($profile . ': uppercase ' . $hash . ' hash was accepted');
+            } catch (PDOException) {
+                // The exact lowercase-hex database check is the assertion.
+            }
+        }
+    }
+
+    private function assertUnknownAuditContractRejected(PDO $pdo, string $profile, string $datasetId, string $table): void
+    {
+        try {
+            $this->insertAudit($pdo, $profile, $datasetId, $table, 'foreign-contract', str_repeat('a', 64), str_repeat('b', 64));
+            self::fail($profile . ': missing contract check was not recovered');
+        } catch (PDOException) {
+            // A retry after the interrupted upgrade restored the current check.
+        }
+    }
+
+    private function insertAudit(
+        PDO $pdo,
+        string $profile,
+        string $datasetId,
+        string $table,
+        string $contract,
+        string $sourceHash,
+        string $planHash,
+    ): void {
+        $dolt = $profile === 'dolt';
+        $pdo->prepare('INSERT INTO transformation_apply VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
+            $this->uuidV4(),
+            $contract,
+            $profile,
+            $datasetId,
+            null,
+            $table,
+            $sourceHash,
+            $planHash,
+            '{}',
+            'migration-rejection-test',
+            'succeeded',
+            $dolt ? 'migration-test' : null,
+            $dolt ? 'migration-head' : null,
+            $dolt ? 'migration-head' : null,
+            1,
+            '2026-08-17 00:00:00',
+            '2026-08-17 00:00:01',
+        ]);
+    }
+
+    private function dropAuditContractChecks(PDO $pdo, string $profile): void
+    {
+        $statement = $pdo->query(<<<'SQL'
+SELECT table_constraint.constraint_name
+FROM information_schema.table_constraints table_constraint
+JOIN information_schema.check_constraints check_constraint
+  ON check_constraint.constraint_schema = table_constraint.constraint_schema
+ AND check_constraint.constraint_name = table_constraint.constraint_name
+WHERE table_constraint.constraint_schema = DATABASE()
+  AND table_constraint.table_name = 'transformation_apply'
+  AND table_constraint.constraint_type = 'CHECK'
+  AND check_constraint.check_clause LIKE '%contract_id%'
+SQL);
+        $constraints = $statement === false ? [] : $statement->fetchAll(PDO::FETCH_COLUMN);
+        $drop = $profile === 'mariadb' ? 'DROP CONSTRAINT' : 'DROP CHECK';
+        foreach ($constraints as $constraint) {
+            self::assertIsString($constraint);
+            $pdo->exec('ALTER TABLE transformation_apply ' . $drop . ' `' . str_replace('`', '``', $constraint) . '`');
+        }
     }
 
     private function uuidV4(): string

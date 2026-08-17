@@ -75,11 +75,11 @@ final readonly class NormativeCatalog
         }
     }
 
-    /** Record one completed explicit catalogue migration idempotently. */
-    public function recordMigration(int $version): void
+    /** Record one completed normative-catalogue migration idempotently. */
+    private function recordMigration(int $version): void
     {
-        if ($version < 1) {
-            throw new \InvalidArgumentException('A catalogue migration version must be positive.');
+        if ($version < 1 || $version > 3) {
+            throw new \InvalidArgumentException('A normative catalogue migration version must be between 1 and 3.');
         }
         $driver = (string) $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
         $migration = match ($driver) {

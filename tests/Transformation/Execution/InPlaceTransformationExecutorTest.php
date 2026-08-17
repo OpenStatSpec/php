@@ -9,6 +9,7 @@ use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
+use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 use OpenStatSpec\Transformation\Model\Action\AssignValueAction;
 use OpenStatSpec\Transformation\Model\Action\CopySourceAction;
@@ -68,6 +69,7 @@ final class InPlaceTransformationExecutorTest extends TestCase
         foreach ([[1, 1.0, -1.0], [2, 2.0, -1.0], [3, 3.0, -1.0], [4, 9.0, -1.0], [5, null, -1.0]] as $case) {
             $insertCase->execute($case);
         }
+        (new TransformationAuditMigrator($this->pdo))->migrate();
         CatalogOwnership::markCurrentVersion($this->pdo);
     }
 

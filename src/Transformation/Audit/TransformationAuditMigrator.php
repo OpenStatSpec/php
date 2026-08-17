@@ -6,7 +6,6 @@ namespace OpenStatSpec\Transformation\Audit;
 
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
-use OpenStatSpec\Sql\NormativeCatalog;
 use PDO;
 use PDOException;
 use Throwable;
@@ -60,7 +59,7 @@ final readonly class TransformationAuditMigrator
             if ($violations === false || $violations->fetchColumn() !== false) {
                 throw new PDOException('Transformation audit migration produced a foreign-key violation.');
             }
-            (new NormativeCatalog($this->pdo))->recordMigration(4);
+            $this->recordMigration();
             $this->pdo->commit();
         } catch (Throwable $exception) {
             if ($this->pdo->inTransaction()) {
@@ -92,7 +91,7 @@ final readonly class TransformationAuditMigrator
                     );
                 }
             }
-            (new NormativeCatalog($this->pdo))->recordMigration(4);
+            $this->recordMigration();
             $this->pdo->commit();
         } catch (Throwable $exception) {
             if ($this->pdo->inTransaction()) {
@@ -109,21 +108,21 @@ final readonly class TransformationAuditMigrator
         } else {
             $this->assertReadableAuditTable();
             $checks = $this->mySqlContractChecks();
-            if (!$this->checksAreCurrent($checks)) {
-                if ($checks === []) {
-                    throw new PDOException('The existing transformation audit has no contract check to migrate.');
-                }
-                $dropSyntax = $this->isMariaDb() ? ' DROP CONSTRAINT ' : ' DROP CHECK ';
-                foreach (array_keys($checks) as $constraint) {
-                    $this->pdo->exec('ALTER TABLE ' . self::TABLE . $dropSyntax . $this->quoteMySql($constraint));
-                }
+            $current = array_filter($checks, $this->checkIsCurrent(...));
+            if ($current === []) {
                 $this->pdo->exec(
-                    'ALTER TABLE ' . self::TABLE . ' ADD CONSTRAINT chk_transformation_apply_contract '
+                    'ALTER TABLE ' . self::TABLE . ' ADD CONSTRAINT chk_transformation_apply_contract_v04 '
                     . $this->contractCheck(),
                 );
             }
+            if (count($current) !== count($checks)) {
+                $dropSyntax = $this->isMariaDb() ? ' DROP CONSTRAINT ' : ' DROP CHECK ';
+                foreach (array_diff_key($checks, $current) as $constraint => $_definition) {
+                    $this->pdo->exec('ALTER TABLE ' . self::TABLE . $dropSyntax . $this->quoteMySql($constraint));
+                }
+            }
         }
-        (new NormativeCatalog($this->pdo))->recordMigration(4);
+        $this->recordMigration();
     }
 
     private function createTableSql(string $table, string $driver): string
@@ -177,8 +176,8 @@ final readonly class TransformationAuditMigrator
             return "CONSTRAINT chk_transformation_apply_source_hash CHECK (source_hash ~ '^[0-9a-f]{64}$'), "
                 . "CONSTRAINT chk_transformation_apply_plan_hash CHECK (plan_hash ~ '^[0-9a-f]{64}$')";
         }
-        return "CONSTRAINT chk_transformation_apply_source_hash CHECK (source_hash REGEXP BINARY '^[0-9a-f]{64}$'), "
-            . "CONSTRAINT chk_transformation_apply_plan_hash CHECK (plan_hash REGEXP BINARY '^[0-9a-f]{64}$')";
+        return "CONSTRAINT chk_transformation_apply_source_hash CHECK (CHAR_LENGTH(source_hash) = 64 AND source_hash REGEXP '^[0-9a-f]{64}$' AND CAST(source_hash AS BINARY) = CAST(LOWER(source_hash) AS BINARY)), "
+            . "CONSTRAINT chk_transformation_apply_plan_hash CHECK (CHAR_LENGTH(plan_hash) = 64 AND plan_hash REGEXP '^[0-9a-f]{64}$' AND CAST(plan_hash AS BINARY) = CAST(LOWER(plan_hash) AS BINARY))";
     }
 
     private function sqliteAcceptsVersion02(): bool
@@ -247,6 +246,22 @@ SQL);
             }
         }
         return true;
+    }
+
+    private function checkIsCurrent(string $definition): bool
+    {
+        return str_contains($definition, 'openstatspec-in-place-transformation-v0.1')
+            && str_contains($definition, 'openstatspec-in-place-transformation-v0.2');
+    }
+
+    private function recordMigration(): void
+    {
+        $migration = match ((string) $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME)) {
+            'mysql' => 'INSERT IGNORE INTO openstatspec_schema_migration (version, applied_at) VALUES (?, ?)',
+            'pgsql', 'sqlite' => 'INSERT INTO openstatspec_schema_migration (version, applied_at) VALUES (?, ?) ON CONFLICT (version) DO NOTHING',
+            default => throw new \LogicException('Unsupported audit migration driver.'),
+        };
+        $this->pdo->prepare($migration)->execute([4, gmdate('Y-m-d H:i:s')]);
     }
 
     private function assertReadableAuditTable(): void
