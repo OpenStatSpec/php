@@ -148,8 +148,8 @@ an absent local profile is reported as skipped. CI supplies every service
 profile configuration, so a skipped configured service is not acceptable CI
 evidence.
 
-For every configured profile, the existing-target evidence proves that a
-recode plus label changes preserves the dataset UUID, physical table identity,
+For every configured profile, the existing-target evidence proves that
+recode plus label changes preserve the dataset UUID, physical table identity,
 and existing variable identities, with no copied, staging, snapshot, rollback,
 or parallel-history table. Numeric implicit target creation is evidenced only
 on SQLite and PostgreSQL. MySQL, MariaDB, and Dolt reject it before mutation;

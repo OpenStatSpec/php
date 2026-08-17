@@ -48,10 +48,17 @@ there is no shared-schema drop, truncate, reset, or shared-state cleanup.
 The existing-target identity and create-target boundary assertions cover the
 approved requirements, and CI invokes the evidence class for every service.
 
-## Concern for local code review
+## Approved Dolt fixture boundary
 
-The test fixture implementation creates a baseline Dolt commit in its isolated
-test database (`commitDoltFixture`), although the plan's global constraints
-say not to create Dolt commits as evidence setup. This does not affect a shared
-Dolt repository, but the local code-review loop should decide whether the
-isolated baseline commit is an acceptable exception before a PR is published.
+Human review approved the fixture's baseline Dolt commit. It is created only
+in a generated, random-suffixed isolated test database to establish the clean
+baseline needed for repository-state assertions; it does not affect a shared
+repository. The executor remains separately evidenced never to create a Dolt
+commit, reset `HEAD`, or change the active branch.
+
+## Fix round 1
+
+- Recorded the approved isolated-fixture baseline commit boundary and the
+  executor's no-commit/no-reset/no-branch-change guarantee.
+- Corrected the service-matrix statement so that recode plus label changes
+  grammatically and explicitly preserve existing-target identities.
