@@ -45,8 +45,8 @@ final class PlanCodec
     public function fromArray(array $plan): TransformationPlan
     {
         $this->exactKeys($plan, ['contract', 'input_alias', 'operations'], '$');
-        $contract = $plan['contract'];
-        if (!is_string($contract) || $contract !== PlanContract::V01->value) {
+        $contract = $this->string($plan['contract'], '$.contract');
+        if ($contract !== PlanContract::V01->value) {
             $this->schema('$.contract', 'Plan contract must be openstatspec-transformation-plan-v0.1.');
         }
 
@@ -73,10 +73,7 @@ final class PlanCodec
     private function operation(mixed $raw, string $path): Operation
     {
         $object = $this->object($raw, $path);
-        $op = $object['op'] ?? null;
-        if (!is_string($op)) {
-            $this->schema($path . '.op', 'Operation discriminator must be a string.');
-        }
+        $op = $this->string($object['op'] ?? null, $path . '.op');
 
         return match ($op) {
             'recode' => $this->recodeOperation($object, $path),
@@ -90,8 +87,8 @@ final class PlanCodec
     private function recodeOperation(array $object, string $path): RecodeOperation
     {
         $this->exactKeys($object, ['op', 'source', 'target', 'target_mode', 'rules', 'unmatched'], $path);
-        $mode = $object['target_mode'];
-        if (!is_string($mode) || ($targetMode = TargetMode::tryFrom($mode)) === null) {
+        $mode = $this->string($object['target_mode'], $path . '.target_mode');
+        if (($targetMode = TargetMode::tryFrom($mode)) === null) {
             $this->schema($path . '.target_mode', 'Recode target mode must be create or replace.');
         }
 
@@ -162,10 +159,7 @@ final class PlanCodec
     private function recodeMatch(mixed $raw, string $path): RecodeMatch
     {
         $object = $this->object($raw, $path);
-        $kind = $object['kind'] ?? null;
-        if (!is_string($kind)) {
-            $this->schema($path . '.kind', 'Match kind must be a string.');
-        }
+        $kind = $this->string($object['kind'] ?? null, $path . '.kind');
 
         if ($kind === 'values') {
             $this->exactKeys($object, ['kind', 'values'], $path);
@@ -205,10 +199,7 @@ final class PlanCodec
     private function result(mixed $raw, string $path): Result
     {
         $object = $this->object($raw, $path);
-        $kind = $object['kind'] ?? null;
-        if (!is_string($kind)) {
-            $this->schema($path . '.kind', 'Result kind must be a string.');
-        }
+        $kind = $this->string($object['kind'] ?? null, $path . '.kind');
 
         return match ($kind) {
             'literal' => $this->literalResult($object, $path),
@@ -246,7 +237,7 @@ final class PlanCodec
     private function typedValue(mixed $raw, string $path): TypedValue
     {
         $object = $this->object($raw, $path);
-        $type = $object['type'] ?? null;
+        $type = $this->string($object['type'] ?? null, $path . '.type');
         if ($type === 'binary64') {
             $this->exactKeys($object, ['type', 'bits'], $path);
             $bits = $this->string($object['bits'], $path . '.bits');
@@ -307,8 +298,8 @@ final class PlanCodec
 
     private function string(mixed $value, string $path): string
     {
-        if (!is_string($value)) {
-            $this->schema($path, 'Value must be a string.');
+        if (!is_string($value) || preg_match('//u', $value) !== 1) {
+            $this->schema($path, 'Value must be a valid UTF-8 string.');
         }
         return $value;
     }
