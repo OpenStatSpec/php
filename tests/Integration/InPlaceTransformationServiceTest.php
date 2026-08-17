@@ -463,6 +463,7 @@ final class InPlaceTransformationServiceTest extends TestCase
      */
     private function installFixture(PDO $pdo, Connection $connection, ?array $fixture = null): array
     {
+        $this->assertDoltWorkingSetCleanBeforeFixture($pdo, $connection);
         (new NormativeCatalog($pdo))->createTables();
         CatalogOwnership::markCurrentVersion($pdo);
 
@@ -543,6 +544,10 @@ final class InPlaceTransformationServiceTest extends TestCase
     /** @param array{dataset_id: string, source_variable_id: string, destination_variable_id: string, table_name: string, dataset_name: string} $fixture */
     private function purgeFixture(PDO $pdo, Connection $connection, array $fixture): void
     {
+        if ($connection->profileName === 'dolt') {
+            return;
+        }
+
         (new NormativeCatalog($pdo))->createTables();
 
         $dataset = $this->rows(
@@ -594,6 +599,10 @@ final class InPlaceTransformationServiceTest extends TestCase
     /** @param array{dataset_id: string, source_variable_id: string, destination_variable_id: string, table_name: string, dataset_name: string} $fixture */
     private function purgeDirtyNamespaceFixture(PDO $pdo, Connection $connection, array $fixture): void
     {
+        if ($connection->profileName === 'dolt') {
+            return;
+        }
+
         (new NormativeCatalog($pdo))->createTables();
         $datasetName = $this->scalar($pdo, 'SELECT dataset_name FROM dataset WHERE dataset_id = ?', [$fixture['dataset_id']]);
         self::assertSame('preexisting deterministic namespace', $datasetName);
@@ -955,6 +964,23 @@ final class InPlaceTransformationServiceTest extends TestCase
 
         $statement = $pdo->prepare('CALL DOLT_COMMIT(?, ?)');
         $statement->execute(['-Am', 'OpenStatSpec in-place fixture ' . $fixture['dataset_id']]);
+    }
+
+    private function assertDoltWorkingSetCleanBeforeFixture(PDO $pdo, Connection $connection): void
+    {
+        if ($connection->profileName !== 'dolt') {
+            return;
+        }
+
+        $statement = $pdo->query('SELECT table_name FROM dolt_status ORDER BY table_name');
+        self::assertInstanceOf(PDOStatement::class, $statement);
+        $dirtyTables = array_values(array_map('strval', $statement->fetchAll(PDO::FETCH_COLUMN)));
+        if ($dirtyTables !== []) {
+            throw new RuntimeException(
+                'Dolt fixture setup requires a clean working set before its baseline commit; dirty tables: '
+                . implode(', ', $dirtyTables) . '.',
+            );
+        }
     }
 
     private function qualifiedTable(Connection $connection, string $tableName): string
