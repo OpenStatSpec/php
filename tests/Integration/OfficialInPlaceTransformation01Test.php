@@ -4,15 +4,16 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Tests\Integration;
 
+use OpenStatSpec\Frontend\Spss\Request\InputSchema;
+use OpenStatSpec\Frontend\Spss\Request\InputVariable;
+use OpenStatSpec\Frontend\Spss\Request\SpssFrontendRequest;
+use OpenStatSpec\Frontend\Spss\SpssCompiler;
 use OpenStatSpec\Sql\CatalogOwnership;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Tests\Support\SpecificationManifest;
 use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
 use OpenStatSpec\Transformation\Diagnostic\TransformationFailure;
-use OpenStatSpec\Transformation\Execution\DoltEvidence;
-use OpenStatSpec\Transformation\Execution\DoltEvidenceReader;
-use OpenStatSpec\Transformation\Execution\DoltGuard;
 use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 use OpenStatSpec\Transformation\Plan\PlanCodec;
@@ -21,123 +22,53 @@ use PDO;
 use PDOStatement;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 final class OfficialInPlaceTransformation01Test extends TestCase
 {
     private const DATASET_ID = '66666666-6666-4666-8666-666666666666';
 
+    /** @var list<array{admin: PDO, database: string}> */
+    private array $isolatedTestDatabases = [];
+
+    protected function tearDown(): void
+    {
+        try {
+            foreach (array_reverse($this->isolatedTestDatabases) as $fixture) {
+                $fixture['admin']->exec('DROP DATABASE ' . $this->quoteDatabase($fixture['database']));
+            }
+        } finally {
+            $this->isolatedTestDatabases = [];
+            parent::tearDown();
+        }
+    }
+
     /** @return iterable<string, array{array<string, mixed>}> */
-    public static function officialDoltContextFailures(): iterable
+    public static function officialBackendCases(): iterable
     {
         foreach (SpecificationManifest::load('conformance/in-place-transformation-0.1.json')['cases'] as $case) {
-            if (is_array($case) && in_array($case['id'] ?? null, [
-                'reject-dolt-branch-mismatch',
-                'reject-dolt-head-mismatch',
-                'reject-dolt-dirty-working-set',
-            ], true)) {
-                yield (string) $case['id'] => [$case];
+            if (is_array($case) && is_string($case['id'] ?? null)) {
+                yield $case['id'] => [$case];
             }
         }
     }
 
     /** @param array<string, mixed> $case */
-    #[DataProvider('officialDoltContextFailures')]
-    public function testOfficialDoltContextFailuresOccurBeforeMutation(array $case): void
+    #[DataProvider('officialBackendCases')]
+    public function testEveryOfficialBackendManifestCaseRuns(array $case): void
     {
-        $expected = $case['expected_context'];
-        $observed = $case['observed_context'];
-        self::assertIsArray($expected);
-        self::assertIsArray($observed);
-        $guard = new DoltGuard(new class ($observed) implements DoltEvidenceReader {
-            /** @param array<string, mixed> $observed */
-            public function __construct(private readonly array $observed) {}
+        $id = $case['id'] ?? null;
+        self::assertIsString($id);
 
-            public function read(): DoltEvidence
-            {
-                return new DoltEvidence(
-                    (string) $this->observed['branch'],
-                    (string) $this->observed['head'],
-                    $this->observed['working_set_clean'] === true ? [] : ['data_survey'],
-                );
-            }
-        });
-        $request = new InPlaceApplyRequest(
-            $this->planCase('string-value-label-replacement'),
-            'parent',
-            self::DATASET_ID,
-            str_repeat('a', 64),
-            'conformance-runner',
-            (string) $expected['branch'],
-            (string) $expected['head'],
-        );
-
-        try {
-            $guard->beforeExecution($request);
-            self::fail('The official Dolt context mismatch was accepted.');
-        } catch (TransformationFailure $failure) {
-            self::assertSame($case['expected_error'], $failure->diagnosticCode());
-        }
-        self::assertFalse($case['mutation_started']);
-    }
-
-    public function testOfficialMysqlCreateTargetCaseFailsBeforeMutationWhenConfigured(): void
-    {
-        $case = $this->bindingCase('reject-mysql-nontransactional-create-target');
-        $pdo = $this->mysql();
-        $connection = new Connection($pdo);
-        self::assertSame('mysql', $connection->profileName);
-        $table = 'data_plan01_task9';
-        (new NormativeCatalog($pdo))->createTables();
-        (new TransformationAuditMigrator($pdo))->migrate();
-        CatalogOwnership::markCurrentVersion($pdo);
-        self::assertSame(0, (int) $this->scalar(
-            $pdo,
-            'SELECT COUNT(*) FROM dataset WHERE dataset_id = ? OR physical_table_name = ?',
-            [self::DATASET_ID, $table],
-        ));
-        self::assertSame(0, (int) $this->scalar(
-            $pdo,
-            'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?',
-            [$table],
-        ));
-
-        try {
-            $pdo->exec('CREATE TABLE ' . $connection->profile->quoteIdentifier($table)
-                . ' (`__case_ordinal` BIGINT NOT NULL PRIMARY KEY, `q1` DOUBLE NULL)');
-            $pdo->prepare(
-                'INSERT INTO dataset (dataset_id, spec_version, source_format, physical_table_schema, physical_table_name, dataset_name, source_case_count, imported_at) '
-                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            )->execute([self::DATASET_ID, '1.0', 'fixture', null, $table, 'Task 9 official 0.1', 2, '2026-08-17 00:00:00']);
-            $pdo->prepare(
-                'INSERT INTO variable (variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind) VALUES (?, ?, ?, ?, ?, ?)',
-            )->execute(['99999999-9999-4999-8999-999999999999', self::DATASET_ID, 1, 'q1', 'q1', 'numeric']);
-            $pdo->exec('INSERT INTO ' . $connection->profile->quoteIdentifier($table)
-                . ' (`__case_ordinal`, `q1`) VALUES (1, 1), (2, NULL)');
-            $before = $this->mysqlFailureSnapshot($pdo, $connection, $table);
-            $request = new InPlaceApplyRequest(
-                $this->planCase('numeric-recode-and-declared-labels'),
-                'parent',
-                self::DATASET_ID,
-                hash('sha256', (string) $case['source_text']),
-                'conformance-runner',
-            );
-
-            try {
-                (new InPlaceTransformationExecutor($connection))->execute($request);
-                self::fail('MySQL accepted an official 0.1 create-target plan.');
-            } catch (TransformationFailure $failure) {
-                self::assertSame($case['expected_error'], $failure->diagnosticCode());
-            }
-
-            self::assertFalse($case['mutation_started']);
-            self::assertFalse($pdo->inTransaction());
-            self::assertSame($before, $this->mysqlFailureSnapshot($pdo, $connection, $table));
-        } finally {
-            $pdo->prepare('DELETE FROM transformation_apply WHERE dataset_id = ?')->execute([self::DATASET_ID]);
-            $pdo->prepare('DELETE FROM variable WHERE dataset_id = ?')->execute([self::DATASET_ID]);
-            $pdo->prepare('DELETE FROM dataset WHERE dataset_id = ?')->execute([self::DATASET_ID]);
-            $pdo->exec('DROP TABLE IF EXISTS ' . $connection->profile->quoteIdentifier($table));
-        }
+        match ($id) {
+            'mysql-recode-and-labels-preserve-dataset-and-table-identity',
+            'dolt-recode-and-labels-preserve-controlled-context' => $this->assertOfficialBackendSuccess($case),
+            'reject-dolt-branch-mismatch',
+            'reject-dolt-head-mismatch',
+            'reject-dolt-dirty-working-set' => $this->assertOfficialDoltContextFailure($case),
+            'reject-mysql-nontransactional-create-target' => $this->assertOfficialMySqlCreateRejection($case),
+            default => throw new RuntimeException('Unhandled official in-place 0.1 case: ' . $id),
+        };
     }
 
     public function testSqliteNumericRecodeUsesFirstMatchInclusiveRangeAndSystemMissing(): void
@@ -234,24 +165,451 @@ final class OfficialInPlaceTransformation01Test extends TestCase
         return $pdo;
     }
 
-    private function mysql(): PDO
+    /** @param array<string, mixed> $case */
+    private function assertOfficialBackendSuccess(array $case): void
     {
-        $dsn = getenv('OPENSTATSPEC_MYSQL_DSN');
-        if (!is_string($dsn) || $dsn === '') {
-            self::markTestSkipped('OPENSTATSPEC_MYSQL_DSN is not configured.');
-        }
-        if (!in_array('mysql', PDO::getAvailableDrivers(), true)) {
-            self::markTestSkipped('PDO MySQL is not available.');
-        }
-        $user = getenv('OPENSTATSPEC_MYSQL_USER');
-        $password = getenv('OPENSTATSPEC_MYSQL_PASSWORD');
-
-        return new PDO(
-            $dsn,
-            is_string($user) ? $user : null,
-            is_string($password) ? $password : null,
-            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_STRINGIFY_FETCHES => false],
+        $profile = $case['database_profile'] ?? null;
+        $beforeContract = $case['before'] ?? null;
+        $afterContract = $case['after'] ?? null;
+        self::assertContains($profile, ['mysql', 'dolt']);
+        self::assertIsArray($beforeContract);
+        self::assertIsArray($afterContract);
+        $database = $profile === 'mysql' ? (string) $beforeContract['physical_table_schema'] : null;
+        $pdo = $this->isolatedBackendPdo((string) $profile, $database);
+        $connection = new Connection($pdo);
+        $fixture = $this->installOfficialBackendFixture($pdo, $connection, $case);
+        $context = $this->backendContext($pdo, $connection);
+        $before = $this->officialBackendSnapshot($pdo, $connection, $fixture);
+        $compiled = $this->compileOfficialSource((string) $case['source_text']);
+        $request = new InPlaceApplyRequest(
+            $compiled->plan,
+            'parent',
+            $fixture['dataset_id'],
+            $compiled->sourceHash,
+            'conformance-runner',
+            $context['branch'] ?? null,
+            $context['head'] ?? null,
         );
+
+        $result = (new InPlaceTransformationExecutor($connection))->execute($request);
+        $after = $this->officialBackendSnapshot($pdo, $connection, $fixture);
+
+        self::assertSame($beforeContract['dataset_id'], $result->datasetId());
+        self::assertSame($before['dataset_count'], $after['dataset_count']);
+        self::assertSame($before['persistent_data_table_count'], $after['persistent_data_table_count']);
+        self::assertSame($before['dataset_identity'], $after['dataset_identity']);
+        self::assertSame($before['tables'], $after['tables']);
+        self::assertSame($before['case_count'], $after['case_count']);
+        self::assertSame($before['case_ordinals'], $after['case_ordinals']);
+        self::assertSame([0.0, 0.0, 1.0, 4.0], $after['score']);
+        self::assertSame($afterContract['variable_label'], $after['variable_label']);
+        self::assertSame($afterContract['value_labels'], $after['value_labels']);
+        self::assertCount(1, $after['audit']);
+        $audit = $after['audit'][0];
+        foreach ($case['required_audit_fields'] as $field) {
+            self::assertArrayHasKey($field, $audit);
+        }
+        self::assertSame('openstatspec-in-place-transformation-v0.1', $audit['contract_id']);
+        self::assertSame($profile, $audit['database_profile']);
+        self::assertSame($fixture['dataset_id'], $audit['dataset_id']);
+        self::assertSame($fixture['schema'], $audit['physical_table_schema']);
+        self::assertSame($fixture['table'], $audit['physical_table_name']);
+        self::assertSame($compiled->sourceHash, $audit['source_hash']);
+        self::assertSame($result->planHash(), $audit['plan_hash']);
+        self::assertSame('conformance-runner', $audit['actor']);
+        self::assertSame('succeeded', $audit['status']);
+        self::assertSame($result->operationCount(), (int) $audit['operation_count']);
+        $this->assertNoForbiddenArtifactTables($after['tables']);
+
+        if ($profile === 'dolt') {
+            if ($context === null) {
+                throw new RuntimeException('Dolt conformance execution did not capture repository context.');
+            }
+            self::assertNotNull($before['repository']);
+            self::assertNotNull($after['repository']);
+            self::assertSame($before['repository']['branch'], $after['repository']['branch']);
+            self::assertSame($before['repository']['head'], $after['repository']['head']);
+            self::assertSame($before['repository']['history'], $after['repository']['history']);
+            self::assertNotSame([], $after['repository']['status']);
+            self::assertContains($fixture['table'], array_column($after['repository']['status'], 'table_name'));
+            self::assertFalse((bool) $afterContract['dolt_commit_performed']);
+            self::assertSame($context['branch'], $audit['dolt_branch']);
+            self::assertSame($context['head'], $audit['dolt_head_before']);
+            self::assertSame($context['head'], $audit['dolt_head_after']);
+        } else {
+            self::assertNull($audit['dolt_branch']);
+            self::assertNull($audit['dolt_head_before']);
+            self::assertNull($audit['dolt_head_after']);
+        }
+    }
+
+    /** @param array<string, mixed> $case */
+    private function assertOfficialDoltContextFailure(array $case): void
+    {
+        $pdo = $this->isolatedBackendPdo('dolt');
+        $connection = new Connection($pdo);
+        $fixture = $this->installOfficialBackendFixture($pdo, $connection, $case);
+        $context = $this->backendContext($pdo, $connection);
+        self::assertNotNull($context);
+        $id = (string) $case['id'];
+        if ($id === 'reject-dolt-dirty-working-set') {
+            $pdo->exec(
+                'UPDATE ' . $this->qualifiedBackendTable($connection, $fixture['schema'], $fixture['table'])
+                . ' SET `score` = 99 WHERE `__case_ordinal` = 1',
+            );
+        }
+        $before = $this->officialBackendSnapshot($pdo, $connection, $fixture);
+        $source = $this->successfulSourceText();
+        $compiled = $this->compileOfficialSource($source);
+        $expectedBranch = $context['branch'];
+        $expectedHead = $context['head'];
+        if ($id === 'reject-dolt-branch-mismatch') {
+            $expectedBranch = (string) $case['expected_context']['branch'];
+        } elseif ($id === 'reject-dolt-head-mismatch') {
+            $expectedHead = (string) $case['observed_context']['head'];
+        }
+
+        try {
+            (new InPlaceTransformationExecutor($connection))->execute(new InPlaceApplyRequest(
+                $compiled->plan,
+                'parent',
+                $fixture['dataset_id'],
+                hash('sha256', $source),
+                'conformance-runner',
+                $expectedBranch,
+                $expectedHead,
+            ));
+            self::fail('An official Dolt context failure was accepted: ' . $id);
+        } catch (TransformationFailure $failure) {
+            self::assertSame($case['expected_error'], $failure->diagnosticCode());
+        }
+
+        self::assertFalse($case['mutation_started']);
+        self::assertFalse($pdo->inTransaction());
+        self::assertSame($before, $this->officialBackendSnapshot($pdo, $connection, $fixture));
+    }
+
+    /** @param array<string, mixed> $case */
+    private function assertOfficialMySqlCreateRejection(array $case): void
+    {
+        $pdo = $this->isolatedBackendPdo('mysql');
+        $connection = new Connection($pdo);
+        $fixture = $this->installOfficialBackendFixture($pdo, $connection, $case);
+        $before = $this->officialBackendSnapshot($pdo, $connection, $fixture);
+        $compiled = $this->compileOfficialSource((string) $case['source_text']);
+
+        try {
+            (new InPlaceTransformationExecutor($connection))->execute(new InPlaceApplyRequest(
+                $compiled->plan,
+                'parent',
+                $fixture['dataset_id'],
+                $compiled->sourceHash,
+                'conformance-runner',
+            ));
+            self::fail('The official MySQL create-target rejection was accepted.');
+        } catch (TransformationFailure $failure) {
+            self::assertSame($case['expected_error'], $failure->diagnosticCode());
+        }
+
+        self::assertFalse($case['mutation_started']);
+        self::assertFalse($pdo->inTransaction());
+        self::assertSame($before, $this->officialBackendSnapshot($pdo, $connection, $fixture));
+    }
+
+    private function compileOfficialSource(string $source): \OpenStatSpec\Frontend\Spss\SpssCompilationResult
+    {
+        return (new SpssCompiler())->compile(new SpssFrontendRequest(
+            SpssFrontendRequest::CONTRACT,
+            'parent',
+            new InputSchema([new InputVariable('score', 'numeric')]),
+            $source,
+        ));
+    }
+
+    private function successfulSourceText(): string
+    {
+        return (string) $this->bindingCase('mysql-recode-and-labels-preserve-dataset-and-table-identity')['source_text'];
+    }
+
+    private function isolatedBackendPdo(string $profile, ?string $preferredDatabase = null): PDO
+    {
+        $prefix = match ($profile) {
+            'mysql' => 'OPENSTATSPEC_MYSQL',
+            'dolt' => 'OPENSTATSPEC_DOLT',
+            default => throw new RuntimeException('Unsupported official 0.1 backend profile.'),
+        };
+        $dsn = getenv($prefix . '_DSN');
+        $adminUser = getenv($prefix . '_ADMIN_USER');
+        $adminPassword = getenv($prefix . '_ADMIN_PASSWORD');
+        if (!is_string($dsn) || $dsn === '') {
+            self::markTestSkipped($prefix . '_DSN is not configured.');
+        }
+        if (!is_string($adminUser) || $adminUser === '' || !is_string($adminPassword)) {
+            self::markTestSkipped($prefix . ' explicit admin credentials are required for isolated official tests.');
+        }
+        $targetUser = getenv($prefix . '_USER');
+        $targetPassword = getenv($prefix . '_PASSWORD');
+        $options = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_STRINGIFY_FETCHES => false];
+        $database = $preferredDatabase ?? sprintf(
+            'openstatspec_t9_v01_%d_%s',
+            getmypid(),
+            bin2hex(random_bytes(6)),
+        );
+        $quotedDatabase = $this->quoteDatabase($database);
+        $admin = new PDO($dsn, $adminUser, $adminPassword, $options);
+        self::assertSame(0, (int) $this->scalar(
+            $admin,
+            'SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = ?',
+            [$database],
+        ));
+        $admin->exec('CREATE DATABASE ' . $quotedDatabase);
+        $this->isolatedTestDatabases[] = ['admin' => $admin, 'database' => $database];
+        if (is_string($targetUser) && $targetUser !== '') {
+            $quotedTargetUser = $admin->quote($targetUser);
+            if (!is_string($quotedTargetUser)) {
+                throw new RuntimeException('Unable to quote the official backend test user.');
+            }
+            $admin->exec('GRANT ALL PRIVILEGES ON ' . $quotedDatabase . ".* TO {$quotedTargetUser}@'%'");
+        }
+
+        $pdo = new PDO(
+            $this->dsnForDatabase($dsn, $database),
+            is_string($targetUser) ? $targetUser : null,
+            is_string($targetPassword) ? $targetPassword : null,
+            $options,
+        );
+        self::assertSame($profile, (new Connection($pdo))->profileName);
+        self::assertSame($database, $this->scalar($pdo, 'SELECT DATABASE()'));
+
+        return $pdo;
+    }
+
+    /**
+     * @param array<string, mixed> $case
+     * @return array{dataset_id: string, schema: string|null, table: string}
+     */
+    private function installOfficialBackendFixture(PDO $pdo, Connection $connection, array $case): array
+    {
+        $before = is_array($case['before'] ?? null) ? $case['before'] : [];
+        $observed = is_array($case['observed_context'] ?? null) ? $case['observed_context'] : [];
+        if ($connection->profileName === 'dolt') {
+            $branch = is_string($observed['branch'] ?? null)
+                ? $observed['branch']
+                : (is_string($before['dolt_branch'] ?? null) ? $before['dolt_branch'] : 'main');
+            $active = (string) $this->scalar($pdo, 'SELECT active_branch()');
+            if ($branch !== $active) {
+                $checkout = $pdo->prepare('CALL DOLT_CHECKOUT(?, ?)');
+                self::assertInstanceOf(PDOStatement::class, $checkout);
+                $checkout->execute(['-b', $branch]);
+            }
+        }
+
+        (new NormativeCatalog($pdo))->createTables();
+        (new TransformationAuditMigrator($pdo))->migrate();
+        CatalogOwnership::markCurrentVersion($pdo);
+        $datasetId = is_string($before['dataset_id'] ?? null)
+            ? $before['dataset_id']
+            : '11111111-1111-4111-8111-111111111111';
+        $schema = is_string($before['physical_table_schema'] ?? null) ? $before['physical_table_schema'] : null;
+        $table = is_string($before['physical_table_name'] ?? null) ? $before['physical_table_name'] : 'data_survey';
+        $qualified = $this->qualifiedBackendTable($connection, $schema, $table);
+        $pdo->exec(
+            'CREATE TABLE ' . $qualified . ' ('
+            . $connection->profile->quoteIdentifier('__case_ordinal') . ' BIGINT NOT NULL PRIMARY KEY, '
+            . $connection->profile->quoteIdentifier('score') . ' DOUBLE NULL)',
+        );
+        $pdo->prepare(
+            'INSERT INTO dataset (dataset_id, spec_version, source_format, physical_table_schema, physical_table_name, '
+            . 'dataset_name, source_case_count, imported_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )->execute([$datasetId, '1.0', 'fixture', $schema, $table, 'Official in-place 0.1', 4, '2026-08-17 00:00:00']);
+        $pdo->prepare(
+            'INSERT INTO variable (variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind) '
+            . 'VALUES (?, ?, ?, ?, ?, ?)',
+        )->execute(['22222222-2222-4222-8222-222222222222', $datasetId, 1, 'score', 'score', 'numeric']);
+        $insert = $pdo->prepare(
+            'INSERT INTO ' . $qualified . ' ('
+            . $connection->profile->quoteIdentifier('__case_ordinal') . ', '
+            . $connection->profile->quoteIdentifier('score') . ') VALUES (?, ?)',
+        );
+        foreach ([[1, 1.0], [2, 2.0], [3, 3.0], [4, 4.0]] as $row) {
+            $insert->execute($row);
+        }
+
+        if ($connection->profileName === 'dolt') {
+            $commit = $pdo->prepare('CALL DOLT_COMMIT(?, ?)');
+            self::assertInstanceOf(PDOStatement::class, $commit);
+            $commit->execute(['-Am', 'Official in-place 0.1 fixture']);
+            self::assertSame([], $this->rows($pdo, 'SELECT table_name FROM dolt_status'));
+        }
+
+        return ['dataset_id' => $datasetId, 'schema' => $schema, 'table' => $table];
+    }
+
+    /** @return array{branch: string, head: string}|null */
+    private function backendContext(PDO $pdo, Connection $connection): ?array
+    {
+        if ($connection->profileName !== 'dolt') {
+            return null;
+        }
+        $row = $this->rows(
+            $pdo,
+            "SELECT active_branch() AS branch_name, dolt_hashof('HEAD') AS head_hash",
+        )[0] ?? null;
+        self::assertIsArray($row);
+
+        return ['branch' => (string) $row['branch_name'], 'head' => (string) $row['head_hash']];
+    }
+
+    /**
+     * @param array{dataset_id: string, schema: string|null, table: string} $fixture
+     * @return array<string, mixed>
+     */
+    private function officialBackendSnapshot(PDO $pdo, Connection $connection, array $fixture): array
+    {
+        $qualified = $this->qualifiedBackendTable($connection, $fixture['schema'], $fixture['table']);
+        $score = array_map(
+            static fn(mixed $value): ?float => $value === null ? null : (float) $value,
+            $this->column($pdo, 'SELECT score FROM ' . $qualified . ' ORDER BY __case_ordinal'),
+        );
+        $labels = array_map(
+            static function (array $row): array {
+                $numericCode = (float) $row['numeric_code'];
+
+                return [
+                    floor($numericCode) === $numericCode ? (int) $numericCode : $numericCode,
+                    (string) $row['label'],
+                ];
+            },
+            $this->rows(
+                $pdo,
+                'SELECT label.numeric_code, label.label FROM variable '
+                . 'JOIN variable_value_label_set link ON link.variable_id = variable.variable_id '
+                . 'JOIN value_label label ON label.value_label_set_id = link.value_label_set_id '
+                . 'WHERE variable.dataset_id = ? AND variable.source_name = ? ORDER BY label.ordinal',
+                [$fixture['dataset_id'], 'score'],
+            ),
+        );
+
+        return [
+            'dataset_count' => (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset'),
+            'persistent_data_table_count' => (int) $this->scalar($pdo, 'SELECT COUNT(DISTINCT physical_table_name) FROM dataset'),
+            'dataset_identity' => $this->rows(
+                $pdo,
+                'SELECT dataset_id, physical_table_schema, physical_table_name FROM dataset WHERE dataset_id = ?',
+                [$fixture['dataset_id']],
+            ),
+            'tables' => array_map('strval', $this->column(
+                $pdo,
+                'SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name',
+            )),
+            'case_count' => (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM ' . $qualified),
+            'case_ordinals' => array_map('intval', $this->column(
+                $pdo,
+                'SELECT __case_ordinal FROM ' . $qualified . ' ORDER BY __case_ordinal',
+            )),
+            'score' => $score,
+            'variables' => $this->rows(
+                $pdo,
+                'SELECT * FROM variable WHERE dataset_id = ? ORDER BY source_ordinal',
+                [$fixture['dataset_id']],
+            ),
+            'variable_label' => $this->scalar(
+                $pdo,
+                'SELECT variable_label FROM variable WHERE dataset_id = ? AND source_name = ?',
+                [$fixture['dataset_id'], 'score'],
+            ),
+            'value_labels' => $labels,
+            'audit' => $this->rows(
+                $pdo,
+                'SELECT * FROM transformation_apply WHERE dataset_id = ? ORDER BY apply_id',
+                [$fixture['dataset_id']],
+            ),
+            'repository' => $this->backendRepositoryEvidence($pdo, $connection),
+        ];
+    }
+
+    /** @return array{branch: string, head: string, history: list<string>, status: list<array{table_name: string, status: string, staged: bool}>}|null */
+    private function backendRepositoryEvidence(PDO $pdo, Connection $connection): ?array
+    {
+        if ($connection->profileName !== 'dolt') {
+            return null;
+        }
+        $identity = $this->rows(
+            $pdo,
+            "SELECT active_branch() AS branch_name, dolt_hashof('HEAD') AS head_hash",
+        )[0] ?? [];
+        $status = array_map(static function (array $row): array {
+            $row = array_change_key_case($row, CASE_LOWER);
+
+            return [
+                'table_name' => (string) ($row['table_name'] ?? ''),
+                'status' => (string) ($row['status'] ?? ''),
+                'staged' => (bool) ($row['staged'] ?? false),
+            ];
+        }, $this->rows($pdo, 'SELECT table_name, status, staged FROM dolt_status ORDER BY table_name'));
+
+        return [
+            'branch' => (string) ($identity['branch_name'] ?? ''),
+            'head' => (string) ($identity['head_hash'] ?? ''),
+            'history' => array_map('strval', $this->column(
+                $pdo,
+                'SELECT commit_hash FROM dolt_log ORDER BY commit_order DESC, commit_hash',
+            )),
+            'status' => $status,
+        ];
+    }
+
+    /** @param list<string> $tables */
+    private function assertNoForbiddenArtifactTables(array $tables): void
+    {
+        self::assertSame([], array_values(array_filter(
+            $tables,
+            static fn(string $table): bool => preg_match('/derived|output|staging|snapshot|rollback|recovery/i', $table) === 1,
+        )));
+    }
+
+    private function qualifiedBackendTable(Connection $connection, ?string $schema, string $table): string
+    {
+        return ($schema === null ? '' : $connection->profile->quoteIdentifier($schema) . '.')
+            . $connection->profile->quoteIdentifier($table);
+    }
+
+    private function quoteDatabase(string $database): string
+    {
+        if (strlen($database) > 64 || preg_match('/\A[a-z][a-z0-9_]*\z/D', $database) !== 1) {
+            throw new RuntimeException('Unsafe official backend database name.');
+        }
+
+        return '`' . $database . '`';
+    }
+
+    private function dsnForDatabase(string $dsn, string $database): string
+    {
+        $this->quoteDatabase($database);
+        if (!str_starts_with(strtolower($dsn), 'mysql:')) {
+            throw new RuntimeException('Official MySQL-family tests require a mysql PDO DSN.');
+        }
+        $parts = explode(';', substr($dsn, strlen('mysql:')));
+        $databaseIndex = null;
+        foreach ($parts as $index => $part) {
+            if (strtolower(trim((string) explode('=', $part, 2)[0])) !== 'dbname') {
+                continue;
+            }
+            if ($databaseIndex !== null) {
+                throw new RuntimeException('Official backend DSN contains duplicate dbname settings.');
+            }
+            $databaseIndex = $index;
+        }
+        if ($databaseIndex === null) {
+            if (end($parts) === '') {
+                array_pop($parts);
+            }
+            $parts[] = 'dbname=' . $database;
+        } else {
+            $parts[$databaseIndex] = 'dbname=' . $database;
+        }
+
+        return 'mysql:' . implode(';', $parts);
     }
 
     private function planCase(string $id): TransformationPlan
@@ -274,24 +632,6 @@ final class OfficialInPlaceTransformation01Test extends TestCase
         }
 
         throw new \RuntimeException('Missing in-place 0.1 case: ' . $id);
-    }
-
-    /** @return array<string, mixed> */
-    private function mysqlFailureSnapshot(PDO $pdo, Connection $connection, string $table): array
-    {
-        return [
-            'dataset_count' => (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset'),
-            'persistent_data_table_count' => (int) $this->scalar($pdo, 'SELECT COUNT(DISTINCT physical_table_name) FROM dataset'),
-            'dataset' => $this->rows($pdo, 'SELECT * FROM dataset WHERE dataset_id = ?', [self::DATASET_ID]),
-            'variables' => $this->rows($pdo, 'SELECT * FROM variable WHERE dataset_id = ? ORDER BY source_ordinal', [self::DATASET_ID]),
-            'audit' => $this->rows($pdo, 'SELECT * FROM transformation_apply WHERE dataset_id = ? ORDER BY apply_id', [self::DATASET_ID]),
-            'tables' => $this->column($pdo, 'SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name'),
-            'rows' => $this->rows(
-                $pdo,
-                'SELECT * FROM ' . $connection->profile->quoteIdentifier($table)
-                    . ' ORDER BY ' . $connection->profile->quoteIdentifier('__case_ordinal'),
-            ),
-        ];
     }
 
     /** @return list<string> */

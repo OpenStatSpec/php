@@ -67,6 +67,7 @@ final readonly class PlanPreflight
         $this->assertAuditReady();
 
         $dataset = $this->resolveDataset($request->datasetId);
+        $this->assertMySqlFamilyTransactionalEngines($dataset);
         $this->assertExclusivePhysicalTableBinding($dataset);
         $variables = $this->resolveVariables($dataset);
         $physicalColumns = $this->physicalColumns($dataset);
@@ -655,6 +656,55 @@ final readonly class PlanPreflight
                 DiagnosticCode::CatalogMigrationRequired,
                 'The transformation audit schema is not ready before apply.',
             );
+        }
+    }
+
+    private function assertMySqlFamilyTransactionalEngines(DatasetBinding $dataset): void
+    {
+        if (!in_array($this->connection->profileName, ['mysql', 'mariadb'], true)) {
+            return;
+        }
+
+        $relations = [
+            [$dataset->schema, $dataset->table],
+            [null, 'dataset'],
+            [null, 'variable'],
+            [null, 'value_label_set'],
+            [null, 'value_label'],
+            [null, 'variable_value_label_set'],
+            [null, 'transformation_apply'],
+        ];
+        foreach ($relations as [$schema, $table]) {
+            try {
+                $statement = $this->statement(
+                    'SELECT table_type, engine FROM information_schema.tables '
+                    . 'WHERE table_schema = COALESCE(?, DATABASE()) AND table_name = ?',
+                );
+                CheckedPdo::execute(
+                    $statement,
+                    [$schema, $table],
+                    'MySQL-family storage-engine metadata could not be queried.',
+                );
+                $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+            } catch (PDOException $failure) {
+                throw new UnsupportedOperation(
+                    DiagnosticCode::SqlProfileOperationUnavailable,
+                    'MySQL-family transactional storage-engine metadata is unavailable: ' . $failure->getMessage(),
+                );
+            }
+
+            $row = isset($rows[0]) ? array_change_key_case($rows[0], CASE_LOWER) : [];
+            if (count($rows) !== 1
+                || !is_string($row['table_type'] ?? null)
+                || strcasecmp($row['table_type'], 'BASE TABLE') !== 0
+                || !is_string($row['engine'] ?? null)
+                || strcasecmp($row['engine'], 'InnoDB') !== 0
+            ) {
+                throw new UnsupportedOperation(
+                    DiagnosticCode::SqlProfileOperationUnavailable,
+                    'MySQL-family atomic apply requires every participating data, catalog, and audit table to use InnoDB.',
+                );
+            }
         }
     }
 

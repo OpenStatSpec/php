@@ -53,7 +53,7 @@ final class InPlaceTransformationServiceTest extends TestCase
     private ?array $activeFixture = null;
 
     /** @var list<array{admin: PDO, database: string}> */
-    private array $doltTestDatabases = [];
+    private array $isolatedTestDatabases = [];
 
     private ?string $doltDatabaseRunId = null;
 
@@ -62,13 +62,13 @@ final class InPlaceTransformationServiceTest extends TestCase
     protected function tearDown(): void
     {
         try {
-            foreach (array_reverse($this->doltTestDatabases) as $testDatabase) {
+            foreach (array_reverse($this->isolatedTestDatabases) as $testDatabase) {
                 $testDatabase['admin']->exec(
                     'DROP DATABASE ' . $this->quoteDoltDatabaseName($testDatabase['database']),
                 );
             }
         } finally {
-            $this->doltTestDatabases = [];
+            $this->isolatedTestDatabases = [];
             $this->activeFixture = null;
             parent::tearDown();
         }
@@ -118,6 +118,16 @@ final class InPlaceTransformationServiceTest extends TestCase
     {
         yield 'MySQL' => ['mysql', 'OPENSTATSPEC_MYSQL', 'mysql'];
         yield 'MariaDB' => ['mariadb', 'OPENSTATSPEC_MARIADB', 'mysql'];
+    }
+
+    /** @return iterable<string, array{string, string, string, string}> */
+    public static function mySqlFamilyCatalogAndAuditEngineCases(): iterable
+    {
+        foreach (self::transactionalMySqlServices() as $service => $configuration) {
+            foreach (['dataset', 'variable', 'value_label_set', 'value_label', 'variable_value_label_set', 'transformation_apply'] as $table) {
+                yield $service . ' / ' . $table => [...$configuration, $table];
+            }
+        }
     }
 
     /** @param list<string> $expectedVersionFamilies */
@@ -381,6 +391,161 @@ final class InPlaceTransformationServiceTest extends TestCase
             if ($constraintInstalled) {
                 $pdo->exec('ALTER TABLE transformation_apply DROP CONSTRAINT ' . $quotedConstraint);
             }
+            $this->purgeFixture($pdo, $connection, $fixture);
+        }
+    }
+
+    #[DataProvider('transactionalMySqlServices')]
+    public function testMySqlFamilyRejectsMyIsamWideTableBeforeForcedAuditFailure(
+        string $expectedProfile,
+        string $environmentPrefix,
+        string $driver,
+    ): void {
+        unset($driver);
+        $pdo = $this->isolatedMySqlFamilyPdo($expectedProfile, $environmentPrefix);
+        $connection = new Connection($pdo);
+        $fixture = $this->installFixture($pdo, $connection);
+        $constraint = 'task9_nontransactional_wide_' . $expectedProfile;
+        $quotedConstraint = $connection->profile->quoteIdentifier($constraint);
+
+        try {
+            $pdo->exec(
+                'ALTER TABLE ' . $connection->profile->quoteIdentifier($fixture['table_name']) . ' ENGINE=MyISAM',
+            );
+            $pdo->exec(
+                'ALTER TABLE transformation_apply ADD CONSTRAINT ' . $quotedConstraint
+                . " CHECK (actor <> 'integration-test')",
+            );
+            $before = $this->applyFailureSnapshot($pdo, $connection, $fixture);
+
+            try {
+                (new InPlaceTransformationExecutor($connection))->execute(
+                    $this->applyRequest($this->existingTargetPlan()),
+                );
+                self::fail('A MyISAM-bound wide table was accepted for an atomic apply.');
+            } catch (UnsupportedOperation $failure) {
+                self::assertSame(DiagnosticCode::SqlProfileOperationUnavailable, $failure->diagnosticCode);
+            }
+
+            self::assertFalse($pdo->inTransaction());
+            self::assertSame($before, $this->applyFailureSnapshot($pdo, $connection, $fixture));
+        } finally {
+            $pdo->exec('ALTER TABLE transformation_apply DROP CONSTRAINT ' . $quotedConstraint);
+            $this->purgeFixture($pdo, $connection, $fixture);
+        }
+    }
+
+    #[DataProvider('mySqlFamilyCatalogAndAuditEngineCases')]
+    public function testMySqlFamilyRejectsNonTransactionalCatalogAndAuditEngines(
+        string $expectedProfile,
+        string $environmentPrefix,
+        string $driver,
+        string $table,
+    ): void {
+        unset($driver);
+        $pdo = $this->isolatedMySqlFamilyPdo($expectedProfile, $environmentPrefix);
+        $connection = new Connection($pdo);
+        $fixture = $this->installFixture($pdo, $connection);
+        $this->dropMySqlForeignKeys($pdo, $connection);
+        $this->dropMySqlSecondaryIndexes($pdo, $connection, $table);
+        $pdo->exec('ALTER TABLE ' . $connection->profile->quoteIdentifier($table) . ' ENGINE=MyISAM');
+        $before = $this->applyFailureSnapshot($pdo, $connection, $fixture);
+
+        try {
+            (new InPlaceTransformationExecutor($connection))->execute(
+                $this->applyRequest($this->existingTargetPlan()),
+            );
+            self::fail('A non-transactional catalog or audit table was accepted: ' . $table);
+        } catch (UnsupportedOperation $failure) {
+            self::assertSame(DiagnosticCode::SqlProfileOperationUnavailable, $failure->diagnosticCode);
+        }
+
+        self::assertFalse($pdo->inTransaction());
+        self::assertSame($before, $this->applyFailureSnapshot($pdo, $connection, $fixture));
+    }
+
+    #[DataProvider('transactionalMySqlServices')]
+    public function testMySqlFamilyRejectsMissingWideTableEngineMetadata(
+        string $expectedProfile,
+        string $environmentPrefix,
+        string $driver,
+    ): void {
+        unset($driver);
+        $pdo = $this->isolatedMySqlFamilyPdo($expectedProfile, $environmentPrefix);
+        $connection = new Connection($pdo);
+        $fixture = $this->installFixture($pdo, $connection);
+        $quotedTable = $connection->profile->quoteIdentifier($fixture['table_name']);
+        $rows = $this->rawTableRows(
+            $pdo,
+            $connection,
+            $fixture['table_name'],
+            ['__case_ordinal', 'source_value', 'destination'],
+        );
+        $pdo->exec('DROP TABLE ' . $quotedTable);
+        $pdo->exec(
+            'CREATE TEMPORARY TABLE ' . $quotedTable . ' ('
+            . '`__case_ordinal` BIGINT NOT NULL PRIMARY KEY, '
+            . '`source_value` DOUBLE NULL, `destination` DOUBLE NULL) ENGINE=InnoDB',
+        );
+        $insert = $pdo->prepare(
+            'INSERT INTO ' . $quotedTable . ' (`__case_ordinal`, `source_value`, `destination`) VALUES (?, ?, ?)',
+        );
+        foreach ($rows as $row) {
+            $insert->execute([$row['__case_ordinal'], $row['source_value'], $row['destination']]);
+        }
+        $before = $this->applyFailureSnapshot($pdo, $connection, $fixture);
+
+        try {
+            (new InPlaceTransformationExecutor($connection))->execute(
+                $this->applyRequest($this->existingTargetPlan()),
+            );
+            self::fail('A table missing from storage-engine metadata was accepted.');
+        } catch (UnsupportedOperation $failure) {
+            self::assertContains($failure->diagnosticCode, [
+                DiagnosticCode::SqlProfileOperationUnavailable,
+                DiagnosticCode::CatalogNamespaceCollision,
+            ]);
+        }
+
+        self::assertFalse($pdo->inTransaction());
+        self::assertSame($before, $this->applyFailureSnapshot($pdo, $connection, $fixture));
+    }
+
+    #[DataProvider('transactionalMySqlServices')]
+    public function testMySqlFamilyRejectsUnknownViewEngineMetadata(
+        string $expectedProfile,
+        string $environmentPrefix,
+        string $driver,
+    ): void {
+        unset($driver);
+        $pdo = $this->isolatedMySqlFamilyPdo($expectedProfile, $environmentPrefix);
+        $connection = new Connection($pdo);
+        $fixture = $this->installFixture($pdo, $connection);
+        $quotedTable = $connection->profile->quoteIdentifier($fixture['table_name']);
+        $backing = $fixture['table_name'] . '_backing';
+        $quotedBacking = $connection->profile->quoteIdentifier($backing);
+        $pdo->exec('RENAME TABLE ' . $quotedTable . ' TO ' . $quotedBacking);
+        $pdo->exec('CREATE VIEW ' . $quotedTable . ' AS SELECT * FROM ' . $quotedBacking);
+        $before = $this->applyFailureSnapshot($pdo, $connection, $fixture);
+
+        try {
+            try {
+                (new InPlaceTransformationExecutor($connection))->execute(
+                    $this->applyRequest($this->existingTargetPlan()),
+                );
+                self::fail('A view with NULL storage-engine metadata was accepted.');
+            } catch (UnsupportedOperation $failure) {
+                self::assertContains($failure->diagnosticCode, [
+                    DiagnosticCode::SqlProfileOperationUnavailable,
+                    DiagnosticCode::CatalogNamespaceCollision,
+                ]);
+            }
+
+            self::assertFalse($pdo->inTransaction());
+            self::assertSame($before, $this->applyFailureSnapshot($pdo, $connection, $fixture));
+        } finally {
+            $pdo->exec('DROP VIEW IF EXISTS ' . $quotedTable);
+            $pdo->exec('RENAME TABLE ' . $quotedBacking . ' TO ' . $quotedTable);
             $this->purgeFixture($pdo, $connection, $fixture);
         }
     }
@@ -1069,6 +1234,95 @@ final class InPlaceTransformationServiceTest extends TestCase
         );
     }
 
+    private function isolatedMySqlFamilyPdo(string $expectedProfile, string $environmentPrefix): PDO
+    {
+        $dsn = getenv($environmentPrefix . '_DSN');
+        $adminUser = getenv($environmentPrefix . '_ADMIN_USER');
+        $adminPassword = getenv($environmentPrefix . '_ADMIN_PASSWORD');
+        if (!is_string($dsn) || $dsn === '') {
+            self::markTestSkipped($environmentPrefix . '_DSN is not configured.');
+        }
+        if (!is_string($adminUser) || $adminUser === '' || !is_string($adminPassword)) {
+            self::markTestSkipped(
+                $environmentPrefix . '_ADMIN_USER and ' . $environmentPrefix
+                . '_ADMIN_PASSWORD must be explicitly configured for isolated engine tests.',
+            );
+        }
+        $targetUser = getenv($environmentPrefix . '_USER');
+        $targetPassword = getenv($environmentPrefix . '_PASSWORD');
+        $options = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_STRINGIFY_FETCHES => false];
+        $database = $this->newDoltDatabaseName();
+        $admin = new PDO($dsn, $adminUser, $adminPassword, $options);
+        $admin->exec('CREATE DATABASE ' . $this->quoteDoltDatabaseName($database));
+        $this->isolatedTestDatabases[] = ['admin' => $admin, 'database' => $database];
+        if (is_string($targetUser) && $targetUser !== '') {
+            $quotedTargetUser = $admin->quote($targetUser);
+            if (!is_string($quotedTargetUser)) {
+                throw new RuntimeException('Unable to quote the MySQL-family target user.');
+            }
+            $admin->exec(
+                'GRANT ALL PRIVILEGES ON ' . $this->quoteDoltDatabaseName($database)
+                . ".* TO {$quotedTargetUser}@'%'",
+            );
+        }
+        $pdo = new PDO(
+            $this->dsnForDoltDatabase($dsn, $database),
+            is_string($targetUser) ? $targetUser : null,
+            is_string($targetPassword) ? $targetPassword : null,
+            $options,
+        );
+        self::assertSame($expectedProfile, (new Connection($pdo))->profileName);
+        self::assertSame($database, $this->scalar($pdo, 'SELECT DATABASE()', []));
+
+        return $pdo;
+    }
+
+    private function dropMySqlForeignKeys(PDO $pdo, Connection $connection): void
+    {
+        $constraints = $this->rows(
+            $pdo,
+            'SELECT table_name, constraint_name FROM information_schema.referential_constraints '
+            . 'WHERE constraint_schema = DATABASE() ORDER BY table_name, constraint_name',
+            [],
+        );
+        foreach ($constraints as $constraint) {
+            $constraint = array_change_key_case($constraint, CASE_LOWER);
+            $table = $constraint['table_name'] ?? null;
+            $name = $constraint['constraint_name'] ?? null;
+            if (!is_string($table) || $table === '' || !is_string($name) || $name === '') {
+                throw new RuntimeException('MySQL-family foreign-key metadata is malformed.');
+            }
+            $pdo->exec(
+                'ALTER TABLE ' . $connection->profile->quoteIdentifier($table)
+                . ' DROP FOREIGN KEY ' . $connection->profile->quoteIdentifier($name),
+            );
+        }
+    }
+
+    private function dropMySqlSecondaryIndexes(PDO $pdo, Connection $connection, string $table): void
+    {
+        $indexRows = $this->rows(
+            $pdo,
+            'SELECT index_name FROM information_schema.statistics '
+            . "WHERE table_schema = DATABASE() AND table_name = ? AND index_name <> 'PRIMARY' ORDER BY index_name",
+            [$table],
+        );
+        $indexes = [];
+        foreach ($indexRows as $row) {
+            $row = array_change_key_case($row, CASE_LOWER);
+            if (!is_string($row['index_name'] ?? null) || $row['index_name'] === '') {
+                throw new RuntimeException('MySQL-family index metadata is malformed.');
+            }
+            $indexes[$row['index_name']] = true;
+        }
+        foreach (array_keys($indexes) as $index) {
+            $pdo->exec(
+                'ALTER TABLE ' . $connection->profile->quoteIdentifier($table)
+                . ' DROP INDEX ' . $connection->profile->quoteIdentifier($index),
+            );
+        }
+    }
+
     /** @return array{user: string, password: string}|null */
     private function doltAdminCredentials(string|false $user, string|false $password): ?array
     {
@@ -1128,7 +1382,7 @@ final class InPlaceTransformationServiceTest extends TestCase
             $options,
         );
         $admin->exec('CREATE DATABASE ' . $this->quoteDoltDatabaseName($database));
-        $this->doltTestDatabases[] = ['admin' => $admin, 'database' => $database];
+        $this->isolatedTestDatabases[] = ['admin' => $admin, 'database' => $database];
         if ($targetUser !== null && $targetUser !== '') {
             $quotedTargetUser = $admin->quote($targetUser);
             if (!is_string($quotedTargetUser)) {

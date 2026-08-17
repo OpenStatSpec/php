@@ -6,12 +6,17 @@
 - Dolt execution requires caller-supplied expected branch and HEAD. The guard compares both to the live branch/HEAD and requires a clean working set before mutation.
 - After ordered operations, the guard rereads branch and HEAD inside the transaction and compares them to both the request and the initial evidence before the success audit and commit.
 - The executor reuses the Task 8 path: one native transaction contains data, metadata, post-operation Dolt validation, and exactly one compact success audit. Every failure rolls that transaction back.
+- MySQL/MariaDB preflight now queries parameterized `information_schema.tables` metadata for the bound wide table and the six apply-participating catalog/audit tables. It requires exactly one `BASE TABLE` row using InnoDB for each relation and fails closed on MyISAM, unknown/NULL, missing, duplicate, view, or unreadable metadata before transaction start.
+- The engine rule is limited to the `mysql` and `mariadb` profiles. Dolt keeps its independent transaction contract and is not treated as InnoDB merely because it uses the MySQL wire protocol.
 - Production code calls no Dolt mutation procedure and creates no dataset copy, output/staging/snapshot table, or hidden recovery state.
 
 ## TDD evidence
 
 - RED: seven focused Dolt tests produced three failures and four errors because the prior guard ignored request context and exposed the old signatures.
 - RED: the live MySQL-family official 0.2 create-target cases initially returned `unknown_variable` rather than `schema_change_not_atomic`, proving capability rejection happened too late.
+- Review RED: 18 live MySQL/MariaDB storage-engine cases produced 15 acceptance failures; three malformed-relation cases were already rejected by namespace ownership. The accepted cases included a MyISAM bound wide table reaching an injected audit failure, all six apply-participating catalog/audit tables using MyISAM, and missing wide-table metadata on MySQL.
+- Review GREEN: all 18 engine cases passed with 228 assertions. Exact before/after snapshots prove no data, catalog, audit, dataset-count, or physical-table-count change and no open transaction.
+- Manifest-gate RED: the prior backend gate covered only one of the six official 0.1 case IDs; a clean inventory test failed on the other five IDs. GREEN runs every manifest row through an exhaustive ID dispatcher backed by the live MySQL or Dolt executor and passed 6 tests with 334 assertions.
 - GREEN: focused MySQL 8.4.9, MariaDB 11.4.8, and Dolt 2.2.2 execution passed 54 tests with 737 assertions and six PostgreSQL-only skips.
 - Official 0.1 MySQL and official 0.2 MySQL/MariaDB/Dolt create cases snapshot rows, catalog, audit, dataset count, persistent table count, and repository evidence; all reject before mutation with exact equality.
 - Dolt tests cover empty actor, missing context without an evidence read, initial branch/HEAD mismatch, dirty state, and injected post-mutation context change with exact error codes.
@@ -20,13 +25,15 @@
 ## Live evidence
 
 - MySQL: 8.4.9; MariaDB: 11.4.8-MariaDB-ubu2404; Dolt: 2.2.2 (MySQL wire compatibility 8.0.31).
+- The final focused live gate ran all six official 0.1 cases and all eleven official 0.2 cases, plus engine and Dolt guard regressions: 74 tests, 1,266 assertions, and six PostgreSQL-only skips. No configured MySQL, MariaDB, or Dolt case skipped.
 - Dolt Task 9 cases use randomly named isolated databases with explicit namespace prechecks and teardown. Successful existing-target apply preserves branch and HEAD, produces one dirty working-set diff for the in-place edit, and adds no Dolt commit; failure leaves no edit or audit.
-- The temporary Dolt repository remained on `main` at HEAD `jup6aortet0oao7jppgohjtilb74oepd` with exactly one setup commit after the full run. Legacy round-trip tests leave unrelated untracked fixture tables in the shared base database; Task 9 assertions run in isolated databases and clean them up.
+- The authoritative temporary Dolt repository remained on `main` at HEAD `dvba843qo8iqg962au54meed7degbeok` with exactly one setup commit after the full run. Legacy round-trip tests leave unrelated untracked fixture tables in the shared base database; Task 9 assertions run in isolated databases and clean them up.
 
 ## Verification
 
-- Full live `composer test`: 455 tests, 5,038 assertions, nine PostgreSQL skips; passed after correcting the Dolt test DSN to select its base database.
-- Full LF-normalized staged-tree `composer check`: Composer validation, PHP lint, PHP CS Fixer, PHPStan, and PHPUnit passed; PHPUnit ran 455 tests with 5,040 assertions and nine PostgreSQL skips.
+- Full live `composer test`: 475 tests, 5,565 assertions, nine PostgreSQL skips; passed with MySQL 8.4.9, MariaDB 11.4.8, and Dolt 2.2.2 configured.
+- Full LF-normalized staged-tree `composer check`: Composer validation, PHP lint, PHP CS Fixer over 226 files, PHPStan, and PHPUnit passed; PHPUnit ran 475 tests with 5,565 assertions and nine PostgreSQL skips.
+- The first normalized run reached Composer's default 300-second process timeout during a legacy Dolt dictionary test. Its interrupted fixture was confined to the temporary Dolt volume; that named container/volume was recreated from a clean one-commit repository, and the authoritative full check passed with `COMPOSER_PROCESS_TIMEOUT=900`.
 - `composer analyse`: passed with no errors. `composer lint`: passed. Task-changed-file PHP CS Fixer dry-run: zero fixable files. `git diff --cached --check`: passed.
 - Working-tree `composer style` still exits 8 because 122 unchanged repository PHP files retain the pre-existing CRLF baseline; the normalized full gate checked all 226 PHP files cleanly.
 - The CRLF pre-commit hook cannot execute directly (`bash\r` shebang), so the commit uses `--no-verify` only after the equivalent normalized staged-tree gate passed.
