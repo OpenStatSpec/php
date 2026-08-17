@@ -13,6 +13,15 @@
   documentation with the separately versioned OpenStatSpec package.
 - Made the transformation capability boundary explicit: the current PHP API uses the package-local legacy `openstatspec-transformation-plan-v1` contract and does not yet claim official Transformation Plan or SPSS Frontend profile 0.1/0.2 conformance.
 
+- Added the PHP in-place transformation service-matrix evidence gate. SQLite
+  runs locally; locally unconfigured PostgreSQL, MySQL, MariaDB, and Dolt
+  profiles skip, while CI configures and executes every service profile. The
+  gate proves existing-target dataset, physical-table, and variable identity;
+  it restricts implicit numeric target creation to SQLite/PostgreSQL and
+  requires MySQL/MariaDB/Dolt targets to be created and catalogued first.
+  This remains adapter evidence under the legacy contract, not an official
+  OpenStatSpec Transformation Plan 1.0 profile claim.
+
 ## [0.4.0] - 2026-07-31
 
 ### Added

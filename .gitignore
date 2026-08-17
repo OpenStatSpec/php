@@ -1,4 +1,5 @@
 /vendor/
+/.superpowers/
 /.php-cs-fixer.cache
 /.phpunit.result.cache
 /.phpunit.cache/

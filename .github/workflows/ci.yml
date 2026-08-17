@@ -71,7 +71,7 @@ jobs:
           coverage: none
           extensions: pdo_pgsql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "PostgreSqlSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest"
+      - run: vendor/bin/phpunit --filter "PostgreSqlSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest"
 
   mysql-integration:
     name: MySQL ${{ matrix.mysql }} integration / PHP ${{ matrix.php }}
@@ -115,7 +115,7 @@ jobs:
           coverage: none
           extensions: pdo_mysql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "MySqlSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest"
+      - run: vendor/bin/phpunit --filter "MySqlSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest"
 
   mariadb-integration:
     name: MariaDB ${{ matrix.mariadb }} integration / PHP ${{ matrix.php }}
@@ -159,7 +159,7 @@ jobs:
           coverage: none
           extensions: pdo_mysql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "MariaDbSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest"
+      - run: vendor/bin/phpunit --filter "MariaDbSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest"
 
   dolt-integration:
     name: Dolt ${{ matrix.dolt.version }} integration / PHP ${{ matrix.php }}
@@ -189,6 +189,8 @@ jobs:
       OPENSTATSPEC_DOLT_DSN: mysql:host=127.0.0.1;port=3306;dbname=openstatspec;charset=utf8mb4
       OPENSTATSPEC_DOLT_USER: openstatspec
       OPENSTATSPEC_DOLT_PASSWORD: openstatspec
+      OPENSTATSPEC_DOLT_ADMIN_USER: root
+      OPENSTATSPEC_DOLT_ADMIN_PASSWORD: root
       OPENSTATSPEC_EXPECTED_DOLT_VERSION: ${{ matrix.dolt.version }}
     steps:
       - uses: actions/checkout@v7
@@ -211,4 +213,4 @@ jobs:
           done
           exit 1
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "DoltSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest"
+      - run: vendor/bin/phpunit --filter "DoltSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest"
