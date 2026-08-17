@@ -331,6 +331,28 @@ final class InPlaceTransformationExecutorTest extends TestCase
         self::assertSame($beforePersistentTableCount, (int) $this->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"));
     }
 
+    public function testSqliteAttachedSchemaPhysicalColumnsAreIntrospectedInBoundNamespace(): void
+    {
+        $this->pdo->exec("ATTACH DATABASE ':memory:' AS other");
+        $this->pdo->exec('CREATE TABLE other."odd""table" ("odd""source" REAL NULL, "target"";DROP TABLE dataset;--" REAL NULL, text_value TEXT)');
+        $insert = $this->pdo->prepare('INSERT INTO other."odd""table" ("odd""source", "target"";DROP TABLE dataset;--", text_value) VALUES (?, ?, ?)');
+        $insert->execute([2.0, 7.0, 'A']);
+        $insert->execute([null, 7.0, 'B']);
+        $this->pdo->exec("UPDATE dataset SET physical_table_schema = 'other'");
+        $plan = new TransformationPlan(PlanContract::V02, 'parent', [
+            new AssignOperation('target', TargetMode::Replace, new VariableOperand('source')),
+        ]);
+
+        try {
+            (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($this->request($plan));
+            self::fail('An attached SQLite table without the case-order column was accepted.');
+        } catch (TransformationFailure $failure) {
+            self::assertSame('invalid_catalog', $failure->diagnosticCode());
+        } finally {
+            $this->pdo->exec('DETACH DATABASE other');
+        }
+    }
+
     public function testCrossDatasetValueLabelAssociationFailsBeforeEarlierUpdate(): void
     {
         $otherDataset = '99999999-9999-4999-8999-999999999999';

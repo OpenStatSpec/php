@@ -486,15 +486,29 @@ final readonly class PlanPreflight
         }
     }
 
-    private function canonicalPhysicalSchema(?string $schema): ?string
+    private function canonicalPhysicalSchema(?string $schema): string
     {
         if ($this->connection->profileName === 'sqlite'
             && ($schema === null || strcasecmp($schema, 'main') === 0)
         ) {
             return 'main';
         }
+        if ($schema !== null) {
+            return $schema;
+        }
 
-        return $schema;
+        $statement = $this->statement(
+            $this->connection->profileName === 'postgresql'
+                ? 'SELECT current_schema()'
+                : 'SELECT DATABASE()',
+        );
+        CheckedPdo::execute($statement, [], 'The active physical schema could not be queried.');
+        $active = $statement->fetchColumn();
+        if (!is_string($active) || $active === '') {
+            throw TransformationFailure::at('invalid_catalog', '$.dataset_id', 'The active physical schema is unavailable.');
+        }
+
+        return $active;
     }
 
     private function canonicalPhysicalTable(string $table): string
@@ -604,7 +618,8 @@ final readonly class PlanPreflight
     {
         if ($this->connection->profileName === 'sqlite') {
             $statement = $this->statement(
-                'PRAGMA table_info(' . $this->connection->profile->quoteIdentifier($dataset->table) . ')',
+                'PRAGMA ' . $this->connection->profile->quoteIdentifier($dataset->schema ?? 'main')
+                . '.table_info(' . $this->connection->profile->quoteIdentifier($dataset->table) . ')',
             );
             CheckedPdo::execute($statement, [], 'SQLite physical columns could not be queried.');
             $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
