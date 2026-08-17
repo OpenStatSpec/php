@@ -15,7 +15,7 @@ final class CatalogOwnership
     private const IDENTITY_TABLE = 'catalog_identity';
     private const CONTRACT_ID = 'openstatspec-strict-wide-table-v1';
     private const MIGRATION_TABLE = 'openstatspec_schema_migration';
-    private const SCHEMA_VERSION = 3;
+    private const SCHEMA_VERSION = 4;
 
     /** @return array<string, mixed> */
     public static function binding(PDO $pdo): array
@@ -235,15 +235,24 @@ final class CatalogOwnership
         $canonicalComplete = $canonical !== [] && self::matchesCompleteDefinition($pdo, $canonical, $canonicalDefinition);
         $legacyComplete = $legacy !== [] && self::matchesCompleteDefinition($pdo, $legacy, $legacyDefinition);
         $journalsComplete = $journals === [] || self::isRecognizedJournalOnlyLegacyCatalog($pdo, $journals);
+        $auditPresent = in_array('transformation_apply', $collisions, true);
+        $auditComplete = !$auditPresent || self::canSelectColumns($pdo, 'transformation_apply', [
+            'apply_id', 'contract_id', 'database_profile', 'dataset_id', 'physical_table_schema',
+            'physical_table_name', 'source_hash', 'plan_hash', 'canonical_plan_json', 'actor',
+            'status', 'dolt_branch', 'dolt_head_before', 'dolt_head_after', 'operation_count',
+            'started_at', 'completed_at',
+        ]);
         if (($canonical !== [] && !$canonicalComplete)
             || ($legacy !== [] && !$legacyComplete)
             || !$journalsComplete
+            || !$auditComplete
         ) {
             return false;
         }
-        return $markerVersion === self::SCHEMA_VERSION
-            ? $canonicalComplete
-            : ($canonicalComplete || $legacyComplete);
+        if ($markerVersion >= 3) {
+            return $canonicalComplete && ($markerVersion < self::SCHEMA_VERSION || $auditPresent);
+        }
+        return $canonicalComplete || $legacyComplete;
     }
 
     /** @param list<string> $collisions */
@@ -707,6 +716,7 @@ final class CatalogOwnership
             'variable_value_label_set', 'missing_rule', 'dataset_attribute', 'variable_attribute',
             'document', 'variable_set', 'variable_set_member', 'multiple_response_set',
             'multiple_response_member', 'operation', 'fidelity_event', 'datasets', 'variables',
+            'transformation_apply',
             'dataset_weight_variables', 'dataset_metadata', 'file_technical_metadata', 'documents',
             'value_labels', 'missing_rules', 'missing_rule_values', 'variable_display_metadata',
             'variable_roles', 'file_attributes', 'variable_attributes', 'variable_sets',

@@ -23,6 +23,7 @@ use OpenStatSpec\Sql\PostgreSqlWideTableImporter;
 use OpenStatSpec\Sql\PostgreSqlSchema;
 use OpenStatSpec\Sql\SqliteWideTableExporter;
 use OpenStatSpec\Sql\SqliteWideTableImporter;
+use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
 use PDO;
 use Throwable;
 
@@ -67,6 +68,7 @@ final readonly class SpssAdapter
         };
         $catalog = new NormativeCatalog($this->connection->pdo);
         $catalog->createTables();
+        (new TransformationAuditMigrator($this->connection->pdo))->migrate();
         $this->backfillLegacyDatasets($catalog);
         CatalogOwnership::markCurrentVersion($this->connection->pdo);
     }

@@ -65,19 +65,32 @@ final readonly class NormativeCatalog
             $this->enforceSetOrdinalConstraints($driver);
         }
 
+        if (in_array($driver, ['mysql', 'pgsql', 'sqlite'], true)) {
+            foreach ([1, 2] as $version) {
+                $this->recordMigration($version);
+            }
+            if ($migrationV3Required) {
+                $this->recordMigration(3);
+            }
+        }
+    }
+
+    /** Record one completed explicit catalogue migration idempotently. */
+    public function recordMigration(int $version): void
+    {
+        if ($version < 1) {
+            throw new \InvalidArgumentException('A catalogue migration version must be positive.');
+        }
+        $driver = (string) $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
         $migration = match ($driver) {
             'mysql' => 'INSERT IGNORE INTO openstatspec_schema_migration (version, applied_at) VALUES (?, ?)',
             'pgsql', 'sqlite' => 'INSERT INTO openstatspec_schema_migration (version, applied_at) VALUES (?, ?) ON CONFLICT (version) DO NOTHING',
-            default => null,
+            default => throw new UnsupportedOperation(
+                DiagnosticCode::UnsupportedSqlDriver,
+                'The active SQL profile cannot record catalogue migrations.',
+            ),
         };
-        if ($migration !== null) {
-            foreach ([1, 2] as $version) {
-                $this->pdo->prepare($migration)->execute([$version, self::timestamp()]);
-            }
-            if ($migrationV3Required) {
-                $this->pdo->prepare($migration)->execute([3, self::timestamp()]);
-            }
-        }
+        $this->statement($migration)->execute([$version, self::timestamp()]);
     }
 
     private function migrationApplied(int $version): bool

@@ -213,7 +213,7 @@ final class CatalogOwnershipTest extends TestCase
 
         CatalogOwnership::ensure($pdo);
 
-        self::assertSame(3, (int) $this->query($pdo, 'SELECT schema_version FROM catalog_identity')->fetchColumn());
+        self::assertSame(4, (int) $this->query($pdo, 'SELECT schema_version FROM catalog_identity')->fetchColumn());
     }
 
     public function testOlderIdentityVersionIsAcceptedWithoutPrematureUpgrade(): void
@@ -231,7 +231,7 @@ final class CatalogOwnershipTest extends TestCase
     {
         $pdo = $this->sqlite();
         CatalogOwnership::ensure($pdo);
-        $pdo->exec('UPDATE catalog_identity SET schema_version = 4');
+        $pdo->exec('UPDATE catalog_identity SET schema_version = 5');
 
         try {
             CatalogOwnership::ensure($pdo);
@@ -240,7 +240,7 @@ final class CatalogOwnershipTest extends TestCase
             self::assertSame(DiagnosticCode::CatalogNamespaceCollision, $exception->diagnosticCode);
         }
 
-        self::assertSame(4, (int) $this->query($pdo, 'SELECT schema_version FROM catalog_identity')->fetchColumn());
+        self::assertSame(5, (int) $this->query($pdo, 'SELECT schema_version FROM catalog_identity')->fetchColumn());
     }
 
     public function testForeignCatalogNameFailsBeforeOwnershipObjectsAreCreated(): void
