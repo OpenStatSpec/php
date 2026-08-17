@@ -85,6 +85,21 @@ final class TransformationPlan01Test extends TestCase
                 'unmatched' => ['kind' => 'copy'],
             ]],
         ], 'invalid_numeric_range'];
+        yield 'reserved recode target' => [[
+            'contract' => 'openstatspec-transformation-plan-v0.1',
+            'input_alias' => 'parent',
+            'operations' => [[
+                'op' => 'recode',
+                'source' => 'source',
+                'target' => '__hidden',
+                'target_mode' => 'replace',
+                'rules' => [[
+                    'match' => ['kind' => 'values', 'values' => [['type' => 'binary64', 'bits' => '3ff0000000000000']]],
+                    'result' => ['kind' => 'copy'],
+                ]],
+                'unmatched' => ['kind' => 'copy'],
+            ]],
+        ], 'reserved_target_name'];
         yield 'duplicate exact typed label values' => [[
             'contract' => 'openstatspec-transformation-plan-v0.1',
             'input_alias' => 'parent',

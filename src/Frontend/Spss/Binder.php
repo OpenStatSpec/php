@@ -315,7 +315,7 @@ final class Binder
             $rules = [];
             $unmatched = null;
             foreach ($statement->rules as $rule) {
-                $result = $this->recodeResult($rule->output, $source);
+                $result = $this->recodeResult($rule->output, $source, $targetMode);
                 if ($rule->input instanceof ElseInput) {
                     $unmatched = $result;
                     continue;
@@ -420,13 +420,13 @@ final class Binder
         throw new \LogicException(sprintf('Unsupported recode input %s.', $input::class));
     }
 
-    private function recodeResult(RecodeOutput $output, InputVariable $source): Result
+    private function recodeResult(RecodeOutput $output, InputVariable $source, TargetMode $targetMode): Result
     {
         if ($output->kind === RecodeOutputKind::Copy) {
             return new CopyResult();
         }
         if ($output->kind === RecodeOutputKind::SystemMissing) {
-            if ($source->storageKind === 'string') {
+            if ($source->storageKind === 'string' && $targetMode === TargetMode::Replace) {
                 $this->fail(
                     'system_missing_for_string',
                     'SYSMIS cannot be produced for a string variable.',

@@ -155,6 +155,16 @@ final class SpssCompilerTest extends TestCase
         self::assertSame('3ff0000000000002', $operations[1]['labels'][0]['value']['bits']);
     }
 
+    public function testStringSourceCanCreateNumericTargetWithExplicitSystemMissingElse(): void
+    {
+        $result = (new SpssCompiler())->compile(SpssFrontendRequest::fromArray(self::payload(
+            "RECODE color ('R' = 1) (ELSE = SYSMIS) INTO code.",
+            [['name' => 'color', 'storage_kind' => 'string']],
+        )));
+
+        self::assertSame('system_missing', $result->plan->canonicalArray()['operations'][0]['unmatched']['kind']);
+    }
+
     public function testRecodeWithOnlyElseCannotEmitAnInvalidEmptyRuleList(): void
     {
         try {

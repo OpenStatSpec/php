@@ -275,7 +275,7 @@ final class PlanCodec
 
         return new RecodeOperation(
             $this->nonEmptyString($object['source'], $path . '.source'),
-            $this->nonEmptyString($object['target'], $path . '.target'),
+            $this->targetName($object['target'], $path . '.target'),
             $targetMode,
             $rules,
             $this->result($object['unmatched'], $path . '.unmatched'),
