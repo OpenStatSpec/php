@@ -10,7 +10,7 @@ final readonly class ExecutionResult
         private string $datasetId,
         private string $planHash,
         private int $operationCount,
-        private ?string $auditOperationId,
+        private string $auditOperationId,
         private ?DoltEvidence $doltBefore,
         private ?DoltEvidence $doltAfter,
     ) {}
@@ -30,7 +30,7 @@ final readonly class ExecutionResult
         return $this->operationCount;
     }
 
-    public function auditOperationId(): ?string
+    public function auditOperationId(): string
     {
         return $this->auditOperationId;
     }

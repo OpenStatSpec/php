@@ -11,10 +11,14 @@ use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Spss\PhpSpssEngine;
 use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
+use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
-use OpenStatSpec\Transformation\Model\CreateVariableOperation;
-use OpenStatSpec\Transformation\Model\DeleteVariableOperation;
-use OpenStatSpec\Transformation\Model\TransformationPlan;
+use OpenStatSpec\Transformation\Plan\Expression\LiteralOperand;
+use OpenStatSpec\Transformation\Plan\Operation\AssignOperation;
+use OpenStatSpec\Transformation\Plan\PlanContract;
+use OpenStatSpec\Transformation\Plan\TargetMode;
+use OpenStatSpec\Transformation\Plan\TransformationPlan;
+use OpenStatSpec\Transformation\Plan\Value\Binary64Value;
 use OpenStatSpec\Spss\SpssAdapter;
 use PDO;
 use PDOException;
@@ -158,13 +162,23 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
             }
             $pdo->commit();
 
-            $plan = new TransformationPlan($datasetId, [
-                new DeleteVariableOperation('V1599'),
-                new CreateVariableOperation('Replacement', 'string', 1),
+            $plan = new TransformationPlan(PlanContract::V02, 'parent', [
+                new AssignOperation(
+                    'Replacement',
+                    TargetMode::Create,
+                    new LiteralOperand(Binary64Value::fromBits('0000000000000000')),
+                ),
             ]);
+            $request = new InPlaceApplyRequest(
+                $plan,
+                'parent',
+                $datasetId,
+                hash('sha256', 'PostgreSQL physical-column slot fixture'),
+                'integration-test',
+            );
 
             try {
-                (new InPlaceTransformationExecutor(new Connection($pdo)))->execute($plan);
+                (new InPlaceTransformationExecutor(new Connection($pdo)))->execute($request);
                 self::fail('PostgreSQL accepted a replacement after the physical column limit was reached.');
             } catch (UnsupportedOperation $exception) {
                 self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);

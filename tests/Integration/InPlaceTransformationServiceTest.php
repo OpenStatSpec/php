@@ -11,20 +11,26 @@ use OpenStatSpec\Sql\CatalogOwnership;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
+use OpenStatSpec\Transformation\Diagnostic\TransformationFailure;
+use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
-use OpenStatSpec\Transformation\Model\Action\AssignValueAction;
-use OpenStatSpec\Transformation\Model\Action\CopySourceAction;
-use OpenStatSpec\Transformation\Model\RecodeOperation;
-use OpenStatSpec\Transformation\Model\RecodeRule;
-use OpenStatSpec\Transformation\Model\ScalarValue;
-use OpenStatSpec\Transformation\Model\Selector\ElseSelector;
-use OpenStatSpec\Transformation\Model\Selector\ExactValueSelector;
-use OpenStatSpec\Transformation\Model\Selector\MissingValueSelector;
-use OpenStatSpec\Transformation\Model\Selector\NumericRangeSelector;
-use OpenStatSpec\Transformation\Model\SetValueLabelsOperation;
-use OpenStatSpec\Transformation\Model\SetVariableLabelOperation;
-use OpenStatSpec\Transformation\Model\TransformationPlan;
-use OpenStatSpec\Transformation\Model\ValueLabel;
+use OpenStatSpec\Transformation\Plan\Expression\VariableOperand;
+use OpenStatSpec\Transformation\Plan\Operation\AssignOperation;
+use OpenStatSpec\Transformation\Plan\Operation\RecodeOperation;
+use OpenStatSpec\Transformation\Plan\Operation\ReplaceValueLabelsOperation;
+use OpenStatSpec\Transformation\Plan\Operation\SetVariableLabelOperation;
+use OpenStatSpec\Transformation\Plan\Operation\ValueLabel;
+use OpenStatSpec\Transformation\Plan\PlanCodec;
+use OpenStatSpec\Transformation\Plan\PlanContract;
+use OpenStatSpec\Transformation\Plan\Recode\CopyResult;
+use OpenStatSpec\Transformation\Plan\Recode\ExactMatch;
+use OpenStatSpec\Transformation\Plan\Recode\LiteralResult;
+use OpenStatSpec\Transformation\Plan\Recode\RangeMatch;
+use OpenStatSpec\Transformation\Plan\Recode\RecodeRule;
+use OpenStatSpec\Transformation\Plan\Recode\SystemMissingMatch;
+use OpenStatSpec\Transformation\Plan\TargetMode;
+use OpenStatSpec\Transformation\Plan\TransformationPlan;
+use OpenStatSpec\Transformation\Plan\Value\Binary64Value;
 use PDO;
 use PDOStatement;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -163,7 +169,7 @@ final class InPlaceTransformationServiceTest extends TestCase
                 self::assertSame([], $doltBefore['working_diff']);
             }
             $plan = $this->existingTargetPlan();
-            $result = (new InPlaceTransformationExecutor($connection))->execute($plan);
+            $result = (new InPlaceTransformationExecutor($connection))->execute($this->applyRequest($plan, $doltBefore));
 
             $doltAfter = $this->doltRepositoryEvidence($pdo, $connection);
             if ($expectedProfile === 'dolt') {
@@ -175,6 +181,7 @@ final class InPlaceTransformationServiceTest extends TestCase
                 self::assertSame(
                     [
                         ['table_name' => 'inplace_existing_target_dolt', 'staged' => false, 'status' => 'modified'],
+                        ['table_name' => 'transformation_apply', 'staged' => false, 'status' => 'modified'],
                         ['table_name' => 'value_label', 'staged' => false, 'status' => 'modified'],
                         ['table_name' => 'value_label_set', 'staged' => false, 'status' => 'modified'],
                         ['table_name' => 'variable', 'staged' => false, 'status' => 'modified'],
@@ -186,6 +193,7 @@ final class InPlaceTransformationServiceTest extends TestCase
                 self::assertSame(
                     [
                         ['table_name' => 'inplace_existing_target_dolt', 'data_change' => true, 'schema_change' => false],
+                        ['table_name' => 'transformation_apply', 'data_change' => true, 'schema_change' => false],
                         ['table_name' => 'value_label', 'data_change' => true, 'schema_change' => false],
                         ['table_name' => 'value_label_set', 'data_change' => true, 'schema_change' => false],
                         ['table_name' => 'variable', 'data_change' => true, 'schema_change' => false],
@@ -197,8 +205,8 @@ final class InPlaceTransformationServiceTest extends TestCase
             }
 
             self::assertSame($fixture['dataset_id'], $result->datasetId());
-            self::assertSame($plan->hash(), $result->planHash());
-            self::assertSame(3, $result->operationCount());
+            self::assertSame((new PlanCodec())->hash($plan), $result->planHash());
+            self::assertSame(4, $result->operationCount());
 
             self::assertSame($fixture['dataset'], $this->datasetRow($pdo));
             self::assertSame($fixture['variables'], $this->variableIdentityRows($pdo));
@@ -260,10 +268,10 @@ final class InPlaceTransformationServiceTest extends TestCase
         try {
             $datasetCountBefore = (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []);
             $plan = $this->createTargetPlan();
-            $result = (new InPlaceTransformationExecutor($connection))->execute($plan);
+            $result = (new InPlaceTransformationExecutor($connection))->execute($this->applyRequest($plan));
 
             self::assertSame($fixture['dataset_id'], $result->datasetId());
-            self::assertSame($plan->hash(), $result->planHash());
+            self::assertSame((new PlanCodec())->hash($plan), $result->planHash());
             self::assertSame(3, $result->operationCount());
 
             self::assertSame($fixture['dataset'], $this->datasetRow($pdo));
@@ -389,17 +397,10 @@ final class InPlaceTransformationServiceTest extends TestCase
             ];
 
             try {
-                (new InPlaceTransformationExecutor($connection))->execute($this->createTargetPlan());
+                (new InPlaceTransformationExecutor($connection))->execute($this->applyRequest($this->createTargetPlan()));
                 self::fail('Expected non-atomic service profile to reject implicit target creation during preflight.');
-            } catch (UnsupportedOperation $exception) {
-                self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
-                self::assertSame(
-                    sprintf(
-                        '%s cannot atomically add a new INTO target to an existing wide table; register the target variable first.',
-                        $expectedProfile,
-                    ),
-                    $exception->getMessage(),
-                );
+            } catch (TransformationFailure $exception) {
+                self::assertSame('schema_change_not_atomic', $exception->diagnosticCode());
             }
 
             self::assertSame($before['catalog'], $this->fullCatalogSnapshot($pdo));
@@ -724,6 +725,7 @@ final class InPlaceTransformationServiceTest extends TestCase
         $pdo->prepare(
             'DELETE FROM variable_value_label_set WHERE variable_id IN (SELECT variable_id FROM variable WHERE dataset_id = ?)',
         )->execute([$fixture['dataset_id']]);
+        $pdo->prepare('DELETE FROM transformation_apply WHERE dataset_id = ?')->execute([$fixture['dataset_id']]);
         $pdo->prepare(
             'DELETE FROM value_label WHERE value_label_set_id IN (SELECT value_label_set_id FROM value_label_set WHERE dataset_id = ?)',
         )->execute([$fixture['dataset_id']]);
@@ -763,56 +765,75 @@ final class InPlaceTransformationServiceTest extends TestCase
 
     private function existingTargetPlan(): TransformationPlan
     {
-        return new TransformationPlan($this->activeFixtureId(), [
-            new RecodeOperation('SourceValue', 'Destination', [
+        return new TransformationPlan(PlanContract::V02, 'parent', [
+            new RecodeOperation('SourceValue', 'SourceValue', TargetMode::Replace, [
                 new RecodeRule(
-                    new ExactValueSelector(ScalarValue::number(1)),
-                    new AssignValueAction(ScalarValue::number(10)),
+                    new ExactMatch($this->binary64(1.0)),
+                    new LiteralResult($this->binary64(10.0)),
                 ),
                 new RecodeRule(
-                    new NumericRangeSelector(2.0, 3.0),
-                    new AssignValueAction(ScalarValue::number(20)),
+                    new RangeMatch($this->binary64(2.0), $this->binary64(3.0)),
+                    new LiteralResult($this->binary64(20.0)),
                 ),
                 new RecodeRule(
-                    new MissingValueSelector(),
-                    new AssignValueAction(ScalarValue::number(99)),
+                    new SystemMissingMatch(),
+                    new LiteralResult($this->binary64(99.0)),
                 ),
-                new RecodeRule(new ElseSelector(), new CopySourceAction()),
-            ]),
+            ], new CopyResult()),
+            new AssignOperation('Destination', TargetMode::Replace, new VariableOperand('SourceValue')),
             new SetVariableLabelOperation('Destination', 'Recoded destination'),
-            new SetValueLabelsOperation('Destination', [
-                new ValueLabel(ScalarValue::number(10), 'Ten'),
-                new ValueLabel(ScalarValue::number(20), 'Twenty'),
-                new ValueLabel(ScalarValue::number(99), 'Missing source'),
+            new ReplaceValueLabelsOperation('Destination', [
+                new ValueLabel($this->binary64(10.0), 'Ten'),
+                new ValueLabel($this->binary64(20.0), 'Twenty'),
+                new ValueLabel($this->binary64(99.0), 'Missing source'),
             ]),
         ]);
     }
 
     private function createTargetPlan(): TransformationPlan
     {
-        return new TransformationPlan($this->activeFixtureId(), [
-            new RecodeOperation('SourceValue', 'CreatedTarget', [
+        return new TransformationPlan(PlanContract::V01, 'parent', [
+            new RecodeOperation('SourceValue', 'CreatedTarget', TargetMode::Create, [
                 new RecodeRule(
-                    new ExactValueSelector(ScalarValue::number(1)),
-                    new AssignValueAction(ScalarValue::number(10)),
+                    new ExactMatch($this->binary64(1.0)),
+                    new LiteralResult($this->binary64(10.0)),
                 ),
                 new RecodeRule(
-                    new NumericRangeSelector(2.0, 3.0),
-                    new AssignValueAction(ScalarValue::number(20)),
+                    new RangeMatch($this->binary64(2.0), $this->binary64(3.0)),
+                    new LiteralResult($this->binary64(20.0)),
                 ),
                 new RecodeRule(
-                    new MissingValueSelector(),
-                    new AssignValueAction(ScalarValue::number(99)),
+                    new SystemMissingMatch(),
+                    new LiteralResult($this->binary64(99.0)),
                 ),
-                new RecodeRule(new ElseSelector(), new CopySourceAction()),
-            ]),
+            ], new CopyResult()),
             new SetVariableLabelOperation('CreatedTarget', 'Recoded created target'),
-            new SetValueLabelsOperation('CreatedTarget', [
-                new ValueLabel(ScalarValue::number(10), 'Ten'),
-                new ValueLabel(ScalarValue::number(20), 'Twenty'),
-                new ValueLabel(ScalarValue::number(99), 'Missing source'),
+            new ReplaceValueLabelsOperation('CreatedTarget', [
+                new ValueLabel($this->binary64(10.0), 'Ten'),
+                new ValueLabel($this->binary64(20.0), 'Twenty'),
+                new ValueLabel($this->binary64(99.0), 'Missing source'),
             ]),
         ]);
+    }
+
+    /** @param array{branch: string, head: string}|null $doltBefore */
+    private function applyRequest(TransformationPlan $plan, ?array $doltBefore = null): InPlaceApplyRequest
+    {
+        return new InPlaceApplyRequest(
+            $plan,
+            'parent',
+            $this->activeFixtureId(),
+            str_repeat('a', 64),
+            'integration-test',
+            $doltBefore['branch'] ?? null,
+            $doltBefore['head'] ?? null,
+        );
+    }
+
+    private function binary64(float $value): Binary64Value
+    {
+        $packed = pack('E', $value);
+        return Binary64Value::fromBits(bin2hex($packed));
     }
 
     private function servicePdo(string $expectedProfile, ?string $environmentPrefix, string $driver): PDO
