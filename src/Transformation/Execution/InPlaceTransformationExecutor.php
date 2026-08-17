@@ -50,7 +50,7 @@ final readonly class InPlaceTransformationExecutor
 
         $bound = $this->preflight->bind($request);
         $guard = $this->doltGuard();
-        $doltBefore = $guard?->beforeExecution();
+        $doltBefore = $guard?->beforeExecution($request);
         $doltAfter = null;
         $transactionStarted = false;
 
@@ -60,7 +60,7 @@ final readonly class InPlaceTransformationExecutor
             foreach ($bound->operations as $operation) {
                 $this->operationExecutor->execute($operation, $bound->dataset);
             }
-            $doltAfter = $doltBefore === null ? null : $guard->afterExecution($doltBefore);
+            $doltAfter = $doltBefore === null ? null : $guard->afterExecution($request, $doltBefore);
             $applyId = $this->auditWriter->succeed(
                 $request,
                 $bound->dataset,

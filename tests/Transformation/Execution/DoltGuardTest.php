@@ -4,15 +4,68 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Tests\Transformation\Execution;
 
-use OpenStatSpec\Core\DiagnosticCode;
-use OpenStatSpec\Core\UnsupportedOperation;
+use OpenStatSpec\Transformation\Diagnostic\TransformationFailure;
 use OpenStatSpec\Transformation\Execution\DoltEvidence;
 use OpenStatSpec\Transformation\Execution\DoltEvidenceReader;
 use OpenStatSpec\Transformation\Execution\DoltGuard;
+use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
+use OpenStatSpec\Transformation\Plan\Operation\ExecuteOperation;
+use OpenStatSpec\Transformation\Plan\PlanContract;
+use OpenStatSpec\Transformation\Plan\TransformationPlan;
 use PHPUnit\Framework\TestCase;
 
 final class DoltGuardTest extends TestCase
 {
+    public function testItRequiresCallerSuppliedDoltContextBeforeReadingRepositoryState(): void
+    {
+        $reader = new class implements DoltEvidenceReader {
+            public int $reads = 0;
+
+            public function read(): DoltEvidence
+            {
+                ++$this->reads;
+                return new DoltEvidence('feature/recode', 'expected-head', []);
+            }
+        };
+        $guard = new DoltGuard($reader);
+
+        try {
+            $guard->beforeExecution($this->request());
+            self::fail('A Dolt apply without expected branch and HEAD was accepted.');
+        } catch (TransformationFailure $failure) {
+            self::assertSame('dolt_context_required', $failure->diagnosticCode());
+            self::assertSame(0, $reader->reads);
+        }
+    }
+
+    public function testItRejectsAnUnexpectedBranchBeforeExecution(): void
+    {
+        $guard = new DoltGuard($this->reader(
+            new DoltEvidence('main', 'expected-head', []),
+        ));
+
+        try {
+            $guard->beforeExecution($this->request('feature/recode', 'expected-head'));
+            self::fail('An unexpected Dolt branch was accepted.');
+        } catch (TransformationFailure $failure) {
+            self::assertSame('dolt_branch_mismatch', $failure->diagnosticCode());
+        }
+    }
+
+    public function testItRejectsAnUnexpectedHeadBeforeExecution(): void
+    {
+        $guard = new DoltGuard($this->reader(
+            new DoltEvidence('feature/recode', 'other-head', []),
+        ));
+
+        try {
+            $guard->beforeExecution($this->request('feature/recode', 'expected-head'));
+            self::fail('An unexpected Dolt HEAD was accepted.');
+        } catch (TransformationFailure $failure) {
+            self::assertSame('dolt_head_mismatch', $failure->diagnosticCode());
+        }
+    }
+
     public function testItRejectsADirtyWorkingSetBeforeExecution(): void
     {
         $guard = new DoltGuard($this->reader(
@@ -20,12 +73,11 @@ final class DoltGuardTest extends TestCase
         ));
 
         try {
-            $guard->beforeExecution();
+            $guard->beforeExecution($this->request('main', 'abc123'));
             self::fail('A dirty Dolt working set was accepted.');
-        } catch (UnsupportedOperation $exception) {
-            self::assertSame(DiagnosticCode::SqlProfileOperationUnavailable, $exception->diagnosticCode);
-            self::assertStringContainsString('clean working set', $exception->getMessage());
-            self::assertStringContainsString('respondents', $exception->getMessage());
+        } catch (TransformationFailure $failure) {
+            self::assertSame('dolt_working_set_dirty', $failure->diagnosticCode());
+            self::assertStringContainsString('respondents', $failure->getMessage());
         }
     }
 
@@ -36,25 +88,13 @@ final class DoltGuardTest extends TestCase
             new DoltEvidence('main', 'abc123', ['respondents', 'variable']),
         ));
 
-        $before = $guard->beforeExecution();
-        $after = $guard->afterExecution($before);
+        $request = $this->request('main', 'abc123');
+        $before = $guard->beforeExecution($request);
+        $after = $guard->afterExecution($request, $before);
 
         self::assertTrue($before->isClean());
         self::assertFalse($after->isClean());
         self::assertSame(['respondents', 'variable'], $after->dirtyTables());
-    }
-
-    public function testItRejectsBranchOrHeadMutation(): void
-    {
-        $guard = new DoltGuard($this->reader(
-            new DoltEvidence('main', 'abc123', []),
-            new DoltEvidence('other', 'abc123', ['respondents']),
-        ));
-        $before = $guard->beforeExecution();
-
-        $this->expectException(UnsupportedOperation::class);
-        $this->expectExceptionMessage('branch changed');
-        $guard->afterExecution($before);
     }
 
     private function reader(DoltEvidence ...$evidence): DoltEvidenceReader
@@ -73,5 +113,18 @@ final class DoltGuardTest extends TestCase
                 return $next;
             }
         };
+    }
+
+    private function request(?string $branch = null, ?string $head = null): InPlaceApplyRequest
+    {
+        return new InPlaceApplyRequest(
+            new TransformationPlan(PlanContract::V02, 'parent', [new ExecuteOperation()]),
+            'parent',
+            '11111111-1111-4111-8111-111111111111',
+            str_repeat('a', 64),
+            'conformance-runner',
+            $branch,
+            $head,
+        );
     }
 }

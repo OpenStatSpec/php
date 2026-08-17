@@ -84,6 +84,13 @@ final readonly class PlanPreflight
 
         foreach ($request->plan->operations as $index => $operation) {
             $path = '$.operations[' . $index . ']';
+            if ($this->createsTarget($operation) && !$this->connection->profile->ddlAtomic()) {
+                throw TransformationFailure::at(
+                    'schema_change_not_atomic',
+                    $path . '.target_mode',
+                    $this->connection->profileName . ' requires a pre-provisioned target.',
+                );
+            }
             $schemaBefore = new BoundSchema($variables);
             [$source, $target] = $this->bindOperation(
                 $operation,
@@ -240,7 +247,7 @@ final readonly class PlanPreflight
             throw TransformationFailure::at('target_already_exists', $path, 'Create target is already registered.');
         }
 
-        $this->assertCreateCapability(count($variables), $postgresqlSlots, $path);
+        $this->assertCreateCapability(count($variables), $postgresqlSlots);
         $physical = $this->connection->profile->physicalIdentifier($name, $usedPhysical);
         return new VariableBinding(NormativeCatalog::uuid(), $name, $physical, 'numeric', $nextOrdinal, null, false);
     }
@@ -287,7 +294,7 @@ final readonly class PlanPreflight
                 'A new string target requires separate explicit provisioning.',
             );
         }
-        $this->assertCreateCapability(count($variables), $postgresqlSlots, $path . '.target_mode');
+        $this->assertCreateCapability(count($variables), $postgresqlSlots);
         $physical = $this->connection->profile->physicalIdentifier($operation->target, $usedPhysical);
         return new VariableBinding(NormativeCatalog::uuid(), $operation->target, $physical, 'numeric', $nextOrdinal, null, false);
     }
@@ -405,17 +412,8 @@ final readonly class PlanPreflight
         return $value instanceof Binary64Value ? 'numeric' : 'string';
     }
 
-    private function assertCreateCapability(int $variableCount, ?int $postgresqlSlots, string $path): void
+    private function assertCreateCapability(int $variableCount, ?int $postgresqlSlots): void
     {
-        if (!in_array($this->connection->profileName, ['sqlite', 'postgresql'], true)
-            || !$this->connection->profile->ddlAtomic()
-        ) {
-            throw TransformationFailure::at(
-                'schema_change_not_atomic',
-                $path,
-                $this->connection->profileName . ' requires a pre-provisioned target.',
-            );
-        }
         $maximum = $this->connection->profile->effectiveMaximumSourceVariables($this->connection->pdo);
         if ($variableCount >= $maximum
             || ($postgresqlSlots !== null && $postgresqlSlots >= $maximum + 1)
@@ -425,6 +423,12 @@ final readonly class PlanPreflight
                 $this->connection->profileName . ' cannot add another source variable to this wide table.',
             );
         }
+    }
+
+    private function createsTarget(Operation $operation): bool
+    {
+        return ($operation instanceof AssignOperation || $operation instanceof RecodeOperation)
+            && $operation->targetMode === TargetMode::Create;
     }
 
     private function resolveDataset(string $datasetId): DatasetBinding

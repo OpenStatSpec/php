@@ -9,18 +9,111 @@ use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Tests\Support\SpecificationManifest;
 use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
+use OpenStatSpec\Transformation\Diagnostic\TransformationFailure;
 use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 use OpenStatSpec\Transformation\Plan\PlanCodec;
 use PDO;
 use PDOStatement;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 final class OfficialInPlaceTransformation02Test extends TestCase
 {
     private const CREATE_DATASET_ID = '22222222-2222-4222-8222-222222222222';
     private const INEQUALITY_DATASET_ID = '44444444-4444-4444-8444-444444444444';
     private const ROLLBACK_DATASET_ID = '55555555-5555-4555-8555-555555555555';
+
+    /** @var list<array{admin: PDO, database: string}> */
+    private array $doltTestDatabases = [];
+
+    protected function tearDown(): void
+    {
+        try {
+            foreach (array_reverse($this->doltTestDatabases) as $fixture) {
+                $fixture['admin']->exec('DROP DATABASE ' . $this->quoteDoltDatabase($fixture['database']));
+            }
+        } finally {
+            $this->doltTestDatabases = [];
+            parent::tearDown();
+        }
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function nonAtomicCreateCases(): iterable
+    {
+        yield 'MySQL' => ['mysql', 'mysql-create-target-fails-before-mutation'];
+        yield 'MariaDB' => ['mariadb', 'mariadb-create-target-fails-before-mutation'];
+        yield 'Dolt' => ['dolt', 'dolt-create-target-fails-before-mutation'];
+    }
+
+    #[DataProvider('nonAtomicCreateCases')]
+    public function testOfficialMySqlFamilyCreateTargetCasesFailBeforeMutation(
+        string $expectedProfile,
+        string $caseId,
+    ): void {
+        $case = $this->bindingCase($caseId);
+        $pdo = $this->mysqlFamily($expectedProfile);
+        $connection = new Connection($pdo);
+        self::assertSame($expectedProfile, $connection->profileName);
+        $table = 'data_task9_create_' . $expectedProfile;
+        $this->prepareCatalog($pdo);
+        $this->assertNamespaceClean($pdo, self::CREATE_DATASET_ID, $table);
+
+        try {
+            $this->installNumericFixture(
+                $pdo,
+                $connection,
+                self::CREATE_DATASET_ID,
+                $table,
+                ['source_a', 'source_b'],
+                [[1, 2.0, 11.0], [2, null, 22.0]],
+            );
+            $context = $this->commitAndReadDoltFixtureContext($pdo, $connection);
+            $before = $this->snapshot($pdo, $connection, self::CREATE_DATASET_ID, $table);
+            $request = $this->request(
+                $this->bindingCase('sqlite-create-target-atomic-success'),
+                self::CREATE_DATASET_ID,
+                $context['branch'] ?? null,
+                $context['head'] ?? null,
+            );
+
+            try {
+                (new InPlaceTransformationExecutor($connection))->execute($request);
+                self::fail('A non-atomic MySQL-family profile accepted an official create-target plan.');
+            } catch (TransformationFailure $failure) {
+                self::assertSame($case['expected_error'], $failure->diagnosticCode());
+            }
+
+            self::assertFalse($pdo->inTransaction());
+            self::assertFalse($case['mutation_started']);
+            self::assertSame($before, $this->snapshot($pdo, $connection, self::CREATE_DATASET_ID, $table));
+        } finally {
+            $this->purgeFixture($pdo, $connection, self::CREATE_DATASET_ID, $table);
+        }
+    }
+
+    public function testOfficialDoltEmptyActorCaseFailsBeforeMutation(): void
+    {
+        $case = $this->bindingCase('dolt-empty-actor-fails-before-mutation');
+
+        try {
+            new InPlaceApplyRequest(
+                $this->planCase('binding-variable-missing-existing-target'),
+                'parent',
+                '11111111-1111-4111-8111-111111111111',
+                str_repeat('a', 64),
+                (string) $case['actor'],
+                'feature/recode',
+                'provisioning-commit',
+            );
+            self::fail('The official empty actor was accepted.');
+        } catch (TransformationFailure $failure) {
+            self::assertSame($case['expected_error'], $failure->diagnosticCode());
+        }
+        self::assertFalse($case['mutation_started']);
+    }
 
     public function testSqliteCreateTargetIsAtomicAndPreservesIdentity(): void
     {
@@ -311,6 +404,61 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         );
     }
 
+    private function mysqlFamily(string $profile): PDO
+    {
+        if (!in_array('mysql', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO MySQL is not available.');
+        }
+        $prefix = match ($profile) {
+            'mysql' => 'OPENSTATSPEC_MYSQL',
+            'mariadb' => 'OPENSTATSPEC_MARIADB',
+            'dolt' => 'OPENSTATSPEC_DOLT',
+            default => throw new RuntimeException('Unsupported MySQL-family test profile.'),
+        };
+        $dsn = getenv($prefix . '_DSN');
+        if (!is_string($dsn) || $dsn === '') {
+            self::markTestSkipped($prefix . '_DSN is not configured.');
+        }
+        $user = getenv($prefix . '_USER');
+        $password = getenv($prefix . '_PASSWORD');
+        $options = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_STRINGIFY_FETCHES => false];
+
+        if ($profile !== 'dolt') {
+            return new PDO(
+                $dsn,
+                is_string($user) ? $user : null,
+                is_string($password) ? $password : null,
+                $options,
+            );
+        }
+
+        $adminUser = getenv($prefix . '_ADMIN_USER');
+        $adminPassword = getenv($prefix . '_ADMIN_PASSWORD');
+        if (!is_string($adminUser) || $adminUser === '' || !is_string($adminPassword)) {
+            self::markTestSkipped('Explicit Dolt admin credentials are required for an isolated test database.');
+        }
+        $database = sprintf('openstatspec_t9_%d_%s', getmypid(), bin2hex(random_bytes(6)));
+        $admin = new PDO($dsn, $adminUser, $adminPassword, $options);
+        $admin->exec('CREATE DATABASE ' . $this->quoteDoltDatabase($database));
+        $this->doltTestDatabases[] = ['admin' => $admin, 'database' => $database];
+        if (is_string($user) && $user !== '') {
+            $quotedUser = $admin->quote($user);
+            if (!is_string($quotedUser)) {
+                throw new RuntimeException('Unable to quote the Dolt test user.');
+            }
+            $admin->exec(
+                'GRANT ALL PRIVILEGES ON ' . $this->quoteDoltDatabase($database) . ".* TO {$quotedUser}@'%'",
+            );
+        }
+
+        return new PDO(
+            $this->dsnForDatabase($dsn, $database),
+            is_string($user) ? $user : null,
+            is_string($password) ? $password : null,
+            $options,
+        );
+    }
+
     /**
      * @param list<string>               $variables
      * @param list<list<int|float|null>> $rows
@@ -369,14 +517,20 @@ final class OfficialInPlaceTransformation02Test extends TestCase
     }
 
     /** @param array<string, mixed> $case */
-    private function request(array $case, string $datasetId): InPlaceApplyRequest
-    {
+    private function request(
+        array $case,
+        string $datasetId,
+        ?string $expectedBranch = null,
+        ?string $expectedHead = null,
+    ): InPlaceApplyRequest {
         return new InPlaceApplyRequest(
             plan: $this->planCase((string) $case['applied_plan_case']),
             inputAlias: 'parent',
             datasetId: $datasetId,
             sourceHash: (string) $case['expected_audit']['source_hash'],
             actor: (string) $case['actor'],
+            expectedBranch: $expectedBranch,
+            expectedHead: $expectedHead,
         );
     }
 
@@ -540,12 +694,73 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         $pdo->exec('DROP TABLE IF EXISTS ' . $connection->profile->quoteIdentifier($table));
     }
 
+    /** @return array{branch: string, head: string}|null */
+    private function commitAndReadDoltFixtureContext(PDO $pdo, Connection $connection): ?array
+    {
+        if ($connection->profileName !== 'dolt') {
+            return null;
+        }
+        $statement = $pdo->prepare('CALL DOLT_COMMIT(?, ?)');
+        self::assertInstanceOf(PDOStatement::class, $statement);
+        $statement->execute(['-Am', 'Task 9 official create-target fixture']);
+        $identity = $pdo->query("SELECT active_branch() AS branch_name, dolt_hashof('HEAD') AS head_hash");
+        self::assertInstanceOf(PDOStatement::class, $identity);
+        $row = $identity->fetch(PDO::FETCH_ASSOC);
+        self::assertIsArray($row);
+        $status = $pdo->query('SELECT table_name FROM dolt_status');
+        self::assertInstanceOf(PDOStatement::class, $status);
+        self::assertSame([], $status->fetchAll(PDO::FETCH_COLUMN));
+
+        return ['branch' => (string) $row['branch_name'], 'head' => (string) $row['head_hash']];
+    }
+
+    private function quoteDoltDatabase(string $database): string
+    {
+        if (strlen($database) > 64 || preg_match('/\A[a-z][a-z0-9_]*\z/D', $database) !== 1) {
+            throw new RuntimeException('Unsafe Dolt test database name.');
+        }
+
+        return '`' . $database . '`';
+    }
+
+    private function dsnForDatabase(string $dsn, string $database): string
+    {
+        $this->quoteDoltDatabase($database);
+        if (!str_starts_with(strtolower($dsn), 'mysql:')) {
+            throw new RuntimeException('Dolt tests require a MySQL PDO DSN.');
+        }
+        $parts = explode(';', substr($dsn, strlen('mysql:')));
+        $found = null;
+        foreach ($parts as $index => $part) {
+            if (strtolower(trim((string) explode('=', $part, 2)[0])) !== 'dbname') {
+                continue;
+            }
+            if ($found !== null) {
+                throw new RuntimeException('Dolt DSN contains duplicate dbname settings.');
+            }
+            $found = $index;
+        }
+        if ($found === null) {
+            if (end($parts) === '') {
+                array_pop($parts);
+            }
+            $parts[] = 'dbname=' . $database;
+        } else {
+            $parts[$found] = 'dbname=' . $database;
+        }
+
+        return 'mysql:' . implode(';', $parts);
+    }
+
     /** @return list<string> */
     private function tables(PDO $pdo): array
     {
-        $sql = (string) $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite'
-            ? "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-            : "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = current_schema() ORDER BY tablename";
+        $sql = match ((string) $pdo->getAttribute(PDO::ATTR_DRIVER_NAME)) {
+            'sqlite' => "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            'pgsql' => "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = current_schema() ORDER BY tablename",
+            'mysql' => 'SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name',
+            default => throw new RuntimeException('Unsupported integration driver.'),
+        };
         return array_map('strval', $this->column($pdo, $sql));
     }
 
@@ -558,9 +773,10 @@ final class OfficialInPlaceTransformation02Test extends TestCase
                 $this->rows($pdo, 'PRAGMA table_info(' . $connection->profile->quoteIdentifier($table) . ')', []),
             );
         }
+        $schema = $connection->profileName === 'postgresql' ? 'current_schema()' : 'DATABASE()';
         return array_map('strval', $this->column(
             $pdo,
-            'SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? ORDER BY ordinal_position',
+            'SELECT column_name FROM information_schema.columns WHERE table_schema = ' . $schema . ' AND table_name = ? ORDER BY ordinal_position',
             [$table],
         ));
     }

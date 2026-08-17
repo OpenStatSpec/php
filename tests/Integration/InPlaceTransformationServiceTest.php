@@ -10,8 +10,11 @@ use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\CatalogOwnership;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
+use OpenStatSpec\Tests\Support\SpecificationManifest;
 use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
 use OpenStatSpec\Transformation\Diagnostic\TransformationFailure;
+use OpenStatSpec\Transformation\Execution\DoltEvidence;
+use OpenStatSpec\Transformation\Execution\DoltEvidenceReader;
 use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 use OpenStatSpec\Transformation\Plan\Expression\VariableOperand;
@@ -99,6 +102,22 @@ final class InPlaceTransformationServiceTest extends TestCase
                 yield $label => $service;
             }
         }
+    }
+
+    /** @return iterable<string, array{string, string|null, string, list<string>, string|null, string}> */
+    public static function createTargetRejectedCases(): iterable
+    {
+        foreach (self::createTargetRejectedServices() as $label => $service) {
+            yield $label . ' / official 0.1' => [...$service, '0.1'];
+            yield $label . ' / official 0.2' => [...$service, '0.2'];
+        }
+    }
+
+    /** @return iterable<string, array{string, string, string}> */
+    public static function transactionalMySqlServices(): iterable
+    {
+        yield 'MySQL' => ['mysql', 'OPENSTATSPEC_MYSQL', 'mysql'];
+        yield 'MariaDB' => ['mariadb', 'OPENSTATSPEC_MARIADB', 'mysql'];
     }
 
     /** @param list<string> $expectedVersionFamilies */
@@ -251,6 +270,121 @@ final class InPlaceTransformationServiceTest extends TestCase
         }
     }
 
+    public function testDoltRequiresExpectedContextBeforeMutation(): void
+    {
+        $pdo = $this->servicePdo('dolt', 'OPENSTATSPEC_DOLT', 'mysql');
+        $connection = new Connection($pdo);
+        $fixture = $this->installFixture($pdo, $connection);
+        $before = $this->applyFailureSnapshot($pdo, $connection, $fixture);
+
+        try {
+            (new InPlaceTransformationExecutor($connection))->execute(
+                $this->applyRequest($this->existingTargetPlan()),
+            );
+            self::fail('A Dolt apply without expected branch and HEAD was accepted.');
+        } catch (TransformationFailure $failure) {
+            self::assertSame('dolt_context_required', $failure->diagnosticCode());
+        }
+
+        self::assertFalse($pdo->inTransaction());
+        self::assertSame($before, $this->applyFailureSnapshot($pdo, $connection, $fixture));
+    }
+
+    public function testDoltContextChangeAfterMutationRollsBackWithoutAudit(): void
+    {
+        $case = $this->officialInPlaceCase02('dolt-context-changed-after-mutation-rolls-back');
+        $pdo = $this->servicePdo('dolt', 'OPENSTATSPEC_DOLT', 'mysql');
+        $connection = new Connection($pdo);
+        $fixture = $this->installFixture($pdo, $connection);
+        $context = $this->doltRepositoryEvidence($pdo, $connection);
+        self::assertNotNull($context);
+        $before = $this->applyFailureSnapshot($pdo, $connection, $fixture);
+        $reader = new class ($pdo, $connection, $fixture['table_name'], $context['branch'], $context['head']) implements DoltEvidenceReader {
+            public bool $mutationObserved = false;
+            private int $reads = 0;
+
+            public function __construct(
+                private readonly PDO $pdo,
+                private readonly Connection $connection,
+                private readonly string $table,
+                private readonly string $branch,
+                private readonly string $head,
+            ) {}
+
+            public function read(): DoltEvidence
+            {
+                if (++$this->reads === 1) {
+                    return new DoltEvidence($this->branch, $this->head, []);
+                }
+
+                $statement = $this->pdo->query(
+                    'SELECT ' . $this->connection->profile->quoteIdentifier('destination')
+                    . ' FROM ' . $this->connection->profile->quoteIdentifier($this->table)
+                    . ' WHERE ' . $this->connection->profile->quoteIdentifier('__case_ordinal') . ' = 1',
+                );
+                if ($statement instanceof PDOStatement) {
+                    $this->mutationObserved = (float) $statement->fetchColumn() === 10.0;
+                }
+
+                return new DoltEvidence($this->branch, 'concurrent-commit', ['variable']);
+            }
+        };
+
+        try {
+            (new InPlaceTransformationExecutor($connection, $reader))->execute(
+                $this->applyRequest($this->existingTargetPlan(), $context),
+            );
+            self::fail('A post-mutation Dolt context change was accepted.');
+        } catch (TransformationFailure $failure) {
+            self::assertSame($case['expected_error'], $failure->diagnosticCode());
+        }
+
+        self::assertTrue($case['mutation_started']);
+        self::assertTrue($reader->mutationObserved, 'The injected context change must occur after data mutation.');
+        self::assertFalse($pdo->inTransaction());
+        self::assertSame($before, $this->applyFailureSnapshot($pdo, $connection, $fixture));
+    }
+
+    #[DataProvider('transactionalMySqlServices')]
+    public function testMySqlFamilyDataCatalogAndAuditAreOneTransaction(
+        string $expectedProfile,
+        string $environmentPrefix,
+        string $driver,
+    ): void {
+        $pdo = $this->servicePdo($expectedProfile, $environmentPrefix, $driver);
+        $connection = new Connection($pdo);
+        $fixture = $this->installFixture($pdo, $connection);
+        $constraint = 'task9_fail_audit_' . $expectedProfile;
+        $quotedConstraint = $connection->profile->quoteIdentifier($constraint);
+        $constraintInstalled = false;
+
+        try {
+            $pdo->exec(
+                'ALTER TABLE transformation_apply ADD CONSTRAINT ' . $quotedConstraint
+                . " CHECK (actor <> 'integration-test')",
+            );
+            $constraintInstalled = true;
+            $before = $this->applyFailureSnapshot($pdo, $connection, $fixture);
+
+            try {
+                (new InPlaceTransformationExecutor($connection))->execute(
+                    $this->applyRequest($this->existingTargetPlan()),
+                );
+                self::fail('The injected MySQL-family audit failure did not abort the apply.');
+            } catch (\PDOException $failure) {
+                self::assertStringContainsString($constraint, $failure->getMessage());
+            }
+
+            self::assertFalse($pdo->inTransaction());
+            self::assertSame($before, $this->applyFailureSnapshot($pdo, $connection, $fixture));
+        } finally {
+            if ($constraintInstalled) {
+                $pdo->exec('ALTER TABLE transformation_apply DROP CONSTRAINT ' . $quotedConstraint);
+            }
+            $this->purgeFixture($pdo, $connection, $fixture);
+        }
+    }
+
     /** @param list<string> $expectedVersionFamilies */
     #[DataProvider('createTargetCapableServices')]
     public function testCreateTargetTransformationCreatesNumericTargetInPlace(
@@ -366,13 +500,14 @@ final class InPlaceTransformationServiceTest extends TestCase
     }
 
     /** @param list<string> $expectedVersionFamilies */
-    #[DataProvider('createTargetRejectedServices')]
+    #[DataProvider('createTargetRejectedCases')]
     public function testCreateTargetTransformationRejectsNonAtomicProfilesWithoutChangingState(
         string $expectedProfile,
         ?string $environmentPrefix,
         string $driver,
         array $expectedVersionFamilies,
         ?string $expectedVersionEnvironment,
+        string $contractVersion,
     ): void {
         unset($expectedVersionFamilies, $expectedVersionEnvironment);
         $pdo = $this->servicePdo($expectedProfile, $environmentPrefix, $driver);
@@ -395,12 +530,21 @@ final class InPlaceTransformationServiceTest extends TestCase
                 'variable_count' => (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable', []),
                 'dolt_repository' => $this->doltRepositoryEvidence($pdo, $connection),
             ];
+            $plan = $contractVersion === '0.1'
+                ? $this->createTargetPlan()
+                : $this->officialCreateTargetPlan02();
+            $officialCase = $contractVersion === '0.2'
+                ? $this->officialInPlaceCase02($expectedProfile . '-create-target-fails-before-mutation')
+                : null;
 
             try {
-                (new InPlaceTransformationExecutor($connection))->execute($this->applyRequest($this->createTargetPlan()));
+                (new InPlaceTransformationExecutor($connection))->execute($this->applyRequest($plan));
                 self::fail('Expected non-atomic service profile to reject implicit target creation during preflight.');
             } catch (TransformationFailure $exception) {
-                self::assertSame('schema_change_not_atomic', $exception->diagnosticCode());
+                self::assertSame($officialCase['expected_error'] ?? 'schema_change_not_atomic', $exception->diagnosticCode());
+            }
+            if ($officialCase !== null) {
+                self::assertFalse($officialCase['mutation_started']);
             }
 
             self::assertSame($before['catalog'], $this->fullCatalogSnapshot($pdo));
@@ -816,6 +960,32 @@ final class InPlaceTransformationServiceTest extends TestCase
         ]);
     }
 
+    private function officialCreateTargetPlan02(): TransformationPlan
+    {
+        foreach (SpecificationManifest::load('conformance/transformation-plan-0.2.json')['cases'] as $case) {
+            if (is_array($case)
+                && ($case['id'] ?? null) === 'sqlite-create-target-source-copy'
+                && is_array($case['plan'] ?? null)
+            ) {
+                return (new PlanCodec())->fromArray($case['plan']);
+            }
+        }
+
+        throw new RuntimeException('The official 0.2 create-target plan is missing.');
+    }
+
+    /** @return array<string, mixed> */
+    private function officialInPlaceCase02(string $id): array
+    {
+        foreach (SpecificationManifest::load('conformance/in-place-transformation-0.2.json')['cases'] as $case) {
+            if (is_array($case) && ($case['id'] ?? null) === $id) {
+                return $case;
+            }
+        }
+
+        throw new RuntimeException('The official 0.2 in-place case is missing: ' . $id);
+    }
+
     /** @param array{branch: string, head: string}|null $doltBefore */
     private function applyRequest(TransformationPlan $plan, ?array $doltBefore = null): InPlaceApplyRequest
     {
@@ -1146,6 +1316,37 @@ final class InPlaceTransformationServiceTest extends TestCase
             'value_label_sets' => $this->valueLabelSetRows($pdo),
             'value_labels' => $this->valueLabelRows($pdo),
             'variable_value_label_sets' => $this->variableValueLabelSetRows($pdo),
+        ];
+    }
+
+    /**
+     * @param array{dataset_id: string, source_variable_id: string, destination_variable_id: string, table_name: string, dataset_name: string} $fixture
+     * @return array<string, mixed>
+     */
+    private function applyFailureSnapshot(PDO $pdo, Connection $connection, array $fixture): array
+    {
+        return [
+            'catalog' => $this->fullCatalogSnapshot($pdo),
+            'audit' => $this->rows(
+                $pdo,
+                'SELECT * FROM transformation_apply WHERE dataset_id = ? ORDER BY apply_id',
+                [$fixture['dataset_id']],
+            ),
+            'rows' => $this->rawTableRows(
+                $pdo,
+                $connection,
+                $fixture['table_name'],
+                ['__case_ordinal', 'source_value', 'destination'],
+            ),
+            'columns' => $this->tableColumns($pdo, $connection, $fixture['table_name']),
+            'tables' => $this->tableNames($pdo),
+            'dataset_count' => (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []),
+            'persistent_data_table_count' => (int) $this->scalar(
+                $pdo,
+                'SELECT COUNT(DISTINCT physical_table_name) FROM dataset',
+                [],
+            ),
+            'dolt_repository' => $this->doltRepositoryEvidence($pdo, $connection),
         ];
     }
 

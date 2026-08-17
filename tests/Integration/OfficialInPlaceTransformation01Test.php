@@ -9,17 +9,136 @@ use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Tests\Support\SpecificationManifest;
 use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
+use OpenStatSpec\Transformation\Diagnostic\TransformationFailure;
+use OpenStatSpec\Transformation\Execution\DoltEvidence;
+use OpenStatSpec\Transformation\Execution\DoltEvidenceReader;
+use OpenStatSpec\Transformation\Execution\DoltGuard;
 use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 use OpenStatSpec\Transformation\Plan\PlanCodec;
 use OpenStatSpec\Transformation\Plan\TransformationPlan;
 use PDO;
 use PDOStatement;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class OfficialInPlaceTransformation01Test extends TestCase
 {
     private const DATASET_ID = '66666666-6666-4666-8666-666666666666';
+
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function officialDoltContextFailures(): iterable
+    {
+        foreach (SpecificationManifest::load('conformance/in-place-transformation-0.1.json')['cases'] as $case) {
+            if (is_array($case) && in_array($case['id'] ?? null, [
+                'reject-dolt-branch-mismatch',
+                'reject-dolt-head-mismatch',
+                'reject-dolt-dirty-working-set',
+            ], true)) {
+                yield (string) $case['id'] => [$case];
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $case */
+    #[DataProvider('officialDoltContextFailures')]
+    public function testOfficialDoltContextFailuresOccurBeforeMutation(array $case): void
+    {
+        $expected = $case['expected_context'];
+        $observed = $case['observed_context'];
+        self::assertIsArray($expected);
+        self::assertIsArray($observed);
+        $guard = new DoltGuard(new class ($observed) implements DoltEvidenceReader {
+            /** @param array<string, mixed> $observed */
+            public function __construct(private readonly array $observed) {}
+
+            public function read(): DoltEvidence
+            {
+                return new DoltEvidence(
+                    (string) $this->observed['branch'],
+                    (string) $this->observed['head'],
+                    $this->observed['working_set_clean'] === true ? [] : ['data_survey'],
+                );
+            }
+        });
+        $request = new InPlaceApplyRequest(
+            $this->planCase('string-value-label-replacement'),
+            'parent',
+            self::DATASET_ID,
+            str_repeat('a', 64),
+            'conformance-runner',
+            (string) $expected['branch'],
+            (string) $expected['head'],
+        );
+
+        try {
+            $guard->beforeExecution($request);
+            self::fail('The official Dolt context mismatch was accepted.');
+        } catch (TransformationFailure $failure) {
+            self::assertSame($case['expected_error'], $failure->diagnosticCode());
+        }
+        self::assertFalse($case['mutation_started']);
+    }
+
+    public function testOfficialMysqlCreateTargetCaseFailsBeforeMutationWhenConfigured(): void
+    {
+        $case = $this->bindingCase('reject-mysql-nontransactional-create-target');
+        $pdo = $this->mysql();
+        $connection = new Connection($pdo);
+        self::assertSame('mysql', $connection->profileName);
+        $table = 'data_plan01_task9';
+        (new NormativeCatalog($pdo))->createTables();
+        (new TransformationAuditMigrator($pdo))->migrate();
+        CatalogOwnership::markCurrentVersion($pdo);
+        self::assertSame(0, (int) $this->scalar(
+            $pdo,
+            'SELECT COUNT(*) FROM dataset WHERE dataset_id = ? OR physical_table_name = ?',
+            [self::DATASET_ID, $table],
+        ));
+        self::assertSame(0, (int) $this->scalar(
+            $pdo,
+            'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?',
+            [$table],
+        ));
+
+        try {
+            $pdo->exec('CREATE TABLE ' . $connection->profile->quoteIdentifier($table)
+                . ' (`__case_ordinal` BIGINT NOT NULL PRIMARY KEY, `q1` DOUBLE NULL)');
+            $pdo->prepare(
+                'INSERT INTO dataset (dataset_id, spec_version, source_format, physical_table_schema, physical_table_name, dataset_name, source_case_count, imported_at) '
+                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            )->execute([self::DATASET_ID, '1.0', 'fixture', null, $table, 'Task 9 official 0.1', 2, '2026-08-17 00:00:00']);
+            $pdo->prepare(
+                'INSERT INTO variable (variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind) VALUES (?, ?, ?, ?, ?, ?)',
+            )->execute(['99999999-9999-4999-8999-999999999999', self::DATASET_ID, 1, 'q1', 'q1', 'numeric']);
+            $pdo->exec('INSERT INTO ' . $connection->profile->quoteIdentifier($table)
+                . ' (`__case_ordinal`, `q1`) VALUES (1, 1), (2, NULL)');
+            $before = $this->mysqlFailureSnapshot($pdo, $connection, $table);
+            $request = new InPlaceApplyRequest(
+                $this->planCase('numeric-recode-and-declared-labels'),
+                'parent',
+                self::DATASET_ID,
+                hash('sha256', (string) $case['source_text']),
+                'conformance-runner',
+            );
+
+            try {
+                (new InPlaceTransformationExecutor($connection))->execute($request);
+                self::fail('MySQL accepted an official 0.1 create-target plan.');
+            } catch (TransformationFailure $failure) {
+                self::assertSame($case['expected_error'], $failure->diagnosticCode());
+            }
+
+            self::assertFalse($case['mutation_started']);
+            self::assertFalse($pdo->inTransaction());
+            self::assertSame($before, $this->mysqlFailureSnapshot($pdo, $connection, $table));
+        } finally {
+            $pdo->prepare('DELETE FROM transformation_apply WHERE dataset_id = ?')->execute([self::DATASET_ID]);
+            $pdo->prepare('DELETE FROM variable WHERE dataset_id = ?')->execute([self::DATASET_ID]);
+            $pdo->prepare('DELETE FROM dataset WHERE dataset_id = ?')->execute([self::DATASET_ID]);
+            $pdo->exec('DROP TABLE IF EXISTS ' . $connection->profile->quoteIdentifier($table));
+        }
+    }
 
     public function testSqliteNumericRecodeUsesFirstMatchInclusiveRangeAndSystemMissing(): void
     {
@@ -115,6 +234,26 @@ final class OfficialInPlaceTransformation01Test extends TestCase
         return $pdo;
     }
 
+    private function mysql(): PDO
+    {
+        $dsn = getenv('OPENSTATSPEC_MYSQL_DSN');
+        if (!is_string($dsn) || $dsn === '') {
+            self::markTestSkipped('OPENSTATSPEC_MYSQL_DSN is not configured.');
+        }
+        if (!in_array('mysql', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('PDO MySQL is not available.');
+        }
+        $user = getenv('OPENSTATSPEC_MYSQL_USER');
+        $password = getenv('OPENSTATSPEC_MYSQL_PASSWORD');
+
+        return new PDO(
+            $dsn,
+            is_string($user) ? $user : null,
+            is_string($password) ? $password : null,
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_STRINGIFY_FETCHES => false],
+        );
+    }
+
     private function planCase(string $id): TransformationPlan
     {
         foreach (SpecificationManifest::load('conformance/transformation-plan-0.1.json')['cases'] as $case) {
@@ -123,6 +262,36 @@ final class OfficialInPlaceTransformation01Test extends TestCase
             }
         }
         throw new \RuntimeException('Missing plan case: ' . $id);
+    }
+
+    /** @return array<string, mixed> */
+    private function bindingCase(string $id): array
+    {
+        foreach (SpecificationManifest::load('conformance/in-place-transformation-0.1.json')['cases'] as $case) {
+            if (is_array($case) && ($case['id'] ?? null) === $id) {
+                return $case;
+            }
+        }
+
+        throw new \RuntimeException('Missing in-place 0.1 case: ' . $id);
+    }
+
+    /** @return array<string, mixed> */
+    private function mysqlFailureSnapshot(PDO $pdo, Connection $connection, string $table): array
+    {
+        return [
+            'dataset_count' => (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset'),
+            'persistent_data_table_count' => (int) $this->scalar($pdo, 'SELECT COUNT(DISTINCT physical_table_name) FROM dataset'),
+            'dataset' => $this->rows($pdo, 'SELECT * FROM dataset WHERE dataset_id = ?', [self::DATASET_ID]),
+            'variables' => $this->rows($pdo, 'SELECT * FROM variable WHERE dataset_id = ? ORDER BY source_ordinal', [self::DATASET_ID]),
+            'audit' => $this->rows($pdo, 'SELECT * FROM transformation_apply WHERE dataset_id = ? ORDER BY apply_id', [self::DATASET_ID]),
+            'tables' => $this->column($pdo, 'SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name'),
+            'rows' => $this->rows(
+                $pdo,
+                'SELECT * FROM ' . $connection->profile->quoteIdentifier($table)
+                    . ' ORDER BY ' . $connection->profile->quoteIdentifier('__case_ordinal'),
+            ),
+        ];
     }
 
     /** @return list<string> */
@@ -138,10 +307,12 @@ final class OfficialInPlaceTransformation01Test extends TestCase
         return [(string) $row['contract_id'], (string) $row['plan_hash'], (int) $row['operation_count']];
     }
 
-    private function scalar(PDO $pdo, string $sql): mixed
+    /** @param list<mixed> $parameters */
+    private function scalar(PDO $pdo, string $sql, array $parameters = []): mixed
     {
-        $statement = $pdo->query($sql);
+        $statement = $pdo->prepare($sql);
         self::assertInstanceOf(PDOStatement::class, $statement);
+        $statement->execute($parameters);
         return $statement->fetchColumn();
     }
 
@@ -153,11 +324,15 @@ final class OfficialInPlaceTransformation01Test extends TestCase
         return array_values($statement->fetchAll(PDO::FETCH_COLUMN));
     }
 
-    /** @return list<array<string, mixed>> */
-    private function rows(PDO $pdo, string $sql): array
+    /**
+     * @param list<mixed> $parameters
+     * @return list<array<string, mixed>>
+     */
+    private function rows(PDO $pdo, string $sql, array $parameters = []): array
     {
-        $statement = $pdo->query($sql);
+        $statement = $pdo->prepare($sql);
         self::assertInstanceOf(PDOStatement::class, $statement);
+        $statement->execute($parameters);
         return array_values($statement->fetchAll(PDO::FETCH_ASSOC));
     }
 }
