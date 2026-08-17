@@ -459,9 +459,14 @@ final readonly class PlanPreflight
             'SELECT dataset_id, physical_table_schema FROM dataset WHERE physical_table_name = ?',
         );
         CheckedPdo::execute($statement, [$dataset->table], 'Physical table ownership could not be queried.');
+        $canonicalSchema = $this->canonicalPhysicalSchema($dataset->schema);
         $owners = array_values(array_filter(
             $statement->fetchAll(PDO::FETCH_ASSOC),
-            static fn(array $row): bool => ($row['physical_table_schema'] ?? null) === $dataset->schema,
+            function (array $row) use ($canonicalSchema): bool {
+                $schema = $row['physical_table_schema'] ?? null;
+                return $schema !== null && !is_string($schema)
+                    || $this->canonicalPhysicalSchema($schema) === $canonicalSchema;
+            },
         ));
         if (count($owners) !== 1 || ($owners[0]['dataset_id'] ?? null) !== $dataset->datasetId) {
             throw TransformationFailure::at(
@@ -470,6 +475,17 @@ final readonly class PlanPreflight
                 'The physical wide table must belong to exactly one logical dataset.',
             );
         }
+    }
+
+    private function canonicalPhysicalSchema(?string $schema): ?string
+    {
+        if ($this->connection->profileName === 'sqlite'
+            && ($schema === null || strcasecmp($schema, 'main') === 0)
+        ) {
+            return 'main';
+        }
+
+        return $schema;
     }
 
     /** @return array<string, VariableBinding> */

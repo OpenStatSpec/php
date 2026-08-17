@@ -57,3 +57,9 @@
 - `composer analyse`: passed with no errors; `composer lint`: passed.
 - Task-changed-file PHP CS Fixer dry-run: passed. Repository-wide working-tree `composer style` still reports the pre-existing CRLF-only differences; the LF-normalized staged-tree `composer check` passed all validation, lint, style, PHPStan, and 435-test PHPUnit gates.
 - PostgreSQL environment remained unavailable (`OPENSTATSPEC_PG_DSN`, user, and password unset), so live PostgreSQL execution was skipped explicitly; dialect SQL and the gated same-transaction rollback path remain covered in tests.
+
+## Review follow-up 2
+
+- RED reproduced SQLite's physical-namespace alias: catalog rows for `(NULL, odd"table)` and `(main, odd"table)` passed the raw schema comparison and produced a success audit.
+- Preflight now canonicalizes only SQLite's omitted/default and case-insensitive `main` schema spelling. PostgreSQL schemas and physical table identifiers retain their exact catalog spelling and comparison behavior.
+- The regression proves rejection before row or audit mutation with unchanged dataset and persistent-table counts. Focused execution passed 35 tests and 415 assertions with 2 PostgreSQL skips; full PHPUnit passed 436 tests and 2,748 assertions with 32 environment skips; PHPStan and PHP lint passed.
