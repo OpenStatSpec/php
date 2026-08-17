@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-17
+
+### Added
+
+- Added numeric and string variable creation plus variable deletion to the
+  package-local transformation API and SPSS syntax frontend.
+
 ### Changed
 
 - Pinned the active conformance fixtures and machine-readable capability
@@ -51,7 +58,8 @@
 - Pinned active conformance fixtures and capabilities to released OpenStatSpec
   specification v0.1.0 at commit `d287c2cde9ade71f04e27dd012caec876901aed5`.
 
-[Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/OpenStatSpec/php/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/OpenStatSpec/php/compare/v0.3.0...v0.4.0
 
 ## [0.3.0] - 2026-07-30
