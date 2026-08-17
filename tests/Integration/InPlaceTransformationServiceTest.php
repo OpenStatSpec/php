@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Tests\Integration;
 
+use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\ServerVersionPolicy;
+use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\CatalogOwnership;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
@@ -43,6 +45,26 @@ final class InPlaceTransformationServiceTest extends TestCase
         yield 'MySQL' => ['mysql', 'OPENSTATSPEC_MYSQL', 'mysql', ['8.4.x', '9.7.x'], 'OPENSTATSPEC_EXPECTED_MYSQL_VERSION'];
         yield 'MariaDB' => ['mariadb', 'OPENSTATSPEC_MARIADB', 'mysql', ['11.4.x', '11.8.x', '12.3.x'], 'OPENSTATSPEC_EXPECTED_MARIADB_VERSION'];
         yield 'Dolt' => ['dolt', 'OPENSTATSPEC_DOLT', 'mysql', ['2.2.x'], 'OPENSTATSPEC_EXPECTED_DOLT_VERSION'];
+    }
+
+    /** @return iterable<string, array{string, string|null, string, list<string>, string|null}> */
+    public static function createTargetCapableServices(): iterable
+    {
+        foreach (self::services() as $label => $service) {
+            if (in_array($service[0], ['sqlite', 'postgresql'], true)) {
+                yield $label => $service;
+            }
+        }
+    }
+
+    /** @return iterable<string, array{string, string|null, string, list<string>, string|null}> */
+    public static function createTargetRejectedServices(): iterable
+    {
+        foreach (self::services() as $label => $service) {
+            if (in_array($service[0], ['mysql', 'mariadb', 'dolt'], true)) {
+                yield $label => $service;
+            }
+        }
     }
 
     /** @param list<string> $expectedVersionFamilies */
@@ -120,6 +142,182 @@ final class InPlaceTransformationServiceTest extends TestCase
             );
             self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_id = ?', [self::DATASET_ID]));
             self::assertSame(2, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable WHERE dataset_id = ?', [self::DATASET_ID]));
+            $this->assertNoArtifactTables($fixture['tables']);
+        } finally {
+            $this->purgeFixture($pdo, $connection);
+        }
+    }
+
+    /** @param list<string> $expectedVersionFamilies */
+    #[DataProvider('createTargetCapableServices')]
+    public function testCreateTargetTransformationCreatesNumericTargetInPlace(
+        string $expectedProfile,
+        ?string $environmentPrefix,
+        string $driver,
+        array $expectedVersionFamilies,
+        ?string $expectedVersionEnvironment,
+    ): void {
+        unset($expectedVersionFamilies, $expectedVersionEnvironment);
+        $pdo = $this->servicePdo($expectedProfile, $environmentPrefix, $driver);
+        $connection = new Connection($pdo);
+        $fixture = $this->installFixture($pdo, $connection);
+
+        try {
+            $plan = $this->createTargetPlan();
+            $result = (new InPlaceTransformationExecutor($connection))->execute($plan);
+
+            self::assertSame(self::DATASET_ID, $result->datasetId());
+            self::assertSame($plan->hash(), $result->planHash());
+            self::assertSame(3, $result->operationCount());
+
+            self::assertSame($fixture['dataset'], $this->datasetRow($pdo));
+            self::assertSame($fixture['tables'], $this->tableNames($pdo));
+            self::assertSame(
+                [...$fixture['columns'], 'createdtarget'],
+                $this->tableColumns($pdo, $connection, $fixture['table_name']),
+            );
+            self::assertSame(
+                [
+                    [
+                        '__case_ordinal' => 1,
+                        'source_value' => 1.0,
+                        'destination' => -1.0,
+                        'createdtarget' => 10.0,
+                    ],
+                    [
+                        '__case_ordinal' => 2,
+                        'source_value' => 2.0,
+                        'destination' => -1.0,
+                        'createdtarget' => 20.0,
+                    ],
+                    [
+                        '__case_ordinal' => 3,
+                        'source_value' => 3.0,
+                        'destination' => -1.0,
+                        'createdtarget' => 20.0,
+                    ],
+                    [
+                        '__case_ordinal' => 4,
+                        'source_value' => 9.0,
+                        'destination' => -1.0,
+                        'createdtarget' => 9.0,
+                    ],
+                    [
+                        '__case_ordinal' => 5,
+                        'source_value' => null,
+                        'destination' => -1.0,
+                        'createdtarget' => 99.0,
+                    ],
+                ],
+                $this->tableRows(
+                    $pdo,
+                    $connection,
+                    $fixture['table_name'],
+                    ['__case_ordinal', 'source_value', 'destination', 'createdtarget'],
+                ),
+            );
+            self::assertSame($fixture['variables'], array_slice($this->variableIdentityRows($pdo), 0, 2));
+            self::assertSame(3, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable WHERE dataset_id = ?', [self::DATASET_ID]));
+            $createdTargetRows = $this->rows(
+                $pdo,
+                'SELECT variable_id, source_ordinal, source_name, physical_name, storage_kind, declared_string_width, variable_label '
+                . 'FROM variable WHERE dataset_id = ? AND source_name = ?',
+                [self::DATASET_ID, 'CreatedTarget'],
+            );
+            self::assertCount(1, $createdTargetRows);
+            self::assertMatchesRegularExpression('/^[0-9a-f-]{36}$/i', (string) $createdTargetRows[0]['variable_id']);
+            self::assertSame(
+                [
+                    'source_ordinal' => 3,
+                    'source_name' => 'CreatedTarget',
+                    'physical_name' => 'createdtarget',
+                    'storage_kind' => 'numeric',
+                    'declared_string_width' => null,
+                    'variable_label' => 'Recoded created target',
+                ],
+                [
+                    'source_ordinal' => (int) $createdTargetRows[0]['source_ordinal'],
+                    'source_name' => (string) $createdTargetRows[0]['source_name'],
+                    'physical_name' => (string) $createdTargetRows[0]['physical_name'],
+                    'storage_kind' => (string) $createdTargetRows[0]['storage_kind'],
+                    'declared_string_width' => $createdTargetRows[0]['declared_string_width'],
+                    'variable_label' => (string) $createdTargetRows[0]['variable_label'],
+                ],
+            );
+            self::assertSame(
+                [
+                    ['ordinal' => 1, 'code_kind' => 'numeric', 'value' => 10.0, 'label' => 'Ten'],
+                    ['ordinal' => 2, 'code_kind' => 'numeric', 'value' => 20.0, 'label' => 'Twenty'],
+                    ['ordinal' => 3, 'code_kind' => 'numeric', 'value' => 99.0, 'label' => 'Missing source'],
+                ],
+                $this->valueLabelsForVariable($pdo, 'CreatedTarget'),
+            );
+            self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset WHERE dataset_id = ?', [self::DATASET_ID]));
+            $this->assertNoArtifactTables($fixture['tables']);
+        } finally {
+            $this->purgeFixture($pdo, $connection);
+        }
+    }
+
+    /** @param list<string> $expectedVersionFamilies */
+    #[DataProvider('createTargetRejectedServices')]
+    public function testCreateTargetTransformationRejectsNonAtomicProfilesWithoutChangingState(
+        string $expectedProfile,
+        ?string $environmentPrefix,
+        string $driver,
+        array $expectedVersionFamilies,
+        ?string $expectedVersionEnvironment,
+    ): void {
+        unset($expectedVersionFamilies, $expectedVersionEnvironment);
+        $pdo = $this->servicePdo($expectedProfile, $environmentPrefix, $driver);
+        $connection = new Connection($pdo);
+        $fixture = $this->installFixture($pdo, $connection);
+
+        try {
+            $before = [
+                'dataset' => $this->datasetRow($pdo),
+                'variables' => $this->variableIdentityRows($pdo),
+                'rows' => $this->tableRows(
+                    $pdo,
+                    $connection,
+                    $fixture['table_name'],
+                    ['__case_ordinal', 'source_value', 'destination'],
+                ),
+                'columns' => $this->tableColumns($pdo, $connection, $fixture['table_name']),
+                'tables' => $this->tableNames($pdo),
+                'dataset_count' => (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []),
+                'variable_count' => (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable', []),
+            ];
+
+            try {
+                (new InPlaceTransformationExecutor($connection))->execute($this->createTargetPlan());
+                self::fail('Expected non-atomic service profile to reject implicit target creation during preflight.');
+            } catch (UnsupportedOperation $exception) {
+                self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
+                self::assertSame(
+                    sprintf(
+                        '%s cannot atomically add a new INTO target to an existing wide table; register the target variable first.',
+                        $expectedProfile,
+                    ),
+                    $exception->getMessage(),
+                );
+            }
+
+            self::assertSame($before['dataset'], $this->datasetRow($pdo));
+            self::assertSame($before['variables'], $this->variableIdentityRows($pdo));
+            self::assertSame(
+                $before['rows'],
+                $this->tableRows(
+                    $pdo,
+                    $connection,
+                    $fixture['table_name'],
+                    ['__case_ordinal', 'source_value', 'destination'],
+                ),
+            );
+            self::assertSame($before['columns'], $this->tableColumns($pdo, $connection, $fixture['table_name']));
+            self::assertSame($before['tables'], $this->tableNames($pdo));
+            self::assertSame($before['dataset_count'], (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []));
+            self::assertSame($before['variable_count'], (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable', []));
             $this->assertNoArtifactTables($fixture['tables']);
         } finally {
             $this->purgeFixture($pdo, $connection);
@@ -380,6 +578,33 @@ final class InPlaceTransformationServiceTest extends TestCase
         ]);
     }
 
+    private function createTargetPlan(): TransformationPlan
+    {
+        return new TransformationPlan(self::DATASET_ID, [
+            new RecodeOperation('SourceValue', 'CreatedTarget', [
+                new RecodeRule(
+                    new ExactValueSelector(ScalarValue::number(1)),
+                    new AssignValueAction(ScalarValue::number(10)),
+                ),
+                new RecodeRule(
+                    new NumericRangeSelector(2.0, 3.0),
+                    new AssignValueAction(ScalarValue::number(20)),
+                ),
+                new RecodeRule(
+                    new MissingValueSelector(),
+                    new AssignValueAction(ScalarValue::number(99)),
+                ),
+                new RecodeRule(new ElseSelector(), new CopySourceAction()),
+            ]),
+            new SetVariableLabelOperation('CreatedTarget', 'Recoded created target'),
+            new SetValueLabelsOperation('CreatedTarget', [
+                new ValueLabel(ScalarValue::number(10), 'Ten'),
+                new ValueLabel(ScalarValue::number(20), 'Twenty'),
+                new ValueLabel(ScalarValue::number(99), 'Missing source'),
+            ]),
+        ]);
+    }
+
     private function servicePdo(string $expectedProfile, ?string $environmentPrefix, string $driver): PDO
     {
         if (!in_array($driver, PDO::getAvailableDrivers(), true)) {
@@ -447,6 +672,12 @@ final class InPlaceTransformationServiceTest extends TestCase
     /** @return list<array{ordinal: int, code_kind: string, value: float, label: string}> */
     private function destinationValueLabels(PDO $pdo): array
     {
+        return $this->valueLabelsForVariable($pdo, 'Destination');
+    }
+
+    /** @return list<array{ordinal: int, code_kind: string, value: float, label: string}> */
+    private function valueLabelsForVariable(PDO $pdo, string $sourceName): array
+    {
         $rows = $this->rows(
             $pdo,
             'SELECT label.ordinal, label.code_kind, label.numeric_code, label.label '
@@ -455,7 +686,7 @@ final class InPlaceTransformationServiceTest extends TestCase
             . 'JOIN value_label label ON label.value_label_set_id = link.value_label_set_id '
             . 'WHERE variable.dataset_id = ? AND variable.source_name = ? '
             . 'ORDER BY label.ordinal',
-            [self::DATASET_ID, 'Destination'],
+            [self::DATASET_ID, $sourceName],
         );
 
         return array_map(
@@ -489,6 +720,35 @@ final class InPlaceTransformationServiceTest extends TestCase
             static fn(mixed $value): ?float => $value === null ? null : (float) $value,
             $statement->fetchAll(PDO::FETCH_COLUMN),
         ));
+    }
+
+    /**
+     * @param list<string> $columns
+     * @return list<array<string, int|float|null>>
+     */
+    private function tableRows(PDO $pdo, Connection $connection, string $tableName, array $columns): array
+    {
+        $statement = $pdo->query(
+            'SELECT ' . implode(', ', array_map($connection->profile->quoteIdentifier(...), $columns))
+            . ' FROM ' . $this->qualifiedTable($connection, $tableName)
+            . ' ORDER BY ' . $connection->profile->quoteIdentifier('__case_ordinal'),
+        );
+        self::assertInstanceOf(PDOStatement::class, $statement);
+
+        return array_map(
+            static function (array $row) use ($columns): array {
+                $normalized = [];
+                foreach ($columns as $column) {
+                    $value = $row[$column] ?? null;
+                    $normalized[$column] = $column === '__case_ordinal'
+                        ? (int) $value
+                        : ($value === null ? null : (float) $value);
+                }
+
+                return $normalized;
+            },
+            $statement->fetchAll(PDO::FETCH_ASSOC),
+        );
     }
 
     /** @return list<string> */
