@@ -34,8 +34,14 @@ final class SpssFrontend02Test extends TestCase
 
         self::assertNull($case['expected_error'], (string) $case['id']);
         self::assertSame($case['expected_source_hash'], $result->sourceHash, (string) $case['id']);
-        self::assertSame($case['expected_plan_hash'], (new PlanCodec())->hash($result->plan), (string) $case['id']);
+        $codec = new PlanCodec();
+        self::assertSame($case['expected_plan_hash'], $codec->hash($result->plan), (string) $case['id']);
         self::assertSame($this->expectedPlan($case), $result->plan->canonicalArray(), (string) $case['id']);
+        self::assertSame(
+            $result->plan->canonicalArray(),
+            $codec->fromJson($codec->canonicalJson($result->plan))->canonicalArray(),
+            (string) $case['id'],
+        );
 
         if (isset($case['expected_plan_contract'])) {
             self::assertSame($case['expected_plan_contract'], $result->plan->contract->value, (string) $case['id']);

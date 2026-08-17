@@ -234,12 +234,29 @@ final class SpssCompilerTest extends TestCase
             16,
             23,
         ];
-        yield 'reserved compute target' => [
+        yield 'reserved new compute target' => [
             'COMPUTE __hidden = 1.',
             [['name' => 'source', 'storage_kind' => 'numeric']],
             'reserved_target_name',
             8,
             16,
+        ];
+        yield 'reserved existing compute target' => [
+            'COMPUTE __hidden = 1.',
+            [['name' => '__Hidden', 'storage_kind' => 'numeric']],
+            'reserved_target_name',
+            8,
+            16,
+        ];
+        yield 'reserved existing conditional target' => [
+            'IF (source = 1) __hidden = 1.',
+            [
+                ['name' => 'source', 'storage_kind' => 'numeric'],
+                ['name' => '__Hidden', 'storage_kind' => 'numeric'],
+            ],
+            'reserved_target_name',
+            16,
+            24,
         ];
         yield 'string compute expression' => [
             'COMPUTE target = color.',

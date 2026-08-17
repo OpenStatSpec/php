@@ -170,6 +170,7 @@ final class Binder
         }
 
         $target = $schema->find($statement->target, $statement->targetSpan);
+        $this->validateTargetName($statement->target, $statement->targetSpan);
         if ($target !== null) {
             if ($target->storageKind !== 'numeric') {
                 $this->fail(
@@ -181,7 +182,6 @@ final class Binder
 
             return new BoundCompute($target->name, TargetMode::Replace, $value, $statement->span);
         }
-        $this->validateTargetName($statement->target, $statement->targetSpan);
         $schema->addNumeric($statement->target);
 
         return new BoundCompute($statement->target, TargetMode::Create, $value, $statement->span);
@@ -195,6 +195,7 @@ final class Binder
             $statement->targetSpan,
             'conditional_target_missing',
         );
+        $this->validateTargetName($statement->target, $statement->targetSpan);
         if ($target->storageKind !== 'numeric') {
             $this->fail(
                 'expression_type_unsupported',
