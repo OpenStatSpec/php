@@ -935,6 +935,16 @@ final class InPlaceTransformationServiceTest extends TestCase
         );
         $admin->exec('CREATE DATABASE ' . $this->quoteDoltDatabaseName($database));
         $this->doltTestDatabases[] = ['admin' => $admin, 'database' => $database];
+        if ($targetUser !== null && $targetUser !== '') {
+            $quotedTargetUser = $admin->quote($targetUser);
+            if (!is_string($quotedTargetUser)) {
+                throw new RuntimeException('Unable to quote the Dolt target user.');
+            }
+            $admin->exec(
+                'GRANT ALL PRIVILEGES ON ' . $this->quoteDoltDatabaseName($database)
+                . ".* TO {$quotedTargetUser}@'%'",
+            );
+        }
 
         $pdo = new PDO(
             $configuration['isolated']['dsn'],
