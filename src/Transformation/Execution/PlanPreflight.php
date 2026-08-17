@@ -52,16 +52,22 @@ final readonly class PlanPreflight
         $this->codec = $codec ?? new PlanCodec();
     }
 
+    public function isFor(PDO $pdo): bool
+    {
+        return $this->connection->pdo === $pdo;
+    }
+
     public function bind(InPlaceApplyRequest $request): BoundPlan
     {
         // Re-decode the public model so directly constructed objects receive the
         // same complete structural and semantic validation as decoded plans.
         $this->codec->fromArray($request->plan->canonicalArray());
         $this->connection->assertClaimedSupported();
-        CatalogOwnership::assertReadyForUse($this->connection->pdo);
+        CatalogOwnership::assertReadyForUseReadOnly($this->connection->pdo);
         $this->assertAuditReady();
 
         $dataset = $this->resolveDataset($request->datasetId);
+        $this->assertExclusivePhysicalTableBinding($dataset);
         $variables = $this->resolveVariables($dataset);
         $physicalColumns = $this->physicalColumns($dataset);
         $this->assertPhysicalBindings($dataset, $variables, $physicalColumns);
@@ -176,6 +182,7 @@ final readonly class PlanPreflight
 
         if ($operation instanceof ReplaceValueLabelsOperation) {
             $target = $schema->variable($operation->variable, $path . '.variable');
+            $this->assertValueLabelAssociations($target, $path . '.variable');
             foreach ($operation->labels as $index => $label) {
                 $this->assertValueKind($label->value, $target, $path . '.labels[' . $index . '].value');
             }
@@ -302,6 +309,12 @@ final readonly class PlanPreflight
             } elseif ($match instanceof SystemMissingMatch && !$source->isNumeric()) {
                 throw TransformationFailure::at('system_missing_for_string', $path . '.rules[' . $index . '].match', 'String variables have no system-missing state.');
             }
+            if ($rule->result instanceof LiteralResult) {
+                $this->assertValueKind($rule->result->value, $target, $path . '.rules[' . $index . '].result.value');
+            }
+        }
+        if ($operation->unmatched instanceof LiteralResult) {
+            $this->assertValueKind($operation->unmatched->value, $target, $path . '.unmatched.value');
         }
 
         $kind = $this->recodeResultKind($operation, $source, $path);
@@ -419,7 +432,7 @@ final readonly class PlanPreflight
         $statement = $this->statement(
             'SELECT dataset_id, dataset_name, physical_table_schema, physical_table_name FROM dataset WHERE dataset_id = ?',
         );
-        $statement->execute([$datasetId]);
+        CheckedPdo::execute($statement, [$datasetId], 'The transformation dataset binding could not be queried.');
         $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
         if (count($rows) !== 1) {
             throw TransformationFailure::at('invalid_dataset_id', '$.dataset_id', 'Apply dataset must resolve to exactly one catalog row.');
@@ -440,6 +453,25 @@ final readonly class PlanPreflight
         return new DatasetBinding($datasetId, $name, $schema, $table);
     }
 
+    private function assertExclusivePhysicalTableBinding(DatasetBinding $dataset): void
+    {
+        $statement = $this->statement(
+            'SELECT dataset_id, physical_table_schema FROM dataset WHERE physical_table_name = ?',
+        );
+        CheckedPdo::execute($statement, [$dataset->table], 'Physical table ownership could not be queried.');
+        $owners = array_values(array_filter(
+            $statement->fetchAll(PDO::FETCH_ASSOC),
+            static fn(array $row): bool => ($row['physical_table_schema'] ?? null) === $dataset->schema,
+        ));
+        if (count($owners) !== 1 || ($owners[0]['dataset_id'] ?? null) !== $dataset->datasetId) {
+            throw TransformationFailure::at(
+                'invalid_catalog',
+                '$.dataset_id',
+                'The physical wide table must belong to exactly one logical dataset.',
+            );
+        }
+    }
+
     /** @return array<string, VariableBinding> */
     private function resolveVariables(DatasetBinding $dataset): array
     {
@@ -447,7 +479,7 @@ final readonly class PlanPreflight
             'SELECT variable_id, source_name, physical_name, storage_kind, source_ordinal, declared_string_width '
             . 'FROM variable WHERE dataset_id = ? ORDER BY source_ordinal',
         );
-        $statement->execute([$dataset->datasetId]);
+        CheckedPdo::execute($statement, [$dataset->datasetId], 'Variable catalog bindings could not be queried.');
         $variables = [];
         $physical = [];
         $lastOrdinal = 0;
@@ -463,6 +495,7 @@ final readonly class PlanPreflight
             if (!is_string($id) || $id === ''
                 || !is_string($name) || $name === ''
                 || !is_string($physicalName) || $physicalName === ''
+                || str_starts_with($physicalName, '__')
                 || !in_array($kind, ['numeric', 'string'], true)
                 || !is_int($ordinal) || $ordinal <= $lastOrdinal
                 || ($kind === 'string' && (!is_int($width) || $width < 1))
@@ -479,6 +512,31 @@ final readonly class PlanPreflight
         }
 
         return $variables;
+    }
+
+    private function assertValueLabelAssociations(VariableBinding $target, string $path): void
+    {
+        $statement = $this->statement(
+            'SELECT target_link.value_label_set_id, label_set.dataset_id AS set_dataset_id, '
+            . 'linked_variable.dataset_id AS linked_dataset_id '
+            . 'FROM variable_value_label_set target_link '
+            . 'JOIN value_label_set label_set ON label_set.value_label_set_id = target_link.value_label_set_id '
+            . 'JOIN variable_value_label_set linked_link ON linked_link.value_label_set_id = target_link.value_label_set_id '
+            . 'JOIN variable linked_variable ON linked_variable.variable_id = linked_link.variable_id '
+            . 'WHERE target_link.variable_id = ?',
+        );
+        CheckedPdo::execute($statement, [$target->variableId], 'Value-label associations could not be queried.');
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            if (!is_string($row['value_label_set_id'] ?? null)
+                || ($row['set_dataset_id'] ?? null) !== ($row['linked_dataset_id'] ?? null)
+            ) {
+                throw TransformationFailure::at(
+                    'invalid_catalog',
+                    $path,
+                    'Value-label sets and every linked variable must belong to the same dataset.',
+                );
+            }
+        }
     }
 
     /**
@@ -502,7 +560,10 @@ final readonly class PlanPreflight
             array_values($variables),
         ));
         try {
-            $this->connection->pdo->query('SELECT ' . $selection . ' FROM ' . $dataset->qualifiedTable($this->connection->profile) . ' WHERE 1 = 0');
+            $statement = $this->statement(
+                'SELECT ' . $selection . ' FROM ' . $dataset->qualifiedTable($this->connection->profile) . ' WHERE 1 = 0',
+            );
+            CheckedPdo::execute($statement, [], 'Cataloged wide-table bindings are not readable.');
         } catch (PDOException) {
             throw TransformationFailure::at('invalid_catalog', '$.dataset_id', 'Cataloged wide-table bindings are not readable.');
         }
@@ -512,10 +573,11 @@ final readonly class PlanPreflight
     private function physicalColumns(DatasetBinding $dataset): array
     {
         if ($this->connection->profileName === 'sqlite') {
-            $statement = $this->connection->pdo->query(
+            $statement = $this->statement(
                 'PRAGMA table_info(' . $this->connection->profile->quoteIdentifier($dataset->table) . ')',
             );
-            $rows = $statement === false ? [] : $statement->fetchAll(PDO::FETCH_ASSOC);
+            CheckedPdo::execute($statement, [], 'SQLite physical columns could not be queried.');
+            $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
             return array_values(array_map(static fn(array $row): string => (string) ($row['name'] ?? ''), $rows));
         }
         if ($this->connection->profileName === 'postgresql') {
@@ -523,7 +585,7 @@ final readonly class PlanPreflight
                 'SELECT column_name FROM information_schema.columns '
                 . 'WHERE table_schema = COALESCE(?, current_schema()) AND table_name = ? ORDER BY ordinal_position',
             );
-            $statement->execute([$dataset->schema, $dataset->table]);
+            CheckedPdo::execute($statement, [$dataset->schema, $dataset->table], 'PostgreSQL physical columns could not be queried.');
             return array_values(array_map('strval', $statement->fetchAll(PDO::FETCH_COLUMN)));
         }
 
@@ -538,7 +600,11 @@ final readonly class PlanPreflight
     private function postgresqlPhysicalColumnSlots(DatasetBinding $dataset): int
     {
         $statement = $this->statement('SELECT COUNT(*) FROM pg_attribute WHERE attrelid = to_regclass(?) AND attnum > 0');
-        $statement->execute([$dataset->qualifiedTable($this->connection->profile)]);
+        CheckedPdo::execute(
+            $statement,
+            [$dataset->qualifiedTable($this->connection->profile)],
+            'PostgreSQL physical column slots could not be queried.',
+        );
         $slots = filter_var($statement->fetchColumn(), FILTER_VALIDATE_INT);
         if (!is_int($slots) || $slots < 1) {
             throw TransformationFailure::at('invalid_catalog', '$.dataset_id', 'PostgreSQL wide table has no physical column slots.');
@@ -549,11 +615,12 @@ final readonly class PlanPreflight
     private function assertAuditReady(): void
     {
         try {
-            $this->connection->pdo->query(
+            $statement = $this->statement(
                 'SELECT apply_id, contract_id, database_profile, dataset_id, physical_table_schema, physical_table_name, '
                 . 'source_hash, plan_hash, canonical_plan_json, actor, status, dolt_branch, dolt_head_before, dolt_head_after, '
                 . 'operation_count, started_at, completed_at FROM transformation_apply WHERE 1 = 0',
             );
+            CheckedPdo::execute($statement, [], 'The transformation audit schema is not readable.');
         } catch (PDOException) {
             throw new UnsupportedOperation(
                 DiagnosticCode::CatalogMigrationRequired,
@@ -564,10 +631,10 @@ final readonly class PlanPreflight
 
     private function statement(string $sql): PDOStatement
     {
-        $statement = $this->connection->pdo->prepare($sql);
-        if ($statement === false) {
-            throw new PDOException('Transformation preflight statement could not be prepared.');
-        }
-        return $statement;
+        return CheckedPdo::prepare(
+            $this->connection->pdo,
+            $sql,
+            'Transformation preflight statement could not be prepared.',
+        );
     }
 }

@@ -122,6 +122,20 @@ final class CatalogOwnership
         throw self::migrationRequired();
     }
 
+    /** Transformation preflight must never initialize a fresh namespace. */
+    public static function assertReadyForUseReadOnly(PDO $pdo): void
+    {
+        if (!self::tableExists($pdo, self::IDENTITY_TABLE)
+            && !self::tableExists($pdo, self::MIGRATION_TABLE)
+            && self::catalogCollisions($pdo) === []
+            && self::namespaceObjects($pdo) === []
+        ) {
+            throw self::migrationRequired();
+        }
+
+        self::assertReadyForUse($pdo);
+    }
+
     public static function isFreshPending(PDO $pdo): bool
     {
         if (!self::tableExists($pdo, self::IDENTITY_TABLE)

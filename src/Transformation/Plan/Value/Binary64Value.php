@@ -52,4 +52,16 @@ final readonly class Binary64Value implements TypedValue
 
         return $decoded['value'];
     }
+
+    /** Decimal text whose conversion back to binary64 preserves the exact bits. */
+    public function decimal(): string
+    {
+        $decimal = sprintf('%.17g', $this->number());
+        $separator = localeconv()['decimal_point'] ?? '.';
+        if (is_string($separator) && $separator !== '' && $separator !== '.') {
+            $decimal = str_replace($separator, '.', $decimal);
+        }
+
+        return strtolower($decimal);
+    }
 }

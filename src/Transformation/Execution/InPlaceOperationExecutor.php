@@ -26,7 +26,6 @@ use OpenStatSpec\Transformation\Plan\Value\Binary64Value;
 use OpenStatSpec\Transformation\Plan\Value\StringValue;
 use OpenStatSpec\Transformation\Plan\Value\TypedValue;
 use PDO;
-use PDOException;
 use PDOStatement;
 
 /** @internal Executes exactly one pre-bound operation inside the caller transaction. */
@@ -37,6 +36,11 @@ final readonly class InPlaceOperationExecutor
     public function __construct(private Connection $connection)
     {
         $this->predicateCompiler = new SqlPredicateCompiler($connection->profile);
+    }
+
+    public function isFor(PDO $pdo): bool
+    {
+        return $this->connection->pdo === $pdo;
     }
 
     public function execute(BoundOperation $bound, DatasetBinding $dataset): void
@@ -53,10 +57,10 @@ final readonly class InPlaceOperationExecutor
             }
             $parameters = [];
             $value = $this->predicateCompiler->operand($operation->value, $bound->schema, $parameters);
-            $this->statement(
+            CheckedPdo::execute($this->statement(
                 'UPDATE ' . $dataset->qualifiedTable($this->connection->profile)
                 . ' SET ' . $this->quote($target->physicalName) . ' = ' . $value,
-            )->execute($parameters);
+            ), $parameters, 'The assignment UPDATE could not be executed.');
             return;
         }
 
@@ -64,11 +68,11 @@ final readonly class InPlaceOperationExecutor
             $parameters = [];
             $value = $this->predicateCompiler->operand($operation->value, $bound->schema, $parameters);
             $condition = $this->predicateCompiler->compile($operation->condition, $bound->schema, $parameters);
-            $this->statement(
+            CheckedPdo::execute($this->statement(
                 'UPDATE ' . $dataset->qualifiedTable($this->connection->profile)
                 . ' SET ' . $this->quote($this->target($bound)->physicalName) . ' = ' . $value
                 . ' WHERE ' . $condition,
-            )->execute($parameters);
+            ), $parameters, 'The conditional assignment UPDATE could not be executed.');
             return;
         }
 
@@ -82,9 +86,9 @@ final readonly class InPlaceOperationExecutor
         }
 
         if ($operation instanceof SetVariableLabelOperation) {
-            $this->statement(
+            CheckedPdo::execute($this->statement(
                 'UPDATE variable SET variable_label = ? WHERE variable_id = ? AND dataset_id = ?',
-            )->execute([$operation->label, $this->target($bound)->variableId, $dataset->datasetId]);
+            ), [$operation->label, $this->target($bound)->variableId, $dataset->datasetId], 'The variable-label UPDATE could not be executed.');
             return;
         }
 
@@ -94,11 +98,11 @@ final readonly class InPlaceOperationExecutor
         }
 
         if ($operation instanceof SetFormatOperation) {
-            $this->statement(
+            CheckedPdo::execute($this->statement(
                 'UPDATE variable SET print_format_family = ?, print_format_width = ?, print_format_decimals = ?, '
                 . 'write_format_family = ?, write_format_width = ?, write_format_decimals = ? '
                 . 'WHERE variable_id = ? AND dataset_id = ?',
-            )->execute([
+            ), [
                 $operation->family,
                 $operation->width,
                 $operation->decimals,
@@ -107,14 +111,14 @@ final readonly class InPlaceOperationExecutor
                 $operation->decimals,
                 $this->target($bound)->variableId,
                 $dataset->datasetId,
-            ]);
+            ], 'The variable-format UPDATE could not be executed.');
             return;
         }
 
         if ($operation instanceof SetMeasurementLevelOperation) {
-            $this->statement(
+            CheckedPdo::execute($this->statement(
                 'UPDATE variable SET measurement_level = ? WHERE variable_id = ? AND dataset_id = ?',
-            )->execute([$operation->level, $this->target($bound)->variableId, $dataset->datasetId]);
+            ), [$operation->level, $this->target($bound)->variableId, $dataset->datasetId], 'The measurement-level UPDATE could not be executed.');
             return;
         }
 
@@ -127,16 +131,18 @@ final readonly class InPlaceOperationExecutor
 
     private function createNumericTarget(DatasetBinding $dataset, VariableBinding $target): void
     {
-        $this->connection->pdo->exec(
+        CheckedPdo::exec(
+            $this->connection->pdo,
             'ALTER TABLE ' . $dataset->qualifiedTable($this->connection->profile)
             . ' ADD COLUMN ' . $this->quote($target->physicalName)
             . ' ' . $this->connection->profile->numericType() . ' NULL',
+            'The numeric target column could not be added.',
         );
-        $this->statement(
+        CheckedPdo::execute($this->statement(
             'INSERT INTO variable '
             . '(variable_id, dataset_id, source_ordinal, source_name, physical_name, storage_kind, declared_string_width) '
             . 'VALUES (?, ?, ?, ?, ?, ?, ?)',
-        )->execute([
+        ), [
             $target->variableId,
             $dataset->datasetId,
             $target->sourceOrdinal,
@@ -144,7 +150,7 @@ final readonly class InPlaceOperationExecutor
             $target->physicalName,
             'numeric',
             null,
-        ]);
+        ], 'The numeric target catalog row could not be inserted.');
     }
 
     private function recode(RecodeOperation $operation, BoundOperation $bound, DatasetBinding $dataset): void
@@ -166,11 +172,11 @@ final readonly class InPlaceOperationExecutor
             $when[] = 'WHEN ' . $condition . ' THEN ' . $this->resultSql($rule->result, $sourceSql, $parameters);
         }
         $unmatched = $this->resultSql($operation->unmatched, $sourceSql, $parameters);
-        $this->statement(
+        CheckedPdo::execute($this->statement(
             'UPDATE ' . $dataset->qualifiedTable($this->connection->profile)
             . ' SET ' . $this->quote($this->target($bound)->physicalName)
             . ' = CASE ' . implode(' ', $when) . ' ELSE ' . $unmatched . ' END',
-        )->execute($parameters);
+        ), $parameters, 'The recode UPDATE could not be executed.');
     }
 
     /** @param list<float|string|null> $parameters */
@@ -178,11 +184,12 @@ final readonly class InPlaceOperationExecutor
     {
         $conditions = [];
         foreach ($match->values as $value) {
-            $parameters[] = $this->value($value);
-            $conditions[] = $this->connection->profile->exactValueCondition(
-                $sourceSql,
-                $value instanceof StringValue,
-            );
+            if ($value instanceof Binary64Value) {
+                $conditions[] = $sourceSql . ' = ' . $this->predicateCompiler->numericLiteral($value, $parameters);
+            } else {
+                $parameters[] = $this->value($value);
+                $conditions[] = $this->connection->profile->exactValueCondition($sourceSql, true);
+            }
         }
         return '(' . implode(' OR ', $conditions) . ')';
     }
@@ -190,9 +197,9 @@ final readonly class InPlaceOperationExecutor
     /** @param list<float|string|null> $parameters */
     private function rangeMatch(string $sourceSql, RangeMatch $match, array &$parameters): string
     {
-        $parameters[] = $match->lower->number();
-        $parameters[] = $match->upper->number();
-        return '(' . $sourceSql . ' >= ? AND ' . $sourceSql . ' <= ?)';
+        $lower = $this->predicateCompiler->numericLiteral($match->lower, $parameters);
+        $upper = $this->predicateCompiler->numericLiteral($match->upper, $parameters);
+        return '(' . $sourceSql . ' >= ' . $lower . ' AND ' . $sourceSql . ' <= ' . $upper . ')';
     }
 
     /** @param list<float|string|null> $parameters */
@@ -205,6 +212,9 @@ final readonly class InPlaceOperationExecutor
             return 'NULL';
         }
         if ($result instanceof LiteralResult) {
+            if ($result->value instanceof Binary64Value) {
+                return $this->predicateCompiler->numericLiteral($result->value, $parameters);
+            }
             $parameters[] = $this->value($result->value);
             return '?';
         }
@@ -221,7 +231,7 @@ final readonly class InPlaceOperationExecutor
             . 'JOIN value_label_set value_set ON value_set.value_label_set_id = link.value_label_set_id '
             . 'WHERE link.variable_id = ?',
         );
-        $statement->execute([$target->variableId]);
+        CheckedPdo::execute($statement, [$target->variableId], 'The value-label association could not be queried.');
         $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
         if (count($rows) > 1 || (isset($rows[0]['dataset_id']) && $rows[0]['dataset_id'] !== $dataset->datasetId)) {
             throw TransformationFailure::at('invalid_catalog', '$.dataset_id', 'Value-label association is malformed.');
@@ -232,25 +242,34 @@ final readonly class InPlaceOperationExecutor
             : null;
         if ($setId !== null) {
             $references = $this->statement('SELECT COUNT(*) FROM variable_value_label_set WHERE value_label_set_id = ?');
-            $references->execute([$setId]);
+            CheckedPdo::execute($references, [$setId], 'The value-label reference count could not be queried.');
             if ((int) $references->fetchColumn() > 1) {
-                $this->statement('DELETE FROM variable_value_label_set WHERE variable_id = ?')->execute([$target->variableId]);
+                CheckedPdo::execute(
+                    $this->statement('DELETE FROM variable_value_label_set WHERE variable_id = ?'),
+                    [$target->variableId],
+                    'The old shared value-label association could not be removed.',
+                );
                 $setId = null;
             } else {
-                $this->statement('DELETE FROM value_label WHERE value_label_set_id = ?')->execute([$setId]);
+                CheckedPdo::execute(
+                    $this->statement('DELETE FROM value_label WHERE value_label_set_id = ?'),
+                    [$setId],
+                    'The old value labels could not be removed.',
+                );
             }
         }
         if ($setId === null) {
             $setId = NormativeCatalog::uuid();
-            $this->statement('INSERT INTO value_label_set (value_label_set_id, dataset_id, name) VALUES (?, ?, ?)')->execute([
-                $setId,
-                $dataset->datasetId,
-                null,
-            ]);
-            $this->statement('INSERT INTO variable_value_label_set (variable_id, value_label_set_id) VALUES (?, ?)')->execute([
-                $target->variableId,
-                $setId,
-            ]);
+            CheckedPdo::execute(
+                $this->statement('INSERT INTO value_label_set (value_label_set_id, dataset_id, name) VALUES (?, ?, ?)'),
+                [$setId, $dataset->datasetId, null],
+                'The value-label set could not be inserted.',
+            );
+            CheckedPdo::execute(
+                $this->statement('INSERT INTO variable_value_label_set (variable_id, value_label_set_id) VALUES (?, ?)'),
+                [$target->variableId, $setId],
+                'The value-label association could not be inserted.',
+            );
         }
 
         $insert = $this->statement(
@@ -260,7 +279,7 @@ final readonly class InPlaceOperationExecutor
         );
         foreach ($operation->labels as $index => $label) {
             $numeric = $label->value instanceof Binary64Value;
-            $insert->execute([
+            CheckedPdo::execute($insert, [
                 NormativeCatalog::uuid(),
                 $setId,
                 $index + 1,
@@ -268,14 +287,14 @@ final readonly class InPlaceOperationExecutor
                 $numeric ? $this->value($label->value) : null,
                 $numeric ? null : $this->value($label->value),
                 $label->label,
-            ]);
+            ], 'A replacement value label could not be inserted.');
         }
     }
 
-    private function value(TypedValue $value): float|string
+    private function value(TypedValue $value): string
     {
         return match (true) {
-            $value instanceof Binary64Value => $value->number(),
+            $value instanceof Binary64Value => $value->decimal(),
             $value instanceof StringValue => $value->value,
             default => throw new \LogicException('Unsupported preflighted typed value.'),
         };
@@ -296,10 +315,10 @@ final readonly class InPlaceOperationExecutor
 
     private function statement(string $sql): PDOStatement
     {
-        $statement = $this->connection->pdo->prepare($sql);
-        if ($statement === false) {
-            throw new PDOException('Transformation SQL statement could not be prepared.');
-        }
-        return $statement;
+        return CheckedPdo::prepare(
+            $this->connection->pdo,
+            $sql,
+            'Transformation SQL statement could not be prepared.',
+        );
     }
 }

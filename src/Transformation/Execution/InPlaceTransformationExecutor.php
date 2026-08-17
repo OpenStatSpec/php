@@ -31,6 +31,12 @@ final readonly class InPlaceTransformationExecutor
         $this->preflight = $preflight ?? new PlanPreflight($connection, $this->codec);
         $this->operationExecutor = $operationExecutor ?? new InPlaceOperationExecutor($connection);
         $this->auditWriter = $auditWriter ?? new TransformationAuditWriter($connection->pdo, $this->codec);
+        if (!$this->preflight->isFor($connection->pdo)
+            || !$this->operationExecutor->isFor($connection->pdo)
+            || !$this->auditWriter->isFor($connection->pdo)
+        ) {
+            throw new \InvalidArgumentException('Every transformation executor collaborator must use the same PDO connection.');
+        }
     }
 
     public function execute(InPlaceApplyRequest $request): ExecutionResult
@@ -49,7 +55,7 @@ final readonly class InPlaceTransformationExecutor
         $transactionStarted = false;
 
         try {
-            $this->connection->pdo->beginTransaction();
+            CheckedPdo::begin($this->connection->pdo);
             $transactionStarted = true;
             foreach ($bound->operations as $operation) {
                 $this->operationExecutor->execute($operation, $bound->dataset);
@@ -62,11 +68,11 @@ final readonly class InPlaceTransformationExecutor
                 $doltBefore,
                 $doltAfter,
             );
-            $this->connection->pdo->commit();
+            CheckedPdo::commit($this->connection->pdo);
             $transactionStarted = false;
         } catch (Throwable $failure) {
             if ($transactionStarted) {
-                $this->connection->pdo->rollBack();
+                CheckedPdo::rollback($this->connection->pdo, $failure);
             }
             throw $failure;
         }

@@ -9,7 +9,6 @@ use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Tests\Support\SpecificationManifest;
 use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
-use OpenStatSpec\Transformation\Audit\TransformationAuditWriter;
 use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 use OpenStatSpec\Transformation\Plan\PlanCodec;
@@ -94,17 +93,14 @@ final class OfficialInPlaceTransformation02Test extends TestCase
             ['source_a', 'source_b'],
             [[1, 2.0, 11.0], [2, null, 22.0]],
         );
+        $pdo->exec("ALTER TABLE transformation_apply ADD COLUMN task8_actor_guard INTEGER NOT NULL DEFAULT 0 CHECK (actor <> 'conformance-runner')");
         $before = $this->snapshot($pdo, $connection, self::CREATE_DATASET_ID, 'data_atomic_create');
-        $failingAuditPdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 
         try {
-            (new InPlaceTransformationExecutor(
-                $connection,
-                auditWriter: new TransformationAuditWriter($failingAuditPdo),
-            ))->execute($this->request($case, self::CREATE_DATASET_ID));
+            (new InPlaceTransformationExecutor($connection))->execute($this->request($case, self::CREATE_DATASET_ID));
             self::fail('The injected audit failure did not abort the apply.');
-        } catch (\LogicException $exception) {
-            self::assertStringContainsString('open apply transaction', $exception->getMessage());
+        } catch (\PDOException $exception) {
+            self::assertStringContainsString('constraint', strtolower($exception->getMessage()));
         }
 
         $after = $this->snapshot($pdo, $connection, self::CREATE_DATASET_ID, 'data_atomic_create');
@@ -251,6 +247,7 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         $case = $this->bindingCase('sqlite-create-target-atomic-success');
         $this->prepareCatalog($pdo);
         $this->assertNamespaceClean($pdo, self::ROLLBACK_DATASET_ID, $table);
+        $auditGuardInstalled = false;
 
         try {
             $this->installNumericFixture(
@@ -261,23 +258,25 @@ final class OfficialInPlaceTransformation02Test extends TestCase
                 ['source_a', 'source_b'],
                 [[1, 2.0, 11.0], [2, null, 22.0]],
             );
+            $pdo->exec('ALTER TABLE transformation_apply DROP CONSTRAINT IF EXISTS task8_fail_audit');
+            $pdo->exec("ALTER TABLE transformation_apply ADD CONSTRAINT task8_fail_audit CHECK (actor <> 'conformance-runner')");
+            $auditGuardInstalled = true;
             $before = $this->snapshot($pdo, $connection, self::ROLLBACK_DATASET_ID, $table);
-            $failingAuditPdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 
             try {
-                (new InPlaceTransformationExecutor(
-                    $connection,
-                    auditWriter: new TransformationAuditWriter($failingAuditPdo),
-                ))->execute($this->request($case, self::ROLLBACK_DATASET_ID));
+                (new InPlaceTransformationExecutor($connection))->execute($this->request($case, self::ROLLBACK_DATASET_ID));
                 self::fail('The injected PostgreSQL audit failure did not abort the apply.');
-            } catch (\LogicException $exception) {
-                self::assertStringContainsString('open apply transaction', $exception->getMessage());
+            } catch (\PDOException $exception) {
+                self::assertStringContainsString('task8_fail_audit', $exception->getMessage());
             }
 
             self::assertSame($before, $this->snapshot($pdo, $connection, self::ROLLBACK_DATASET_ID, $table));
             self::assertNotContains('target', $this->columns($pdo, $connection, $table));
             self::assertFalse($pdo->inTransaction());
         } finally {
+            if ($auditGuardInstalled) {
+                $pdo->exec('ALTER TABLE transformation_apply DROP CONSTRAINT IF EXISTS task8_fail_audit');
+            }
             $this->purgeFixture($pdo, $connection, self::ROLLBACK_DATASET_ID, $table);
         }
     }

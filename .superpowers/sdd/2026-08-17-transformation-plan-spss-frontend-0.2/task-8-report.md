@@ -41,3 +41,19 @@
 ## Environment note
 
 `OPENSTATSPEC_PG_DSN`, `OPENSTATSPEC_PG_USER`, and `OPENSTATSPEC_PG_PASSWORD` were not configured locally, so the two new live PostgreSQL success/rollback probes and the existing PostgreSQL integrations skipped. SQLite supplied the local native-DDL transaction evidence; the PostgreSQL paths remain in the normalized full suite and run automatically when the documented environment is configured.
+
+## Review follow-up
+
+- RED: 12 new regression scenarios initially produced 13 failures. They reproduced lossy PDO float binding, text-ordered literal predicates, unchecked false PDO outcomes, cross-connection audit injection, reserved/shared physical bindings, late string-width and value-label validation, and mutation during fresh-database preflight.
+- Binary64 SQL parameters now use a 17-significant-digit locale-independent decimal representation and an explicit backend numeric cast (`REAL` or `DOUBLE PRECISION`). SQLite behavior tests prove adjacent-binary64 assignment, literal-only numeric ordering, recode match/result precision, and numeric value-label precision; a PostgreSQL compiler regression proves exact decimal parameters and `DOUBLE PRECISION` casts without interpolating values.
+- Every apply-boundary `prepare`, `execute`, `exec`, `beginTransaction`, `commit`, and `rollBack` outcome is checked. The preflight, operation executor, and audit writer are constructor-verified against the exact same PDO instance; false execute/begin/commit/rollback and same-PDO audit-failure tests prove no successful result or audit can escape a failed transaction.
+- Preflight now rejects `__`-reserved physical variable names, duplicate logical ownership of one physical table, cross-dataset value-label associations, and over-width string recode outputs before any UPDATE. The transformation-specific ownership check is read-only on an empty database while legacy import initialization retains its prior behavior.
+- The official SQLite and environment-gated PostgreSQL rollback probes now fail the audit insert on the same connection and native transaction rather than injecting a second PDO.
+
+## Review verification
+
+- Focused executor and official 0.2 integration tests: 34 tests, 398 assertions, 2 unconfigured PostgreSQL skips; passed.
+- Full PHPUnit suite: 435 tests, 2,731 assertions, 32 environment skips; passed.
+- `composer analyse`: passed with no errors; `composer lint`: passed.
+- Task-changed-file PHP CS Fixer dry-run: passed. Repository-wide working-tree `composer style` still reports the pre-existing CRLF-only differences; the LF-normalized staged-tree `composer check` passed all validation, lint, style, PHPStan, and 435-test PHPUnit gates.
+- PostgreSQL environment remained unavailable (`OPENSTATSPEC_PG_DSN`, user, and password unset), so live PostgreSQL execution was skipped explicitly; dialect SQL and the gated same-transaction rollback path remain covered in tests.

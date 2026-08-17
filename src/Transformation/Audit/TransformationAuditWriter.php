@@ -7,11 +7,11 @@ namespace OpenStatSpec\Transformation\Audit;
 use OpenStatSpec\Transformation\Diagnostic\TransformationFailure;
 use OpenStatSpec\Transformation\Execution\DatasetBinding;
 use OpenStatSpec\Transformation\Execution\DoltEvidence;
+use OpenStatSpec\Transformation\Execution\CheckedPdo;
 use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
 use OpenStatSpec\Transformation\Plan\PlanCodec;
 use OpenStatSpec\Transformation\Plan\PlanContract;
 use PDO;
-use PDOException;
 
 /** Writes only the one compact success record inside the caller's apply transaction. */
 final readonly class TransformationAuditWriter
@@ -21,6 +21,11 @@ final readonly class TransformationAuditWriter
     public function __construct(private PDO $pdo, ?PlanCodec $codec = null)
     {
         $this->codec = $codec ?? new PlanCodec();
+    }
+
+    public function isFor(PDO $pdo): bool
+    {
+        return $this->pdo === $pdo;
     }
 
     public function succeed(
@@ -48,18 +53,15 @@ final readonly class TransformationAuditWriter
             ? 'openstatspec-in-place-transformation-v0.1'
             : 'openstatspec-in-place-transformation-v0.2';
 
-        $statement = $this->pdo->prepare(<<<'SQL'
+        $statement = CheckedPdo::prepare($this->pdo, <<<'SQL'
 INSERT INTO transformation_apply (
     apply_id, contract_id, database_profile, dataset_id, physical_table_schema,
     physical_table_name, source_hash, plan_hash, canonical_plan_json, actor,
     status, dolt_branch, dolt_head_before, dolt_head_after, operation_count,
     started_at, completed_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-SQL);
-        if ($statement === false) {
-            throw new PDOException('The transformation audit insert could not be prepared.');
-        }
-        $statement->execute([
+SQL, 'The transformation audit insert could not be prepared.');
+        CheckedPdo::execute($statement, [
             $applyId,
             $contract,
             $databaseProfile,
@@ -77,20 +79,19 @@ SQL);
             count($request->plan->operations),
             $timestamp,
             $timestamp,
-        ]);
+        ], 'The transformation audit insert could not be executed.');
 
         return $applyId;
     }
 
     private function assertDatasetIdentity(DatasetBinding $dataset): void
     {
-        $statement = $this->pdo->prepare(
+        $statement = CheckedPdo::prepare(
+            $this->pdo,
             'SELECT physical_table_schema, physical_table_name FROM dataset WHERE dataset_id = ?',
+            'The audit target dataset identity could not be prepared.',
         );
-        if ($statement === false) {
-            throw new PDOException('The audit target dataset identity could not be prepared.');
-        }
-        $statement->execute([$dataset->datasetId]);
+        CheckedPdo::execute($statement, [$dataset->datasetId], 'The audit target dataset identity could not be queried.');
         $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
         if (count($rows) !== 1
             || ($rows[0]['physical_table_schema'] ?? null) !== $dataset->schema

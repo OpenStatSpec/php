@@ -34,11 +34,18 @@ final readonly class SqlPredicateCompiler
             );
         }
         if ($operand instanceof LiteralOperand && $operand->value instanceof Binary64Value) {
-            $parameters[] = $operand->value->number();
-            return '?';
+            return $this->numericLiteral($operand->value, $parameters);
         }
 
         throw TransformationFailure::at('expression_type_unsupported', '$.value', 'Only numeric SQL operands are supported.');
+    }
+
+    /** @param list<float|string|null> $parameters */
+    public function numericLiteral(Binary64Value $value, array &$parameters): string
+    {
+        $parameters[] = $value->decimal();
+
+        return 'CAST(? AS ' . $this->profile->numericType() . ')';
     }
 
     /** @param list<float|string|null> $parameters */
