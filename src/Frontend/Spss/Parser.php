@@ -7,7 +7,6 @@ namespace OpenStatSpec\Frontend\Spss;
 use OpenStatSpec\Frontend\Spss\Ast\BooleanPredicate;
 use OpenStatSpec\Frontend\Spss\Ast\Comparison;
 use OpenStatSpec\Frontend\Spss\Ast\ComputeStatement;
-use OpenStatSpec\Frontend\Spss\Ast\DeleteVariablesStatement;
 use OpenStatSpec\Frontend\Spss\Ast\ElseInput;
 use OpenStatSpec\Frontend\Spss\Ast\ExecuteStatement;
 use OpenStatSpec\Frontend\Spss\Ast\ExpressionOperand;
@@ -26,7 +25,6 @@ use OpenStatSpec\Frontend\Spss\Ast\RecodeRule;
 use OpenStatSpec\Frontend\Spss\Ast\RecodeStatement;
 use OpenStatSpec\Frontend\Spss\Ast\ScalarValue;
 use OpenStatSpec\Frontend\Spss\Ast\SystemMissingInput;
-use OpenStatSpec\Frontend\Spss\Ast\StringStatement;
 use OpenStatSpec\Frontend\Spss\Ast\ValueInput;
 use OpenStatSpec\Frontend\Spss\Ast\ValueLabel;
 use OpenStatSpec\Frontend\Spss\Ast\ValueLabelGroup;
@@ -90,11 +88,6 @@ final class Parser
                 $statements[] = $this->ifStatement($command);
             } elseif ($this->matchKeyword('FORMATS')) {
                 $statements[] = $this->formats($command);
-            } elseif ($this->matchKeyword('STRING')) {
-                $statements[] = $this->string($command);
-            } elseif ($this->matchKeyword('DELETE')) {
-                $this->consumeKeyword('VARIABLES', 'Expected VARIABLES after DELETE.');
-                $statements[] = $this->deleteVariables($command);
             } else {
                 $code = $command->isWord()
                     ? 'unsupported_spss_command'
@@ -520,54 +513,6 @@ final class Parser
         );
     }
 
-    private function string(Token $command): StringStatement
-    {
-        $variables = [];
-        do {
-            $variable = $this->consumeIdentifier('Expected a variable name in STRING.')->lexeme;
-            if (strcasecmp($variable, 'TO') === 0) {
-                $this->fail($this->previous(), 'STRING variable ranges using TO are not supported.');
-            }
-            $variables[] = $variable;
-        } while ($this->current()->isWord());
-        $this->consume(TokenType::LeftParenthesis, 'Expected a width declaration in STRING.');
-        $width = $this->consume(TokenType::Identifier, 'Expected a string width such as A20.')->lexeme;
-        if (preg_match('/\AA([1-9][0-9]*)\z/i', $width, $matches) !== 1) {
-            $this->fail($this->previous(), 'STRING width must use the SPSS A<n> form.');
-        }
-        $widthValue = (int) $matches[1];
-        if ($widthValue > 32767) {
-            $this->fail($this->previous(), 'STRING width must be at most 32767.');
-        }
-        $rightParenthesis = $this->consume(TokenType::RightParenthesis, 'Expected ) after STRING width.');
-
-        return new StringStatement(
-            $command->line,
-            $variables,
-            $widthValue,
-            $command->span,
-            SourceSpan::cover($command->span, $rightParenthesis->span),
-        );
-    }
-
-    private function deleteVariables(Token $command): DeleteVariablesStatement
-    {
-        $variables = [];
-        do {
-            $variable = $this->consumeIdentifier('Expected a variable name in DELETE VARIABLES.')->lexeme;
-            if (strcasecmp($variable, 'TO') === 0) {
-                $this->fail($this->previous(), 'DELETE VARIABLES ranges using TO are not supported.');
-            }
-            $variables[] = $variable;
-        } while ($this->current()->isWord());
-
-        return new DeleteVariablesStatement(
-            $command->line,
-            $variables,
-            $command->span,
-            SourceSpan::cover($command->span, $this->previous()->span),
-        );
-    }
     private function scalar(string $message): ScalarValue
     {
         if ($this->match(TokenType::String)) {

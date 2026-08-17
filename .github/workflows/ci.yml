@@ -71,7 +71,7 @@ jobs:
           coverage: none
           extensions: pdo_pgsql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "PostgreSqlSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest"
+      - run: vendor/bin/phpunit --filter "PostgreSqlSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest|OfficialInPlaceTransformation01Test|OfficialInPlaceTransformation02Test"
 
   mysql-integration:
     name: MySQL ${{ matrix.mysql }} integration / PHP ${{ matrix.php }}
@@ -115,7 +115,7 @@ jobs:
           coverage: none
           extensions: pdo_mysql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "MySqlSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest"
+      - run: vendor/bin/phpunit --filter "MySqlSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest|OfficialInPlaceTransformation01Test|OfficialInPlaceTransformation02Test"
 
   mariadb-integration:
     name: MariaDB ${{ matrix.mariadb }} integration / PHP ${{ matrix.php }}
@@ -159,7 +159,7 @@ jobs:
           coverage: none
           extensions: pdo_mysql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "MariaDbSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest"
+      - run: vendor/bin/phpunit --filter "MariaDbSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest|OfficialInPlaceTransformation01Test|OfficialInPlaceTransformation02Test"
 
   dolt-integration:
     name: Dolt ${{ matrix.dolt.version }} integration / PHP ${{ matrix.php }}
@@ -213,4 +213,4 @@ jobs:
           done
           exit 1
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "DoltSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest"
+      - run: vendor/bin/phpunit --filter "DoltSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest|OfficialInPlaceTransformation01Test|OfficialInPlaceTransformation02Test"

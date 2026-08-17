@@ -1,45 +1,45 @@
 # PHP adapter release readiness
 
-This page records the release contract for the next PHP adapter release. It
-does not mean that a package tag or Packagist publication has happened.
+This page records the release contract for PHP adapter v0.6.0. It does not mean
+that a package tag or Packagist publication has happened.
 
-## Specification pin
+## Specification pin and claims
 
-The adapter's machine-readable capability declaration and every CI conformance
-checkout must use the stable OpenStatSpec specification release `v0.3.0` at
-exact commit
-`cd8f198c68b849eb8ed018a894670a0904c2181d`. The adapter reports
-`specification_status=stable` and `specification_release=v0.3.0`.
+The machine-readable capability declaration and every CI fixture checkout use
+stable OpenStatSpec specification release `v0.3.0` at exact commit
+`cd8f198c68b849eb8ed018a894670a0904c2181d`.
 
-This pin covers the source-faithful SPSS SAV/ZSAV relational contract. The PHP
-adapter does not claim official Transformation Plan or SPSS Frontend profile
-conformance; those remain separate implementation gates.
+Release v0.6.0 claims conformance with Transformation Plan 0.1/0.2, SPSS Syntax
+Frontend 0.2, and In-Place Transformation 0.1/0.2. It removes the package-local
+plan API and the non-standard SPSS schema-edit commands described in the
+[transformation migration notes](transformations.md#v060-migration).
 
 ## Required gates
 
-Before tagging a release:
+Before tagging v0.6.0:
 
 1. Run `composer check` with `OPENSTATSPEC_SPECIFICATION_DIR` pointing to the
-   exact `v0.3.0` checkout.
-2. Run the focused service evidence command:
+   exact pinned checkout.
+2. Run every official transformation suite:
    ```bash
-   OPENSTATSPEC_SPECIFICATION_DIR=/path/to/openstatspec-specification \
-     vendor/bin/phpunit tests/Integration/InPlaceTransformationServiceTest.php
+   vendor/bin/phpunit tests/Transformation/Conformance
+   vendor/bin/phpunit tests/Frontend/Spss/Conformance
+   vendor/bin/phpunit tests/Integration/OfficialInPlaceTransformation01Test.php
+   vendor/bin/phpunit tests/Integration/OfficialInPlaceTransformation02Test.php
    ```
-   Locally, SQLite executes and an unconfigured PostgreSQL, MySQL, MariaDB, or
-   Dolt profile skips; CI must configure and execute every one of those
-   service profiles.
-3. Confirm that the existing-target service evidence preserves the existing
-   dataset UUID, physical table, and variable identities without copied or
-   rollback state. Confirm that implicit numeric target creation is restricted
-   to SQLite and PostgreSQL, while MySQL, MariaDB, and Dolt reject it before
-   mutation and require a pre-created, catalogued target.
-4. Confirm GitHub Actions passes on PHP 8.4 and 8.5 plus the PostgreSQL,
-   MySQL, MariaDB, and Dolt service matrices. This is adapter evidence under
-   the legacy `openstatspec-transformation-plan-v1` contract, not an official
-   OpenStatSpec Transformation Plan 1.0 profile claim.
-5. Confirm the changelog and release notes describe the same specification
-   release and commit.
-6. Create an annotated `vX.Y.Z` tag on the reviewed `main` commit and verify
-   that the tag points to that commit before publishing the GitHub release.
-7. Confirm the resulting Composer package is installable from Packagist.
+   Confirm all 4 Plan 0.1, 26 Plan 0.2, 44 Frontend 0.2, 6 In-Place 0.1,
+   and 11 In-Place 0.2 manifest cases run for their configured profiles.
+3. Confirm successful applies preserve dataset/table identity and counts and
+   create no copied, output, staging, snapshot, rollback, or version state.
+4. Confirm SQLite/PostgreSQL atomic numeric-target creation and preflight
+   rejection on MySQL, MariaDB, and Dolt. Deployment must pre-provision and
+   catalog targets on those three profiles.
+5. Confirm live Dolt evidence proves stable branch/HEAD, a clean pre-apply
+   working set, no adapter-created commit, and caller-owned commit policy.
+6. Confirm GitHub Actions passes the full PHP 8.4/8.5 jobs plus every
+   PostgreSQL, MySQL, MariaDB, and Dolt matrix entry. Each service filter must
+   include both official in-place test classes.
+7. Confirm the changelog and release notes describe the same specification
+   release, commit, breaking removals, and pre-provisioning rules.
+8. Create annotated tag `v0.6.0` on the reviewed `main` commit, verify the tag,
+   publish the GitHub release, and confirm Packagist installation.

@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added official OpenStatSpec Transformation Plan 0.1/0.2, SPSS Syntax
+  Frontend 0.2, and In-Place Transformation 0.1/0.2 conformance, including
+  strict canonical codecs, source hashes, compact apply audit, and service
+  matrix coverage.
+
+### Changed
+
+- Transformations now compile `SpssFrontendRequest` into an alias-based
+  `SpssCompilationResult` and apply it through `InPlaceApplyRequest` with an
+  explicit actor and optional controlled Dolt context.
+- SQLite and PostgreSQL may create numeric targets atomically. MySQL, MariaDB,
+  and Dolt require targets to be pre-provisioned and catalogued. Dolt commits
+  remain caller-owned.
+
+### Removed
+
+- Version 0.6.0 removes the package-local
+  `openstatspec-transformation-plan-v1` API without a compatibility adapter.
+- Removed the non-standard SPSS `STRING` and `DELETE VARIABLES`
+  transformation commands.
+
 ## [0.5.0] - 2026-08-17
 
 ### Added

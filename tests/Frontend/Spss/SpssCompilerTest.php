@@ -172,25 +172,6 @@ final class SpssCompilerTest extends TestCase
         }
     }
 
-    public function testLegacySchemaCommandsFailAsUnsupportedAtTheExactCommandToken(): void
-    {
-        foreach (['STRING note (A4).', 'DELETE VARIABLES q1.'] as $source) {
-            try {
-                (new SpssCompiler())->compile(SpssFrontendRequest::fromArray(self::payload(
-                    $source,
-                    [['name' => 'q1', 'storage_kind' => 'numeric']],
-                )));
-                self::fail('A non-Frontend-0.2 schema command unexpectedly compiled.');
-            } catch (TransformationFailure $failure) {
-                self::assertSame('unsupported_spss_command', $failure->diagnosticCode());
-                self::assertSame([0, 6], [
-                    $failure->diagnostics[0]->span?->startOffset,
-                    $failure->diagnostics[0]->span?->endOffset,
-                ]);
-            }
-        }
-    }
-
     /** @param list<array<string, mixed>> $variables */
     #[DataProvider('bindingFailureProvider')]
     public function testBindingFailuresHaveStableCodesAndExactSourceSpans(

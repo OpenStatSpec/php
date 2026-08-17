@@ -1,221 +1,147 @@
 # Transformations
 
-## Purpose and boundary
+## Official contracts
 
-> Status: this PHP layer currently uses the package-local legacy contract
-> `openstatspec-transformation-plan-v1`. It does not claim conformance with
-> OpenStatSpec Transformation Plan or SPSS Frontend profile 0.1 or 0.2.
-> Migration to official 0.1 is required before the additive 0.2 conditional
-> profile can be implemented or claimed.
+The PHP adapter conforms to these pinned OpenStatSpec contracts:
 
-The transformation layer applies small, deterministic edits to an existing
-OpenStatSpec dataset. Its canonical `TransformationPlan`, validation, and SQL
-executor do not depend on SPSS, Stata, SAS, or another statistics package.
-Language-specific syntax belongs to a frontend that compiles into the same
-canonical plan.
+- `openstatspec-transformation-plan-v0.1` and
+  `openstatspec-transformation-plan-v0.2`;
+- `openstatspec-spss-syntax-frontend-v0.2`; and
+- `openstatspec-in-place-transformation-v0.1` and
+  `openstatspec-in-place-transformation-v0.2`.
 
-The initial frontend implements a documented subset of SPSS transformation
-syntax. The Stata and SAS directories are placeholders only. Their presence is
-an architectural reservation, not a support claim.
+Plans are source-neutral, alias-based, and deterministic. The canonical plan
+contains only its contract, input alias, and ordered operations. Dataset UUIDs,
+SQL identifiers, actor identity, and Dolt context are supplied only when the
+plan is applied.
 
-## In-place contract
+`OpenStatSpec\Transformation\Plan` contains the immutable official model and
+strict `PlanCodec`. `OpenStatSpec\Frontend\Spss` parses and binds an
+`SpssFrontendRequest` to an `SpssCompilationResult`. The separate
+`OpenStatSpec\Transformation\Execution` layer binds the plan alias to an
+existing dataset and mutates its registered wide table.
 
-Every successful apply preserves both identities:
-
-- the existing `dataset.dataset_id`; and
-- the existing `dataset.physical_table_schema` plus
-  `dataset.physical_table_name`.
-
-The executor updates that wide table and its existing normative metadata
-catalog in place. It does not create a derived dataset, persistent output or
-staging table, full-table copy, snapshot table, hidden rollback table, or a
-parallel OpenStatSpec version. A successful edit therefore does not increase
-the persistent dataset count or physical data-table count.
-
-The database engine's native transaction is used where it can make the
-operation atomic. OpenStatSpec does not add a durable undo or recovery-version
-layer around engines whose DDL commits implicitly. Dolt remains the history,
-diff, branch, and rollback layer when Dolt is the selected SQL server.
-
-## Architecture
-
-The package separates four responsibilities:
-
-1. `OpenStatSpec\Transformation\Model` defines the canonical, typed plan and
-   operations.
-2. `OpenStatSpec\Transformation\Validation` validates plans without knowing
-   their source language or SQL dialect.
-3. `OpenStatSpec\Frontend\Spss` lexes, parses, binds, and compiles the supported
-   SPSS subset into a canonical plan.
-4. `OpenStatSpec\Transformation\Execution` resolves catalog identities and
-   applies a validated plan through the active PDO profile.
-
-The SQL executor accepts a completed plan. It never invokes the SPSS parser.
-Likewise, the SPSS frontend does not issue SQL or select a database profile.
-This is the package boundary a future real frontend must use.
-
-Canonical serialization is deterministic. The plan hash identifies the exact
-validated operation sequence; source text and language provenance stay outside
-the source-neutral plan.
-
-## Supported operations
-
-The canonical layer supports:
-
-- ordered recode rules with exact values, numeric ranges, missing values, and
-  exactly one explicit final else rule;
-- assigning a scalar value, copying the source value, or assigning system
-  missing;
-- variable-label replacement; and
-- complete value-label replacement for one variable.
-
-Recode rules use first-match semantics. Validation rejects overlapping,
-duplicate, or ill-typed rules before SQL mutation. An SPSS frontend plan always
-meets the canonical explicit-else contract: when source syntax omits `ELSE`,
-the compiler adds SPSS's context-appropriate default action. Variables are
-resolved through the normative `variable` catalog and physical identifiers
-are quoted by the active PDO SQL profile; callers cannot supply raw table or
-column SQL.
-
-## SPSS frontend scope
-
-The SPSS frontend recognizes the documented transformation subset:
-
-- `RECODE ... INTO ...` with exact values, `THRU` ranges,
-  `LOWEST`, `HIGHEST`, `SYSMIS`, `ELSE`, `COPY`, and `SYSMIS`
-  outputs;
-- `VARIABLE LABELS`; and
-- `VALUE LABELS`.
-
-Keywords are case-insensitive. Dataset variable references currently must
-match the normative `variable.source_name` spelling exactly; this documented
-subset does not claim SPSS's case-insensitive symbol binding. The `MISSING`
-selector fails closed because SPSS user-missing semantics require binding the
-dataset's `missing_rule` metadata; use `SYSMIS` for system missing or list
-supported explicit values. Statements end with a period. Unsupported SPSS
-commands fail closed with a frontend diagnostic; they are not silently skipped
-or passed to an external statistics engine. This package does not claim full
-SPSS syntax compatibility.
-
-A multi-variable RECODE with INTO targets is expanded into ordered canonical
-operations only when an earlier target does not overwrite a source needed by a
-later pair in the same statement. Dependency-overlapping lists fail closed
-because preserving SPSS simultaneous-input semantics would otherwise require
-hidden row snapshots.
-
-## SQL profiles and Dolt
-
-Transformations are not restricted to Dolt. The executor uses every SQL
-connection profile implemented by this package: SQLite, PostgreSQL,
-MySQL/MariaDB, and Dolt.
-
-Dolt adds safety evidence rather than acting as a gateway. Before mutation the
-executor checks the active branch, resolves `HEAD`, and requires a clean Dolt
-working set. After mutation it verifies that branch and `HEAD` did not change
-under the operation. The executor does not switch branches or create a Dolt
-commit. The caller owns the later review and commit policy.
-
-MySQL-family DDL commits implicitly. A recode into a new physical target column
-can only be part of one native atomic apply on a profile with transactional DDL.
-On MySQL, MariaDB, and Dolt, create and catalog the intended target variable in
-the deployment workflow before applying a recode to it. Existing-column
-recodes and metadata edits remain supported. This capability boundary avoids
-pretending that a compensating copy or OpenStatSpec rollback layer is atomic.
-
-SQLite and PostgreSQL may create a new numeric target column inside their
-native transaction. A new string target must be registered on every profile
-before execution so its normative `declared_string_width` is explicit.
-
-The machine-readable capability declaration reports in-place transformations
-as supported for every implemented SQL profile and states these target-creation
-boundaries. Dolt additionally reports its clean-working-set and stable
-branch/HEAD guard.
-
-## Service-matrix evidence gate
-
-Run the PHP adapter's in-place evidence matrix with the pinned specification
-checkout:
-
-```bash
-OPENSTATSPEC_SPECIFICATION_DIR=/path/to/openstatspec-specification \
-  vendor/bin/phpunit tests/Integration/InPlaceTransformationServiceTest.php
-```
-
-SQLite runs locally. PostgreSQL, MySQL, MariaDB, and Dolt run only when their
-respective `OPENSTATSPEC_PG_*`, `OPENSTATSPEC_MYSQL_*`,
-`OPENSTATSPEC_MARIADB_*`, or `OPENSTATSPEC_DOLT_*` configuration is supplied;
-an absent local profile is reported as skipped. CI supplies every service
-profile configuration, so a skipped configured service is not acceptable CI
-evidence.
-
-For every configured profile, the existing-target evidence proves that
-recode plus label changes preserve the dataset UUID, physical table identity,
-and existing variable identities, with no copied, staging, snapshot, rollback,
-or parallel-history table. Numeric implicit target creation is evidenced only
-on SQLite and PostgreSQL. MySQL, MariaDB, and Dolt reject it before mutation;
-their target variable must be created and catalogued by deployment workflow
-before the recode. This is PHP adapter evidence only: it retains the legacy
-`openstatspec-transformation-plan-v1` contract and does not establish an
-official OpenStatSpec Transformation Plan 1.0 profile.
-
-## Minimal PHP flow
+## Compile and apply
 
 ```php
+use OpenStatSpec\Frontend\Spss\Request\SpssFrontendRequest;
 use OpenStatSpec\Frontend\Spss\SpssCompiler;
 use OpenStatSpec\Sql\Connection;
+use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 
-$datasetId = '018f47a2-4c10-7d34-8f11-93b1c3efc321';
-$syntax = 'RECODE score (1=10) (ELSE=COPY).';
-
-$plan = (new SpssCompiler())->compile($syntax, $datasetId);
-$result = (new InPlaceTransformationExecutor(new Connection($pdo)))->execute($plan);
+$compiled = (new SpssCompiler())->compile(SpssFrontendRequest::fromArray($request));
+$apply = new InPlaceApplyRequest(
+    plan: $compiled->plan,
+    inputAlias: 'parent',
+    datasetId: $datasetId,
+    sourceHash: $compiled->sourceHash,
+    actor: 'analyst@example.org',
+    expectedBranch: $branch,
+    expectedHead: $head,
+);
+$result = (new InPlaceTransformationExecutor(new Connection($pdo)))->execute($apply);
 ```
 
-`$pdo` must already point to the dedicated OpenStatSpec catalog namespace.
-The executor verifies the catalog ownership marker and resolves the same
-`dataset_id` and physical wide table before mutation.
+The request carries the official frontend contract, input alias, ordered input
+schema, and exact source text. The compiler emits Plan 0.1 when every command
+belongs to the 0.1 subset and Plan 0.2 as soon as any 0.2 command is present.
+`PlanCodec` strictly decodes official plan JSON and produces its canonical JSON
+and SHA-256 identity without changing operation order or binary64 values.
 
-## Development commands
+Before applying transformations to an existing catalog, deployment must run
+the explicit catalog migration:
 
-Install dependencies and run the complete local gate from the PHP repository:
+```php
+$adapter = new SpssAdapter($pdo);
+$adapter->migrateCatalog();
+```
+
+The migration provisions the compact `transformation_apply` audit table. Apply
+does not hide schema migration inside its transaction.
+
+## Supported operations and syntax
+
+Plan 0.1 contains ordered `recode`, `set_variable_label`, and
+`replace_value_labels` operations. Plan 0.2 additionally contains `assign`,
+`conditional_assign`, `set_format`, `set_measurement_level`, and `execute`.
+
+SPSS Frontend 0.2 supports the corresponding restricted forms of:
+
+- `RECODE`, including `INTO`, exact/range/system-missing inputs, and explicit
+  unmatched behavior;
+- `VARIABLE LABELS` and `VALUE LABELS`;
+- `COMPUTE` and parenthesized numeric `IF` predicates;
+- `FORMATS` with the numeric `F` family;
+- `VARIABLE LEVEL`; and
+- `EXECUTE`.
+
+Names bind ASCII case-insensitively while plans retain exact catalog spelling.
+Multi-variable `RECODE` reads all sources from the pre-command schema. Commands,
+expressions, comments, and syntax outside the official subset fail closed.
+
+## In-place and atomicity contract
+
+Every successful apply preserves the existing logical dataset UUID, registered
+physical table identity, case order, case count, dataset count, and persistent
+data-table count. Existing-target recodes and assignments use direct updates;
+metadata operations change only their normative catalog fields.
+
+The executor validates the entire plan, evolving schema, actor, backend
+capabilities, and Dolt context before mutation. It then applies every operation
+and writes one compact success audit inside one engine-native transaction. A
+failure rolls that transaction back and publishes no failed transformation
+audit row.
+
+The transformation path never creates a derived dataset, persistent output or
+staging table, full-table copy, snapshot, rollback table, dataset-version row,
+or hidden recovery layer. It does not use the import/export operation journal
+as a second transformation history.
+
+SQLite and PostgreSQL can create a numeric target inside the native apply
+transaction. MySQL, MariaDB, and Dolt cannot make that schema change atomic, so
+deployment must pre-provision and catalog every intended target before apply;
+a create-target plan fails before mutation with `schema_change_not_atomic`.
+
+## Dolt ownership
+
+Dolt applies require a non-empty caller-supplied actor, expected branch, and
+expected HEAD plus a clean working set. The executor verifies branch and HEAD
+before mutation and again before success. It never switches branches, commits,
+resets, merges, or tags the repository.
+
+A successful Dolt apply intentionally leaves an inspectable working-set diff.
+Dolt commits and all version-history decisions remain caller-owned; the audit
+stores only compact before/after evidence.
+
+## v0.6.0 migration
+
+Version 0.6.0 removes the package-local
+`openstatspec-transformation-plan-v1` API without a compatibility adapter. It
+also removes the non-standard SPSS `STRING` and `DELETE VARIABLES`
+transformation commands. Callers must move to `SpssFrontendRequest`,
+`SpssCompilationResult`, `PlanCodec`, `InPlaceApplyRequest`, and the official
+contract identifiers shown above.
+
+On MySQL, MariaDB, and Dolt, deployment migrations must create and catalog new
+targets before applying an official plan. On Dolt, the caller must also capture
+the expected branch and HEAD, apply against a clean working set, inspect the
+resulting diff, and decide whether and how to commit it.
+
+## Conformance and development gates
+
+The official fixture suites are loaded from the pinned OpenStatSpec
+specification checkout:
 
 ```bash
-composer install
+vendor/bin/phpunit tests/Transformation/Conformance
+vendor/bin/phpunit tests/Frontend/Spss/Conformance
+vendor/bin/phpunit tests/Integration/OfficialInPlaceTransformation01Test.php
+vendor/bin/phpunit tests/Integration/OfficialInPlaceTransformation02Test.php
 composer check
 ```
 
-Run only transformation tests while developing the layer:
-
-```bash
-vendor/bin/phpunit tests/Transformation tests/Frontend/Spss
-```
-
-Apply the formatter, then rerun the complete gate:
-
-```bash
-composer fix
-composer check
-```
-
-Database integration checks require the corresponding PDO driver and server.
-They must use a dedicated OpenStatSpec namespace, as described in the
-[architecture guide](architecture.md#deployment-namespace-and-connection-isolation).
-
-## Operational checklist
-
-Before applying a plan:
-
-1. verify that the connection uses the intended dedicated OpenStatSpec
-   namespace;
-2. select the existing dataset by its canonical UUID;
-3. compile source syntax explicitly with the intended frontend, or construct a
-   canonical plan directly;
-4. validate the plan before any mutation;
-5. on Dolt, start from the expected branch and a clean working set; and
-6. after success, inspect the data and metadata diff and decide separately
-   whether to create a Dolt commit.
-
-OpenStatSpec stores only compact operation evidence such as the plan identity
-and relevant Dolt state. It never stores copied row state as transformation
-audit data.
+They cover all 4 Plan 0.1, 26 Plan 0.2, 44 Frontend 0.2, 6 In-Place 0.1,
+and 11 In-Place 0.2 manifest cases. SQLite runs locally. PostgreSQL, MySQL,
+MariaDB, and Dolt cases run when their `OPENSTATSPEC_*` service configuration
+is supplied; CI configures every service family.

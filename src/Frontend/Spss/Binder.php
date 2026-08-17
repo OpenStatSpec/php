@@ -7,7 +7,6 @@ namespace OpenStatSpec\Frontend\Spss;
 use OpenStatSpec\Frontend\Spss\Ast\BooleanPredicate as AstBooleanPredicate;
 use OpenStatSpec\Frontend\Spss\Ast\Comparison as AstComparison;
 use OpenStatSpec\Frontend\Spss\Ast\ComputeStatement;
-use OpenStatSpec\Frontend\Spss\Ast\DeleteVariablesStatement;
 use OpenStatSpec\Frontend\Spss\Ast\ElseInput;
 use OpenStatSpec\Frontend\Spss\Ast\ExecuteStatement;
 use OpenStatSpec\Frontend\Spss\Ast\ExpressionOperand as AstExpressionOperand;
@@ -23,7 +22,6 @@ use OpenStatSpec\Frontend\Spss\Ast\RecodeOutput;
 use OpenStatSpec\Frontend\Spss\Ast\RecodeOutputKind;
 use OpenStatSpec\Frontend\Spss\Ast\RecodeStatement;
 use OpenStatSpec\Frontend\Spss\Ast\ScalarValue;
-use OpenStatSpec\Frontend\Spss\Ast\StringStatement;
 use OpenStatSpec\Frontend\Spss\Ast\SystemMissingInput;
 use OpenStatSpec\Frontend\Spss\Ast\ValueInput;
 use OpenStatSpec\Frontend\Spss\Ast\ValueLabelsStatement;
@@ -132,14 +130,6 @@ final class Binder
                 array_push($bound, ...$this->valueLabels($statement, $schema));
                 continue;
             }
-            if ($statement instanceof StringStatement || $statement instanceof DeleteVariablesStatement) {
-                $this->fail(
-                    'unsupported_spss_command',
-                    'STRING and DELETE VARIABLES are outside Frontend 0.2.',
-                    $statement->commandSpan,
-                );
-            }
-
             $this->fail(
                 'unsupported_spss_command',
                 sprintf('Unsupported AST statement %s.', $statement::class),

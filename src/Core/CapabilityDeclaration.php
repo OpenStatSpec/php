@@ -13,7 +13,6 @@ use OpenStatSpec\Sql\MySqlProfile;
 use OpenStatSpec\Sql\PdoSqlProfile;
 use OpenStatSpec\Sql\PostgreSqlProfile;
 use OpenStatSpec\Sql\SqliteProfile;
-use OpenStatSpec\Transformation\Model\TransformationPlan;
 use PDO;
 
 /** Machine-readable SPSS 1.0 and SQL-profile capability declaration. */
@@ -57,13 +56,17 @@ final readonly class CapabilityDeclaration implements JsonSerializable
                 'limit_basis' => 'runtime_memory_limit',
             ],
             'transformation_contracts' => [
-                'status' => 'legacy_contract_only',
-                'legacy_plan_contracts' => [TransformationPlan::CONTRACT],
-                'official_plan_contracts' => [],
-                'official_frontend_contracts' => [],
-                'migration_order' => [
+                'status' => 'official_conformant',
+                'official_plan_contracts' => [
                     'openstatspec-transformation-plan-v0.1',
                     'openstatspec-transformation-plan-v0.2',
+                ],
+                'official_frontend_contracts' => [
+                    'openstatspec-spss-syntax-frontend-v0.2',
+                ],
+                'official_binding_contracts' => [
+                    'openstatspec-in-place-transformation-v0.1',
+                    'openstatspec-in-place-transformation-v0.2',
                 ],
             ],
             'active_connection' => [

@@ -46,16 +46,22 @@ final class CapabilityDeclarationTest extends TestCase
             'maximum_source_file_bytes' => null,
             'limit_basis' => 'runtime_memory_limit',
         ], $declaration['resource_behavior']);
-        self::assertSame([
-            'status' => 'legacy_contract_only',
-            'legacy_plan_contracts' => ['openstatspec-transformation-plan-v1'],
-            'official_plan_contracts' => [],
-            'official_frontend_contracts' => [],
-            'migration_order' => [
-                'openstatspec-transformation-plan-v0.1',
-                'openstatspec-transformation-plan-v0.2',
-            ],
-        ], $declaration['transformation_contracts']);
+        $contracts = $declaration['transformation_contracts'];
+        self::assertSame('official_conformant', $contracts['status']);
+        self::assertSame(
+            ['openstatspec-transformation-plan-v0.1', 'openstatspec-transformation-plan-v0.2'],
+            $contracts['official_plan_contracts'],
+        );
+        self::assertSame(
+            ['openstatspec-spss-syntax-frontend-v0.2'],
+            $contracts['official_frontend_contracts'],
+        );
+        self::assertSame(
+            ['openstatspec-in-place-transformation-v0.1', 'openstatspec-in-place-transformation-v0.2'],
+            $contracts['official_binding_contracts'],
+        );
+        self::assertArrayNotHasKey('legacy_plan_contracts', $contracts);
+        self::assertFalse(class_exists(\OpenStatSpec\Transformation\Model\TransformationPlan::class));
         self::assertSame('3.0.3', $declaration['engine']['active_version']);
         self::assertSame('>=3.0.0 <4.0.0', $declaration['engine']['claimed_version_range']);
         self::assertSame(['3.0.3'], $declaration['engine']['ci_tested_versions']);
