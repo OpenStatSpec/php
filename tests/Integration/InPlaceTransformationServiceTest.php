@@ -151,8 +151,48 @@ final class InPlaceTransformationServiceTest extends TestCase
 
         try {
             self::assertSame(self::DATASET_ID, $fixture['dataset_id']);
+            $doltBefore = $this->doltRepositoryEvidence($pdo, $connection);
+            if ($expectedProfile === 'dolt') {
+                self::assertNotNull($doltBefore);
+                self::assertNotSame('', $doltBefore['branch']);
+                self::assertNotSame('', $doltBefore['head']);
+                self::assertSame($doltBefore['head'], $doltBefore['history'][0] ?? null);
+                self::assertSame([], $doltBefore['status']);
+                self::assertSame([], $doltBefore['working_diff']);
+            }
             $plan = $this->existingTargetPlan();
             $result = (new InPlaceTransformationExecutor($connection))->execute($plan);
+
+            $doltAfter = $this->doltRepositoryEvidence($pdo, $connection);
+            if ($expectedProfile === 'dolt') {
+                self::assertNotNull($doltBefore);
+                self::assertNotNull($doltAfter);
+                self::assertSame($doltBefore['branch'], $doltAfter['branch'], 'The active Dolt branch changed.');
+                self::assertSame($doltBefore['head'], $doltAfter['head'], 'A Dolt commit or HEAD-moving reset occurred.');
+                self::assertSame($doltBefore['history'], $doltAfter['history'], 'The reachable Dolt commit history changed.');
+                self::assertSame(
+                    [
+                        ['table_name' => 'inplace_existing_target_dolt', 'staged' => false, 'status' => 'modified'],
+                        ['table_name' => 'value_label', 'staged' => false, 'status' => 'modified'],
+                        ['table_name' => 'value_label_set', 'staged' => false, 'status' => 'modified'],
+                        ['table_name' => 'variable', 'staged' => false, 'status' => 'modified'],
+                        ['table_name' => 'variable_value_label_set', 'staged' => false, 'status' => 'modified'],
+                    ],
+                    $doltAfter['status'],
+                    'A reset, staging operation, or unexpected table mutation changed the Dolt working set.',
+                );
+                self::assertSame(
+                    [
+                        ['table_name' => 'inplace_existing_target_dolt', 'data_change' => true, 'schema_change' => false],
+                        ['table_name' => 'value_label', 'data_change' => true, 'schema_change' => false],
+                        ['table_name' => 'value_label_set', 'data_change' => true, 'schema_change' => false],
+                        ['table_name' => 'variable', 'data_change' => true, 'schema_change' => false],
+                        ['table_name' => 'variable_value_label_set', 'data_change' => true, 'schema_change' => false],
+                    ],
+                    $doltAfter['working_diff'],
+                    'The successful transformation must remain inspectable as an unstaged data-only Dolt diff.',
+                );
+            }
 
             self::assertSame($fixture['dataset_id'], $result->datasetId());
             self::assertSame($plan->hash(), $result->planHash());
@@ -342,6 +382,7 @@ final class InPlaceTransformationServiceTest extends TestCase
                 'table_count' => count($this->tableNames($pdo)),
                 'dataset_count' => (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []),
                 'variable_count' => (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable', []),
+                'dolt_repository' => $this->doltRepositoryEvidence($pdo, $connection),
             ];
 
             try {
@@ -373,6 +414,7 @@ final class InPlaceTransformationServiceTest extends TestCase
             self::assertSame($before['table_count'], count($this->tableNames($pdo)));
             self::assertSame($before['dataset_count'], (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM dataset', []));
             self::assertSame($before['variable_count'], (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable', []));
+            self::assertSame($before['dolt_repository'], $this->doltRepositoryEvidence($pdo, $connection));
             $this->assertNoArtifactTables($fixture['tables']);
         } finally {
             $this->purgeFixture($pdo, $connection, $fixture);
@@ -465,6 +507,48 @@ final class InPlaceTransformationServiceTest extends TestCase
         self::assertSame(
             'mysql:unix_socket=/tmp/dolt.sock;charset=utf8mb4;dbname=' . $secondDatabase,
             $this->dsnForDoltDatabase('mysql:unix_socket=/tmp/dolt.sock;charset=utf8mb4', $secondDatabase),
+        );
+    }
+
+    public function testDoltRepositoryEvidenceNormalizesDriverValuesForStableComparison(): void
+    {
+        self::assertSame(
+            [
+                'branch' => 'main',
+                'head' => 'abc123',
+                'history' => ['abc123', 'parent456'],
+                'status' => [
+                    ['table_name' => 'respondents', 'staged' => false, 'status' => 'modified'],
+                    ['table_name' => 'variable', 'staged' => true, 'status' => 'modified'],
+                ],
+                'working_diff' => [
+                    ['table_name' => 'respondents', 'data_change' => true, 'schema_change' => false],
+                    ['table_name' => 'variable', 'data_change' => true, 'schema_change' => false],
+                ],
+            ],
+            $this->normalizeDoltRepositoryEvidence(
+                ['branch_name' => 'main', 'head_hash' => 'abc123'],
+                [['commit_hash' => 'abc123'], ['commit_hash' => 'parent456']],
+                [
+                    ['table_name' => 'respondents', 'staged' => '0', 'status' => 'modified'],
+                    ['table_name' => 'variable', 'staged' => 1, 'status' => 'modified'],
+                ],
+                [
+                    ['table_name' => 'respondents', 'data_change' => '1', 'schema_change' => '0'],
+                    ['table_name' => 'variable', 'data_change' => 1, 'schema_change' => 0],
+                ],
+            ),
+        );
+    }
+
+    public function testMySqlFamilyMetadataNormalizesDriverKeyCase(): void
+    {
+        self::assertSame(
+            ['column_name' => 'destination', 'column_type' => 'double'],
+            $this->normalizeMySqlMetadataRow([
+                'COLUMN_NAME' => 'destination',
+                'Column_Type' => 'double',
+            ]),
         );
     }
 
@@ -1138,6 +1222,10 @@ final class InPlaceTransformationServiceTest extends TestCase
             ));
         }
 
+        if ($driver === 'mysql') {
+            $rows = array_map($this->normalizeMySqlMetadataRow(...), $rows);
+        }
+
         return array_values(array_map(
             static fn(array $column): string => (string) $column['column_name'],
             $rows,
@@ -1162,6 +1250,10 @@ final class InPlaceTransformationServiceTest extends TestCase
             default => throw new RuntimeException('Unsupported integration driver.'),
         };
 
+        if ($driver === 'mysql') {
+            $rows = array_map($this->normalizeMySqlMetadataRow(...), $rows);
+        }
+
         foreach ($rows as $row) {
             $name = $driver === 'sqlite' ? (string) $row['name'] : (string) $row['column_name'];
             if ($name !== $column) {
@@ -1182,6 +1274,103 @@ final class InPlaceTransformationServiceTest extends TestCase
     private function normalizedSqlType(string $type): string
     {
         return strtoupper(preg_replace('/\\s+/', ' ', trim($type)) ?? '');
+    }
+
+    /**
+     * @param array<array-key, mixed> $row
+     * @return array<string, mixed>
+     */
+    private function normalizeMySqlMetadataRow(array $row): array
+    {
+        return array_change_key_case($row, CASE_LOWER);
+    }
+
+    /**
+     * @return array{
+     *     branch: string,
+     *     head: string,
+     *     history: list<string>,
+     *     status: list<array{table_name: string, staged: bool, status: string}>,
+     *     working_diff: list<array{table_name: string, data_change: bool, schema_change: bool}>
+     * }|null
+     */
+    private function doltRepositoryEvidence(PDO $pdo, Connection $connection): ?array
+    {
+        if ($connection->profileName !== 'dolt') {
+            return null;
+        }
+
+        $identity = $this->query(
+            $pdo,
+            "SELECT active_branch() AS branch_name, dolt_hashof('HEAD') AS head_hash",
+        )->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($identity)) {
+            self::fail('Dolt repository identity could not be read.');
+        }
+
+        return $this->normalizeDoltRepositoryEvidence(
+            $identity,
+            $this->rows(
+                $pdo,
+                'SELECT commit_hash FROM dolt_log ORDER BY commit_order DESC, commit_hash',
+                [],
+            ),
+            $this->rows(
+                $pdo,
+                'SELECT table_name, staged, status FROM dolt_status ORDER BY table_name, staged, status',
+                [],
+            ),
+            $this->rows(
+                $pdo,
+                "SELECT table_name, data_change, schema_change FROM dolt_diff WHERE commit_hash = 'WORKING' ORDER BY table_name",
+                [],
+            ),
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $identity
+     * @param list<array<string, mixed>> $history
+     * @param list<array<string, mixed>> $status
+     * @param list<array<string, mixed>> $workingDiff
+     * @return array{
+     *     branch: string,
+     *     head: string,
+     *     history: list<string>,
+     *     status: list<array{table_name: string, staged: bool, status: string}>,
+     *     working_diff: list<array{table_name: string, data_change: bool, schema_change: bool}>
+     * }
+     */
+    private function normalizeDoltRepositoryEvidence(
+        array $identity,
+        array $history,
+        array $status,
+        array $workingDiff,
+    ): array {
+        return [
+            'branch' => (string) ($identity['branch_name'] ?? ''),
+            'head' => (string) ($identity['head_hash'] ?? ''),
+            'history' => array_map(
+                static fn(array $row): string => (string) ($row['commit_hash'] ?? ''),
+                $history,
+            ),
+            'status' => array_map(
+                static fn(array $row): array => [
+                    'table_name' => (string) ($row['table_name'] ?? ''),
+                    'staged' => (bool) ($row['staged'] ?? false),
+                    'status' => (string) ($row['status'] ?? ''),
+                ],
+                $status,
+            ),
+            'working_diff' => array_map(
+                static fn(array $row): array => [
+                    'table_name' => (string) ($row['table_name'] ?? ''),
+                    'data_change' => (bool) ($row['data_change'] ?? false),
+                    'schema_change' => (bool) ($row['schema_change'] ?? false),
+                ],
+                $workingDiff,
+            ),
+        ];
     }
 
     /** @param list<string> $tables */
