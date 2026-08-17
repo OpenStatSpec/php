@@ -17,6 +17,8 @@
 - Review RED: 18 live MySQL/MariaDB storage-engine cases produced 15 acceptance failures; three malformed-relation cases were already rejected by namespace ownership. The accepted cases included a MyISAM bound wide table reaching an injected audit failure, all six apply-participating catalog/audit tables using MyISAM, and missing wide-table metadata on MySQL.
 - Review GREEN: all 18 engine cases passed with 228 assertions. Exact before/after snapshots prove no data, catalog, audit, dataset-count, or physical-table-count change and no open transaction.
 - Manifest-gate RED: the prior backend gate covered only one of the six official 0.1 case IDs; a clean inventory test failed on the other five IDs. GREEN runs every manifest row through an exhaustive ID dispatcher backed by the live MySQL or Dolt executor and passed 6 tests with 334 assertions.
+- Review-round-2 RED: the official 0.2 backend provider exposed all eleven manifest rows, but the old dispatcher recognized only the three create-target cases: 11 tests produced eight failures and three passes. GREEN dispatches every ID exhaustively and passed all 11 tests with 788 assertions and no configured-service skip.
+- The four official Dolt existing-target successes now execute on Dolt, including sequential predicates, OR/NULL semantics, variable-missing propagation, and conditional-variable-missing propagation. They assert exact rows and metadata plus stable dataset/table identity and counts, one exact audit row, an unchanged branch/HEAD/commit count, the expected working-set diff, and no copied or recovery artifacts.
 - GREEN: focused MySQL 8.4.9, MariaDB 11.4.8, and Dolt 2.2.2 execution passed 54 tests with 737 assertions and six PostgreSQL-only skips.
 - Official 0.1 MySQL and official 0.2 MySQL/MariaDB/Dolt create cases snapshot rows, catalog, audit, dataset count, persistent table count, and repository evidence; all reject before mutation with exact equality.
 - Dolt tests cover empty actor, missing context without an evidence read, initial branch/HEAD mismatch, dirty state, and injected post-mutation context change with exact error codes.
@@ -25,14 +27,14 @@
 ## Live evidence
 
 - MySQL: 8.4.9; MariaDB: 11.4.8-MariaDB-ubu2404; Dolt: 2.2.2 (MySQL wire compatibility 8.0.31).
-- The final focused live gate ran all six official 0.1 cases and all eleven official 0.2 cases, plus engine and Dolt guard regressions: 74 tests, 1,266 assertions, and six PostgreSQL-only skips. No configured MySQL, MariaDB, or Dolt case skipped.
+- The final focused live gate ran all six official 0.1 cases and all eleven official 0.2 cases, plus engine and Dolt guard regressions: 78 tests, 1,814 assertions, and six PostgreSQL-only skips. No configured MySQL, MariaDB, or Dolt case skipped.
 - Dolt Task 9 cases use randomly named isolated databases with explicit namespace prechecks and teardown. Successful existing-target apply preserves branch and HEAD, produces one dirty working-set diff for the in-place edit, and adds no Dolt commit; failure leaves no edit or audit.
-- The authoritative temporary Dolt repository remained on `main` at HEAD `dvba843qo8iqg962au54meed7degbeok` with exactly one setup commit after the full run. Legacy round-trip tests leave unrelated untracked fixture tables in the shared base database; Task 9 assertions run in isolated databases and clean them up.
+- The freshly recreated temporary Dolt repository remained on `main` at HEAD `h6ggikagos52ks3uo4aetolkun79v7l2` with exactly one setup commit after the normalized full run. Legacy round-trip tests leave unrelated untracked fixture tables in the shared base database; Task 9 assertions run in isolated databases and clean them up, and the final isolated-database count was zero on all three configured services.
 
 ## Verification
 
-- Full live `composer test`: 475 tests, 5,565 assertions, nine PostgreSQL skips; passed with MySQL 8.4.9, MariaDB 11.4.8, and Dolt 2.2.2 configured.
-- Full LF-normalized staged-tree `composer check`: Composer validation, PHP lint, PHP CS Fixer over 226 files, PHPStan, and PHPUnit passed; PHPUnit ran 475 tests with 5,565 assertions and nine PostgreSQL skips.
+- Full live `composer test`: 479 tests, 6,115 assertions, nine PostgreSQL skips; passed with MySQL 8.4.9, MariaDB 11.4.8, and Dolt 2.2.2 configured.
+- Full LF-normalized staged-tree `composer check`: Composer validation, PHP lint, PHP CS Fixer over 226 files, PHPStan, and PHPUnit passed; PHPUnit ran 479 tests with 6,115 assertions and nine PostgreSQL skips.
 - The first normalized run reached Composer's default 300-second process timeout during a legacy Dolt dictionary test. Its interrupted fixture was confined to the temporary Dolt volume; that named container/volume was recreated from a clean one-commit repository, and the authoritative full check passed with `COMPOSER_PROCESS_TIMEOUT=900`.
 - `composer analyse`: passed with no errors. `composer lint`: passed. Task-changed-file PHP CS Fixer dry-run: zero fixable files. `git diff --cached --check`: passed.
 - Working-tree `composer style` still exits 8 because 122 unchanged repository PHP files retain the pre-existing CRLF baseline; the normalized full gate checked all 226 PHP files cleanly.

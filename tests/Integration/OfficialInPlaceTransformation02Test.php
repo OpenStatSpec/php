@@ -10,6 +10,8 @@ use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Tests\Support\SpecificationManifest;
 use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
 use OpenStatSpec\Transformation\Diagnostic\TransformationFailure;
+use OpenStatSpec\Transformation\Execution\DoltEvidence;
+use OpenStatSpec\Transformation\Execution\DoltEvidenceReader;
 use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 use OpenStatSpec\Transformation\Plan\PlanCodec;
@@ -40,137 +42,37 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         }
     }
 
-    /** @return iterable<string, array{string, string}> */
-    public static function nonAtomicCreateCases(): iterable
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function officialBackendCases(): iterable
     {
-        yield 'MySQL' => ['mysql', 'mysql-create-target-fails-before-mutation'];
-        yield 'MariaDB' => ['mariadb', 'mariadb-create-target-fails-before-mutation'];
-        yield 'Dolt' => ['dolt', 'dolt-create-target-fails-before-mutation'];
-    }
-
-    #[DataProvider('nonAtomicCreateCases')]
-    public function testOfficialMySqlFamilyCreateTargetCasesFailBeforeMutation(
-        string $expectedProfile,
-        string $caseId,
-    ): void {
-        $case = $this->bindingCase($caseId);
-        $pdo = $this->mysqlFamily($expectedProfile);
-        $connection = new Connection($pdo);
-        self::assertSame($expectedProfile, $connection->profileName);
-        $table = 'data_task9_create_' . $expectedProfile;
-        $this->prepareCatalog($pdo);
-        $this->assertNamespaceClean($pdo, self::CREATE_DATASET_ID, $table);
-
-        try {
-            $this->installNumericFixture(
-                $pdo,
-                $connection,
-                self::CREATE_DATASET_ID,
-                $table,
-                ['source_a', 'source_b'],
-                [[1, 2.0, 11.0], [2, null, 22.0]],
-            );
-            $context = $this->commitAndReadDoltFixtureContext($pdo, $connection);
-            $before = $this->snapshot($pdo, $connection, self::CREATE_DATASET_ID, $table);
-            $request = $this->request(
-                $this->bindingCase('sqlite-create-target-atomic-success'),
-                self::CREATE_DATASET_ID,
-                $context['branch'] ?? null,
-                $context['head'] ?? null,
-            );
-
-            try {
-                (new InPlaceTransformationExecutor($connection))->execute($request);
-                self::fail('A non-atomic MySQL-family profile accepted an official create-target plan.');
-            } catch (TransformationFailure $failure) {
-                self::assertSame($case['expected_error'], $failure->diagnosticCode());
+        foreach (SpecificationManifest::load('conformance/in-place-transformation-0.2.json')['cases'] as $case) {
+            if (is_array($case) && is_string($case['id'] ?? null)) {
+                yield $case['id'] => [$case];
             }
-
-            self::assertFalse($pdo->inTransaction());
-            self::assertFalse($case['mutation_started']);
-            self::assertSame($before, $this->snapshot($pdo, $connection, self::CREATE_DATASET_ID, $table));
-        } finally {
-            $this->purgeFixture($pdo, $connection, self::CREATE_DATASET_ID, $table);
         }
     }
 
-    public function testOfficialDoltEmptyActorCaseFailsBeforeMutation(): void
+    /** @param array<string, mixed> $case */
+    #[DataProvider('officialBackendCases')]
+    public function testEveryOfficialBackendManifestCaseRuns(array $case): void
     {
-        $case = $this->bindingCase('dolt-empty-actor-fails-before-mutation');
+        $id = $case['id'] ?? null;
+        self::assertIsString($id);
 
-        try {
-            new InPlaceApplyRequest(
-                $this->planCase('binding-variable-missing-existing-target'),
-                'parent',
-                '11111111-1111-4111-8111-111111111111',
-                str_repeat('a', 64),
-                (string) $case['actor'],
-                'feature/recode',
-                'provisioning-commit',
-            );
-            self::fail('The official empty actor was accepted.');
-        } catch (TransformationFailure $failure) {
-            self::assertSame($case['expected_error'], $failure->diagnosticCode());
-        }
-        self::assertFalse($case['mutation_started']);
-    }
-
-    public function testSqliteCreateTargetIsAtomicAndPreservesIdentity(): void
-    {
-        $case = $this->bindingCase('sqlite-create-target-atomic-success');
-        $pdo = $this->sqlite();
-        $connection = new Connection($pdo);
-        $this->installNumericFixture(
-            $pdo,
-            $connection,
-            self::CREATE_DATASET_ID,
-            'data_atomic_create',
-            ['source_a', 'source_b'],
-            [[1, 2.0, 11.0], [2, null, 22.0]],
-        );
-        $before = $this->snapshot($pdo, $connection, self::CREATE_DATASET_ID, 'data_atomic_create');
-        $request = $this->request($case, self::CREATE_DATASET_ID);
-
-        $result = (new InPlaceTransformationExecutor($connection))->execute($request);
-
-        self::assertSame($case['expected_audit']['plan_hash'], $result->planHash());
-        self::assertSame(self::CREATE_DATASET_ID, $result->datasetId());
-        self::assertSame(1, $result->operationCount());
-        self::assertNotSame('', $result->auditOperationId());
-        $after = $this->snapshot($pdo, $connection, self::CREATE_DATASET_ID, 'data_atomic_create');
-        self::assertSame($before['dataset_count'], $after['dataset_count']);
-        self::assertSame($before['persistent_data_table_count'], $after['persistent_data_table_count']);
-        self::assertSame($before['dataset_identity'], $after['dataset_identity']);
-        self::assertSame($before['tables'], $after['tables']);
-        self::assertSame($before['case_ordinals'], $after['case_ordinals']);
-        self::assertSame($before['case_count'], $after['case_count']);
-        self::assertSame(3, $after['variable_count']);
-        self::assertSame(
-            $case['after']['rows'],
-            $this->numericRows($pdo, $connection, 'data_atomic_create', ['source_a', 'source_b', 'target']),
-        );
-        self::assertSame(
-            [
-                'source_ordinal' => 3,
-                'storage_kind' => 'numeric',
-                'declared_string_width' => null,
-                'variable_label' => null,
-                'print_format_family' => null,
-                'print_format_width' => null,
-                'print_format_decimals' => null,
-                'write_format_family' => null,
-                'write_format_width' => null,
-                'write_format_decimals' => null,
-                'measurement_level' => null,
-                'variable_role' => null,
-                'display_width' => null,
-                'display_alignment' => null,
-            ],
-            $this->targetMetadata($pdo, self::CREATE_DATASET_ID, 'target'),
-        );
-        self::assertSame([], $this->valueLabels($pdo, self::CREATE_DATASET_ID, 'target'));
-        self::assertSame([], $this->missingRules($pdo, self::CREATE_DATASET_ID, 'target'));
-        $this->assertAudit($pdo, $case['expected_audit']);
+        match ($id) {
+            'dolt-preprovisioned-target-sequential-null-semantics',
+            'dolt-preprovisioned-target-or-null-semantics',
+            'dolt-preprovisioned-target-variable-missing-propagation',
+            'dolt-preprovisioned-target-conditional-variable-missing-propagation' => $this->assertOfficialDoltSuccess($case),
+            'dolt-create-target-fails-before-mutation',
+            'mysql-create-target-fails-before-mutation',
+            'mariadb-create-target-fails-before-mutation' => $this->assertOfficialCreateTargetRejection($case),
+            'sqlite-inequality-boundary-semantics' => $this->assertOfficialSqliteInequality($case),
+            'dolt-context-changed-after-mutation-rolls-back' => $this->assertOfficialDoltContextChanged($case),
+            'dolt-empty-actor-fails-before-mutation' => $this->assertOfficialDoltEmptyActor($case),
+            'sqlite-create-target-atomic-success' => $this->assertOfficialSqliteCreate($case),
+            default => throw new RuntimeException('Unhandled official in-place 0.2 case: ' . $id),
+        };
     }
 
     public function testSqliteCreateTargetFailureRollsBackSchemaRowsCatalogAndAudit(): void
@@ -202,101 +104,6 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         self::assertSame(0, $this->scalarCount($pdo, 'SELECT COUNT(*) FROM variable WHERE dataset_id = ? AND source_name = ?', [self::CREATE_DATASET_ID, 'target']));
         self::assertSame(0, $this->scalarCount($pdo, 'SELECT COUNT(*) FROM transformation_apply', []));
         self::assertFalse($pdo->inTransaction());
-    }
-
-    public function testSqliteInequalityBoundariesUseSqlThreeValuedTruth(): void
-    {
-        $case = $this->bindingCase('sqlite-inequality-boundary-semantics');
-        $pdo = $this->sqlite();
-        $connection = new Connection($pdo);
-        $this->installNumericFixture(
-            $pdo,
-            $connection,
-            self::INEQUALITY_DATASET_ID,
-            'data_inequality',
-            ['source', 'target_lt', 'target_le', 'target_gt', 'target_ge'],
-            [[1, 0.0, 0.0, 0.0, 0.0, 0.0], [2, 1.0, 0.0, 0.0, 0.0, 0.0], [3, 2.0, 0.0, 0.0, 0.0, 0.0]],
-        );
-        $before = $this->snapshot($pdo, $connection, self::INEQUALITY_DATASET_ID, 'data_inequality');
-
-        $result = (new InPlaceTransformationExecutor($connection))->execute($this->request($case, self::INEQUALITY_DATASET_ID));
-
-        self::assertSame($case['expected_audit']['plan_hash'], $result->planHash());
-        self::assertSame($case['after_rows'], $this->numericRows(
-            $pdo,
-            $connection,
-            'data_inequality',
-            ['source', 'target_lt', 'target_le', 'target_gt', 'target_ge'],
-        ));
-        $after = $this->snapshot($pdo, $connection, self::INEQUALITY_DATASET_ID, 'data_inequality');
-        self::assertSame($before['dataset_count'], $after['dataset_count']);
-        self::assertSame($before['persistent_data_table_count'], $after['persistent_data_table_count']);
-        self::assertSame($before['dataset_identity'], $after['dataset_identity']);
-        self::assertSame($before['tables'], $after['tables']);
-        self::assertSame($before['variables'], $after['variables']);
-        self::assertSame($before['case_ordinals'], $after['case_ordinals']);
-        self::assertSame($before['case_count'], $after['case_count']);
-        $this->assertAudit($pdo, $case['expected_audit']);
-    }
-
-    public function testSqliteOperationsObservePriorValuesAndChangeOnlyNamedMetadata(): void
-    {
-        $case = $this->bindingCase('dolt-preprovisioned-target-sequential-null-semantics');
-        $pdo = $this->sqlite();
-        $connection = new Connection($pdo);
-        $this->installNumericFixture(
-            $pdo,
-            $connection,
-            '11111111-1111-4111-8111-111111111111',
-            'data_synthetic',
-            ['source_a', 'source_b', 'target'],
-            [[1, 1.0, 1.0, null], [2, 1.0, null, null], [3, null, 1.0, null], [4, 0.0, 1.0, null]],
-        );
-        $targetId = (string) $this->scalar(
-            $pdo,
-            'SELECT variable_id FROM variable WHERE dataset_id = ? AND source_name = ?',
-            ['11111111-1111-4111-8111-111111111111', 'target'],
-        );
-        $pdo->prepare(
-            'INSERT INTO missing_rule (missing_rule_id, variable_id, ordinal, rule_kind, code_kind, numeric_value) VALUES (?, ?, ?, ?, ?, ?)',
-        )->execute(['55555555-5555-4555-8555-555555555555', $targetId, 1, 'discrete', 'numeric', -9.0]);
-        $request = new InPlaceApplyRequest(
-            plan: $this->planCase((string) $case['applied_plan_case']),
-            inputAlias: 'parent',
-            datasetId: '11111111-1111-4111-8111-111111111111',
-            sourceHash: (string) $case['expected_audit']['source_hash'],
-            actor: 'conformance-runner',
-        );
-
-        (new InPlaceTransformationExecutor($connection))->execute($request);
-
-        self::assertSame($case['after']['rows'], $this->numericRows(
-            $pdo,
-            $connection,
-            'data_synthetic',
-            ['source_a', 'source_b', 'target'],
-        ));
-        self::assertSame(
-            [
-                'source_ordinal' => 3,
-                'storage_kind' => 'numeric',
-                'declared_string_width' => null,
-                'variable_label' => 'Synthetic conjunction',
-                'print_format_family' => 'F',
-                'print_format_width' => 1,
-                'print_format_decimals' => 0,
-                'write_format_family' => 'F',
-                'write_format_width' => 1,
-                'write_format_decimals' => 0,
-                'measurement_level' => 'nominal',
-                'variable_role' => null,
-                'display_width' => null,
-                'display_alignment' => null,
-            ],
-            $this->targetMetadata($pdo, '11111111-1111-4111-8111-111111111111', 'target'),
-        );
-        self::assertSame([[0.0, 'No'], [1.0, 'Yes']], $this->valueLabels($pdo, '11111111-1111-4111-8111-111111111111', 'target'));
-        self::assertSame([['ordinal' => 1, 'rule_kind' => 'discrete', 'code_kind' => 'numeric', 'numeric_value' => -9.0]], $this->missingRules($pdo, '11111111-1111-4111-8111-111111111111', 'target'));
     }
 
     public function testPostgresqlCreateTargetIsAtomicWhenConfigured(): void
@@ -374,6 +181,369 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         }
     }
 
+    /** @param array<string, mixed> $case */
+    private function assertOfficialCreateTargetRejection(array $case): void
+    {
+        $profile = $case['database_profile'] ?? null;
+        self::assertContains($profile, ['mysql', 'mariadb', 'dolt']);
+        $pdo = $this->mysqlFamily((string) $profile);
+        $connection = new Connection($pdo);
+        self::assertSame($profile, $connection->profileName);
+        $table = 'data_task9_create_' . $profile;
+        $this->checkoutDoltFixtureBranch($pdo, $connection, $case);
+        $this->prepareCatalog($pdo);
+        $this->assertNamespaceClean($pdo, self::CREATE_DATASET_ID, $table);
+
+        try {
+            $this->installNumericFixture(
+                $pdo,
+                $connection,
+                self::CREATE_DATASET_ID,
+                $table,
+                ['source_a', 'source_b'],
+                [[1, 2.0, 11.0], [2, null, 22.0]],
+            );
+            $context = $this->commitAndReadDoltFixtureContext($pdo, $connection);
+            $before = $this->snapshot($pdo, $connection, self::CREATE_DATASET_ID, $table);
+            $request = $this->request(
+                $this->bindingCase('sqlite-create-target-atomic-success'),
+                self::CREATE_DATASET_ID,
+                $context['branch'] ?? null,
+                $context['head'] ?? null,
+            );
+
+            try {
+                (new InPlaceTransformationExecutor($connection))->execute($request);
+                self::fail('A non-atomic MySQL-family profile accepted an official create-target plan.');
+            } catch (TransformationFailure $failure) {
+                self::assertSame($case['expected_error'], $failure->diagnosticCode());
+            }
+
+            self::assertFalse($pdo->inTransaction());
+            self::assertFalse($case['mutation_started']);
+            self::assertSame($before, $this->snapshot($pdo, $connection, self::CREATE_DATASET_ID, $table));
+        } finally {
+            $this->purgeFixture($pdo, $connection, self::CREATE_DATASET_ID, $table);
+        }
+    }
+
+    /** @param array<string, mixed> $case */
+    private function assertOfficialDoltSuccess(array $case): void
+    {
+        $pdo = $this->mysqlFamily('dolt');
+        $connection = new Connection($pdo);
+        self::assertSame('dolt', $connection->profileName);
+        $this->checkoutDoltFixtureBranch($pdo, $connection, $case);
+        $beforeContract = is_array($case['before'] ?? null) ? $case['before'] : [];
+        $afterContract = is_array($case['after'] ?? null) ? $case['after'] : [];
+        $beforeRows = $beforeContract['rows'] ?? $case['before_rows'] ?? null;
+        $afterRows = $afterContract['rows'] ?? $case['after_rows'] ?? null;
+        self::assertIsArray($beforeRows);
+        self::assertIsArray($afterRows);
+        $datasetId = $beforeContract['dataset_id'] ?? $case['dataset_id'] ?? null;
+        $table = $beforeContract['physical_table_name'] ?? $case['physical_table_name'] ?? null;
+        self::assertIsString($datasetId);
+        self::assertIsString($table);
+        [$variables, $fixtureRows] = $this->numericFixtureRows($beforeRows);
+        $targetIdentity = is_array($beforeContract['target_identity'] ?? null)
+            ? $beforeContract['target_identity']
+            : [];
+        $variableIds = is_string($targetIdentity['variable_id'] ?? null)
+            ? ['target' => $targetIdentity['variable_id']]
+            : [];
+
+        $this->installNumericFixture($pdo, $connection, $datasetId, $table, $variables, $fixtureRows, $variableIds);
+        $this->installOfficialMissingRules($pdo, $datasetId, $beforeContract);
+        $context = $this->commitAndReadDoltFixtureContext($pdo, $connection);
+        self::assertNotNull($context);
+        $before = $this->snapshot($pdo, $connection, $datasetId, $table);
+        $targetBefore = $this->targetIdentity($pdo, $datasetId, 'target');
+        $metadataBefore = $this->targetMetadata($pdo, $datasetId, 'target');
+        $labelsBefore = $this->valueLabels($pdo, $datasetId, 'target');
+        $missingBefore = $this->missingRules($pdo, $datasetId, 'target');
+        self::assertSame([], $before['repository']['status'] ?? null);
+
+        $result = (new InPlaceTransformationExecutor($connection))->execute(
+            $this->request($case, $datasetId, $context['branch'], $context['head']),
+        );
+        $after = $this->snapshot($pdo, $connection, $datasetId, $table);
+
+        self::assertSame($datasetId, $result->datasetId());
+        self::assertSame($case['expected_audit']['plan_hash'], $result->planHash());
+        self::assertSame((int) $case['expected_audit']['operation_count'], $result->operationCount());
+        self::assertSame($before['dataset_count'], $after['dataset_count']);
+        self::assertSame($before['persistent_data_table_count'], $after['persistent_data_table_count']);
+        self::assertSame($before['dataset_identity'], $after['dataset_identity']);
+        self::assertSame($before['tables'], $after['tables']);
+        self::assertSame($before['columns'], $after['columns']);
+        self::assertSame($before['variable_count'], $after['variable_count']);
+        self::assertSame($before['case_ordinals'], $after['case_ordinals']);
+        self::assertSame($before['case_count'], $after['case_count']);
+        self::assertSame($afterRows, $this->numericRows($pdo, $connection, $table, $variables));
+        self::assertSame($targetBefore, $this->targetIdentity($pdo, $datasetId, 'target'));
+        $this->assertDoltRepositoryApplyEvidence($before, $after, $table, (string) $case['id']);
+        $this->assertNoForbiddenArtifactTables($after['tables']);
+
+        if (($case['id'] ?? null) === 'dolt-preprovisioned-target-sequential-null-semantics') {
+            self::assertSame(
+                [
+                    'variable_id' => $afterContract['target_identity']['variable_id'],
+                    'source_ordinal' => $afterContract['target_identity']['ordinal'],
+                    'source_name' => 'target',
+                    'physical_name' => 'target',
+                ],
+                $targetBefore,
+            );
+            self::assertSame(
+                [
+                    'source_ordinal' => 3,
+                    'storage_kind' => 'numeric',
+                    'declared_string_width' => null,
+                    'variable_label' => 'Synthetic conjunction',
+                    'print_format_family' => 'F',
+                    'print_format_width' => 1,
+                    'print_format_decimals' => 0,
+                    'write_format_family' => 'F',
+                    'write_format_width' => 1,
+                    'write_format_decimals' => 0,
+                    'measurement_level' => 'nominal',
+                    'variable_role' => null,
+                    'display_width' => null,
+                    'display_alignment' => null,
+                ],
+                $this->targetMetadata($pdo, $datasetId, 'target'),
+            );
+            self::assertSame([[0.0, 'No'], [1.0, 'Yes']], $this->valueLabels($pdo, $datasetId, 'target'));
+            self::assertSame($missingBefore, $this->missingRules($pdo, $datasetId, 'target'));
+        } else {
+            self::assertSame($metadataBefore, $this->targetMetadata($pdo, $datasetId, 'target'));
+            self::assertSame($labelsBefore, $this->valueLabels($pdo, $datasetId, 'target'));
+            self::assertSame($missingBefore, $this->missingRules($pdo, $datasetId, 'target'));
+        }
+
+        $audit = $this->assertAudit($pdo, [
+            ...$case['expected_audit'],
+            'dolt_branch' => $context['branch'],
+            'dolt_head_before' => $context['head'],
+            'dolt_head_after' => $context['head'],
+        ]);
+        foreach ($case['required_audit_fields'] ?? [] as $field) {
+            self::assertArrayHasKey($field, $audit);
+        }
+    }
+
+    /** @param array<string, mixed> $case */
+    private function assertOfficialDoltContextChanged(array $case): void
+    {
+        $pdo = $this->mysqlFamily('dolt');
+        $connection = new Connection($pdo);
+        $this->checkoutDoltFixtureBranch($pdo, $connection, $case);
+        $table = 'data_task9_context_change';
+        $this->installNumericFixture(
+            $pdo,
+            $connection,
+            self::ROLLBACK_DATASET_ID,
+            $table,
+            ['source_a', 'source_b', 'target'],
+            [[1, 1.0, 1.0, 0.0]],
+        );
+        $pdo->prepare('UPDATE variable SET variable_label = ? WHERE dataset_id = ? AND source_name = ?')
+            ->execute(['Before', self::ROLLBACK_DATASET_ID, 'target']);
+        $context = $this->commitAndReadDoltFixtureContext($pdo, $connection);
+        self::assertNotNull($context);
+        $before = $this->snapshot($pdo, $connection, self::ROLLBACK_DATASET_ID, $table);
+        self::assertSame($case['before']['rows'], $this->numericRows($pdo, $connection, $table, ['target']));
+        self::assertSame($case['before']['target_metadata']['variable_label'], $this->scalar(
+            $pdo,
+            'SELECT variable_label FROM variable WHERE dataset_id = ? AND source_name = ?',
+            [self::ROLLBACK_DATASET_ID, 'target'],
+        ));
+        $reader = new class ($pdo, $connection, $table, $context['branch'], $context['head']) implements DoltEvidenceReader {
+            public int $reads = 0;
+            public bool $mutationObserved = false;
+
+            public function __construct(
+                private readonly PDO $pdo,
+                private readonly Connection $connection,
+                private readonly string $table,
+                private readonly string $branch,
+                private readonly string $head,
+            ) {}
+
+            public function read(): DoltEvidence
+            {
+                if (++$this->reads === 1) {
+                    return new DoltEvidence($this->branch, $this->head, []);
+                }
+                $statement = $this->pdo->query(
+                    'SELECT ' . $this->connection->profile->quoteIdentifier('target')
+                    . ' FROM ' . $this->connection->profile->quoteIdentifier($this->table)
+                    . ' WHERE ' . $this->connection->profile->quoteIdentifier('__case_ordinal') . ' = 1',
+                );
+                $this->mutationObserved = $statement instanceof PDOStatement
+                    && (float) $statement->fetchColumn() === 1.0;
+
+                return new DoltEvidence($this->branch, 'concurrent-commit', []);
+            }
+        };
+
+        try {
+            (new InPlaceTransformationExecutor($connection, $reader))->execute(new InPlaceApplyRequest(
+                $this->planCase('sequential-conditional-binary-existing-target'),
+                'parent',
+                self::ROLLBACK_DATASET_ID,
+                str_repeat('a', 64),
+                (string) $case['actor'],
+                $context['branch'],
+                $context['head'],
+            ));
+            self::fail('The official post-mutation Dolt context change was accepted.');
+        } catch (TransformationFailure $failure) {
+            self::assertSame($case['expected_error'], $failure->diagnosticCode());
+        }
+
+        self::assertTrue($case['mutation_started']);
+        self::assertTrue($reader->mutationObserved);
+        self::assertFalse($pdo->inTransaction());
+        self::assertSame($before, $this->snapshot($pdo, $connection, self::ROLLBACK_DATASET_ID, $table));
+        self::assertSame($case['after_failure']['rows'], $this->numericRows($pdo, $connection, $table, ['target']));
+        self::assertSame($case['after_failure']['target_metadata']['variable_label'], $this->scalar(
+            $pdo,
+            'SELECT variable_label FROM variable WHERE dataset_id = ? AND source_name = ?',
+            [self::ROLLBACK_DATASET_ID, 'target'],
+        ));
+        self::assertSame($case['after_failure']['audit_row_count'], $this->scalarCount(
+            $pdo,
+            'SELECT COUNT(*) FROM transformation_apply',
+            [],
+        ));
+    }
+
+    /** @param array<string, mixed> $case */
+    private function assertOfficialDoltEmptyActor(array $case): void
+    {
+        $pdo = $this->mysqlFamily('dolt');
+        $connection = new Connection($pdo);
+        self::assertSame('dolt', $connection->profileName);
+        $before = ['tables' => $this->tables($pdo), 'repository' => $this->doltRepositoryEvidence($pdo, $connection)];
+
+        try {
+            new InPlaceApplyRequest(
+                $this->planCase('binding-variable-missing-existing-target'),
+                'parent',
+                '11111111-1111-4111-8111-111111111111',
+                str_repeat('a', 64),
+                (string) $case['actor'],
+                'feature/recode',
+                'provisioning-commit',
+            );
+            self::fail('The official empty actor was accepted.');
+        } catch (TransformationFailure $failure) {
+            self::assertSame($case['expected_error'], $failure->diagnosticCode());
+        }
+
+        self::assertFalse($case['mutation_started']);
+        self::assertFalse($pdo->inTransaction());
+        self::assertSame($before, [
+            'tables' => $this->tables($pdo),
+            'repository' => $this->doltRepositoryEvidence($pdo, $connection),
+        ]);
+    }
+
+    /** @param array<string, mixed> $case */
+    private function assertOfficialSqliteCreate(array $case): void
+    {
+        $pdo = $this->sqlite();
+        $connection = new Connection($pdo);
+        $this->installNumericFixture(
+            $pdo,
+            $connection,
+            self::CREATE_DATASET_ID,
+            'data_atomic_create',
+            ['source_a', 'source_b'],
+            [[1, 2.0, 11.0], [2, null, 22.0]],
+        );
+        $before = $this->snapshot($pdo, $connection, self::CREATE_DATASET_ID, 'data_atomic_create');
+        $result = (new InPlaceTransformationExecutor($connection))->execute(
+            $this->request($case, self::CREATE_DATASET_ID),
+        );
+        $after = $this->snapshot($pdo, $connection, self::CREATE_DATASET_ID, 'data_atomic_create');
+
+        self::assertSame($case['expected_audit']['plan_hash'], $result->planHash());
+        self::assertSame(self::CREATE_DATASET_ID, $result->datasetId());
+        self::assertSame(1, $result->operationCount());
+        self::assertNotSame('', $result->auditOperationId());
+        self::assertSame($before['dataset_count'], $after['dataset_count']);
+        self::assertSame($before['persistent_data_table_count'], $after['persistent_data_table_count']);
+        self::assertSame($before['dataset_identity'], $after['dataset_identity']);
+        self::assertSame($before['tables'], $after['tables']);
+        self::assertSame($before['case_ordinals'], $after['case_ordinals']);
+        self::assertSame($before['case_count'], $after['case_count']);
+        self::assertSame(3, $after['variable_count']);
+        self::assertSame(
+            $case['after']['rows'],
+            $this->numericRows($pdo, $connection, 'data_atomic_create', ['source_a', 'source_b', 'target']),
+        );
+        self::assertSame(
+            [
+                'source_ordinal' => 3,
+                'storage_kind' => 'numeric',
+                'declared_string_width' => null,
+                'variable_label' => null,
+                'print_format_family' => null,
+                'print_format_width' => null,
+                'print_format_decimals' => null,
+                'write_format_family' => null,
+                'write_format_width' => null,
+                'write_format_decimals' => null,
+                'measurement_level' => null,
+                'variable_role' => null,
+                'display_width' => null,
+                'display_alignment' => null,
+            ],
+            $this->targetMetadata($pdo, self::CREATE_DATASET_ID, 'target'),
+        );
+        self::assertSame([], $this->valueLabels($pdo, self::CREATE_DATASET_ID, 'target'));
+        self::assertSame([], $this->missingRules($pdo, self::CREATE_DATASET_ID, 'target'));
+        $this->assertAudit($pdo, $case['expected_audit']);
+    }
+
+    /** @param array<string, mixed> $case */
+    private function assertOfficialSqliteInequality(array $case): void
+    {
+        $pdo = $this->sqlite();
+        $connection = new Connection($pdo);
+        $this->installNumericFixture(
+            $pdo,
+            $connection,
+            self::INEQUALITY_DATASET_ID,
+            'data_inequality',
+            ['source', 'target_lt', 'target_le', 'target_gt', 'target_ge'],
+            [[1, 0.0, 0.0, 0.0, 0.0, 0.0], [2, 1.0, 0.0, 0.0, 0.0, 0.0], [3, 2.0, 0.0, 0.0, 0.0, 0.0]],
+        );
+        $before = $this->snapshot($pdo, $connection, self::INEQUALITY_DATASET_ID, 'data_inequality');
+        $result = (new InPlaceTransformationExecutor($connection))->execute(
+            $this->request($case, self::INEQUALITY_DATASET_ID),
+        );
+        $after = $this->snapshot($pdo, $connection, self::INEQUALITY_DATASET_ID, 'data_inequality');
+
+        self::assertSame($case['expected_audit']['plan_hash'], $result->planHash());
+        self::assertSame($case['after_rows'], $this->numericRows(
+            $pdo,
+            $connection,
+            'data_inequality',
+            ['source', 'target_lt', 'target_le', 'target_gt', 'target_ge'],
+        ));
+        self::assertSame($before['dataset_count'], $after['dataset_count']);
+        self::assertSame($before['persistent_data_table_count'], $after['persistent_data_table_count']);
+        self::assertSame($before['dataset_identity'], $after['dataset_identity']);
+        self::assertSame($before['tables'], $after['tables']);
+        self::assertSame($before['variables'], $after['variables']);
+        self::assertSame($before['case_ordinals'], $after['case_ordinals']);
+        self::assertSame($before['case_count'], $after['case_count']);
+        $this->assertAudit($pdo, $case['expected_audit']);
+    }
+
     private function sqlite(): PDO
     {
         if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
@@ -406,9 +576,6 @@ final class OfficialInPlaceTransformation02Test extends TestCase
 
     private function mysqlFamily(string $profile): PDO
     {
-        if (!in_array('mysql', PDO::getAvailableDrivers(), true)) {
-            self::markTestSkipped('PDO MySQL is not available.');
-        }
         $prefix = match ($profile) {
             'mysql' => 'OPENSTATSPEC_MYSQL',
             'mariadb' => 'OPENSTATSPEC_MARIADB',
@@ -418,6 +585,9 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         $dsn = getenv($prefix . '_DSN');
         if (!is_string($dsn) || $dsn === '') {
             self::markTestSkipped($prefix . '_DSN is not configured.');
+        }
+        if (!in_array('mysql', PDO::getAvailableDrivers(), true)) {
+            throw new RuntimeException('Configured MySQL-family service requires the PDO MySQL driver.');
         }
         $user = getenv($prefix . '_USER');
         $password = getenv($prefix . '_PASSWORD');
@@ -435,7 +605,7 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         $adminUser = getenv($prefix . '_ADMIN_USER');
         $adminPassword = getenv($prefix . '_ADMIN_PASSWORD');
         if (!is_string($adminUser) || $adminUser === '' || !is_string($adminPassword)) {
-            self::markTestSkipped('Explicit Dolt admin credentials are required for an isolated test database.');
+            throw new RuntimeException('Configured Dolt service requires explicit admin credentials for isolation.');
         }
         $database = sprintf('openstatspec_t9_%d_%s', getmypid(), bin2hex(random_bytes(6)));
         $admin = new PDO($dsn, $adminUser, $adminPassword, $options);
@@ -460,8 +630,9 @@ final class OfficialInPlaceTransformation02Test extends TestCase
     }
 
     /**
-     * @param list<string>               $variables
-     * @param list<list<int|float|null>> $rows
+     * @param list<string>                 $variables
+     * @param list<list<int|float|null>>   $rows
+     * @param array<string, string>        $variableIds
      */
     private function installNumericFixture(
         PDO $pdo,
@@ -470,6 +641,7 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         string $table,
         array $variables,
         array $rows,
+        array $variableIds = [],
     ): void {
         if ($connection->profileName === 'sqlite') {
             $pdo->exec('PRAGMA foreign_keys = ON');
@@ -491,7 +663,7 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         );
         foreach ($variables as $index => $variable) {
             $insertVariable->execute([
-                $this->fixtureUuid($datasetId . ':' . $variable),
+                $variableIds[$variable] ?? $this->fixtureUuid($datasetId . ':' . $variable),
                 $datasetId,
                 $index + 1,
                 $variable,
@@ -570,6 +742,7 @@ final class OfficialInPlaceTransformation02Test extends TestCase
             'case_count' => $this->scalarCount($pdo, 'SELECT COUNT(*) FROM ' . $connection->profile->quoteIdentifier($table), []),
             'rows' => $this->rows($pdo, 'SELECT * FROM ' . $connection->profile->quoteIdentifier($table) . ' ORDER BY __case_ordinal', []),
             'audit_count' => $this->scalarCount($pdo, 'SELECT COUNT(*) FROM transformation_apply', []),
+            'repository' => $this->doltRepositoryEvidence($pdo, $connection),
         ];
     }
 
@@ -659,8 +832,11 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         ));
     }
 
-    /** @param array<string, mixed> $expected */
-    private function assertAudit(PDO $pdo, array $expected): void
+    /**
+     * @param array<string, mixed> $expected
+     * @return array<string, mixed>
+     */
+    private function assertAudit(PDO $pdo, array $expected): array
     {
         $rows = $this->rows($pdo, 'SELECT * FROM transformation_apply ORDER BY started_at, apply_id', []);
         self::assertCount(1, $rows);
@@ -671,6 +847,8 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         self::assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', (string) $rows[0]['apply_id']);
         self::assertNotSame('', (string) $rows[0]['started_at']);
         self::assertNotSame('', (string) $rows[0]['completed_at']);
+
+        return $rows[0];
     }
 
     private function assertNamespaceClean(PDO $pdo, string $datasetId, string $table): void
@@ -712,6 +890,198 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         self::assertSame([], $status->fetchAll(PDO::FETCH_COLUMN));
 
         return ['branch' => (string) $row['branch_name'], 'head' => (string) $row['head_hash']];
+    }
+
+    /** @param array<string, mixed> $case */
+    private function checkoutDoltFixtureBranch(PDO $pdo, Connection $connection, array $case): void
+    {
+        if ($connection->profileName !== 'dolt') {
+            return;
+        }
+        $expectedContext = is_array($case['expected_context'] ?? null) ? $case['expected_context'] : [];
+        $branch = $case['expected_branch'] ?? $expectedContext['branch'] ?? null;
+        if (!is_string($branch) || $branch === '') {
+            throw new RuntimeException('Official Dolt case is missing its expected branch.');
+        }
+        $active = (string) $this->scalar($pdo, 'SELECT active_branch()', []);
+        if ($active === $branch) {
+            return;
+        }
+        $statement = $pdo->prepare('CALL DOLT_CHECKOUT(?, ?)');
+        self::assertInstanceOf(PDOStatement::class, $statement);
+        $statement->execute(['-b', $branch]);
+        self::assertSame($branch, $this->scalar($pdo, 'SELECT active_branch()', []));
+    }
+
+    /**
+     * @param array<int, mixed> $rows
+     * @return array{list<string>, list<list<int|float|null>>}
+     */
+    private function numericFixtureRows(array $rows): array
+    {
+        $first = $rows[0] ?? null;
+        if (!is_array($first) || !is_int($first['__case_ordinal'] ?? null)) {
+            throw new RuntimeException('Official numeric fixture rows are malformed.');
+        }
+        $variables = [];
+        foreach (array_keys($first) as $column) {
+            if (is_string($column) && $column !== '__case_ordinal') {
+                $variables[] = $column;
+            }
+        }
+        if ($variables === []) {
+            throw new RuntimeException('Official numeric fixture has no variables.');
+        }
+        $fixtureRows = [];
+        foreach ($rows as $row) {
+            if (!is_array($row) || !is_int($row['__case_ordinal'] ?? null)) {
+                throw new RuntimeException('Official numeric fixture row is malformed.');
+            }
+            $fixtureRow = [$row['__case_ordinal']];
+            foreach ($variables as $variable) {
+                if (!array_key_exists($variable, $row)) {
+                    throw new RuntimeException('Official numeric fixture row is missing a variable.');
+                }
+                $value = $row[$variable];
+                if ($value !== null && !is_int($value) && !is_float($value)) {
+                    throw new RuntimeException('Official numeric fixture value is not numeric or null.');
+                }
+                $fixtureRow[] = $value;
+            }
+            $fixtureRows[] = $fixtureRow;
+        }
+
+        return [$variables, $fixtureRows];
+    }
+
+    /** @param array<string, mixed> $beforeContract */
+    private function installOfficialMissingRules(PDO $pdo, string $datasetId, array $beforeContract): void
+    {
+        $targetMetadata = is_array($beforeContract['target_metadata'] ?? null)
+            ? $beforeContract['target_metadata']
+            : [];
+        $missingValues = $targetMetadata['missing_values'] ?? [];
+        if (!is_array($missingValues) || $missingValues === []) {
+            return;
+        }
+        $targetId = $this->scalar(
+            $pdo,
+            'SELECT variable_id FROM variable WHERE dataset_id = ? AND source_name = ?',
+            [$datasetId, 'target'],
+        );
+        if (!is_string($targetId) || $targetId === '') {
+            throw new RuntimeException('Official target variable identity is unavailable.');
+        }
+        $insert = $pdo->prepare(
+            'INSERT INTO missing_rule (missing_rule_id, variable_id, ordinal, rule_kind, code_kind, numeric_value) '
+            . 'VALUES (?, ?, ?, ?, ?, ?)',
+        );
+        self::assertInstanceOf(PDOStatement::class, $insert);
+        foreach ($missingValues as $missing) {
+            if (!is_array($missing) || !is_int($missing['ordinal'] ?? null)) {
+                throw new RuntimeException('Official missing-value fixture is malformed.');
+            }
+            $insert->execute([
+                $this->fixtureUuid($datasetId . ':missing:' . $missing['ordinal']),
+                $targetId,
+                $missing['ordinal'],
+                $missing['rule_kind'] ?? null,
+                $missing['code_kind'] ?? null,
+                $missing['numeric_value'] ?? null,
+            ]);
+        }
+    }
+
+    /** @return array{variable_id: string, source_ordinal: int, source_name: string, physical_name: string} */
+    private function targetIdentity(PDO $pdo, string $datasetId, string $target): array
+    {
+        $rows = $this->rows(
+            $pdo,
+            'SELECT variable_id, source_ordinal, source_name, physical_name FROM variable '
+            . 'WHERE dataset_id = ? AND source_name = ?',
+            [$datasetId, $target],
+        );
+        self::assertCount(1, $rows);
+
+        return [
+            'variable_id' => (string) $rows[0]['variable_id'],
+            'source_ordinal' => (int) $rows[0]['source_ordinal'],
+            'source_name' => (string) $rows[0]['source_name'],
+            'physical_name' => (string) $rows[0]['physical_name'],
+        ];
+    }
+
+    /** @return array{branch: string, head: string, history: list<string>, status: list<array{table_name: string, status: string, staged: bool}>}|null */
+    private function doltRepositoryEvidence(PDO $pdo, Connection $connection): ?array
+    {
+        if ($connection->profileName !== 'dolt') {
+            return null;
+        }
+        $identity = $this->rows(
+            $pdo,
+            "SELECT active_branch() AS branch_name, dolt_hashof('HEAD') AS head_hash",
+            [],
+        )[0] ?? [];
+        $status = array_map(static function (array $row): array {
+            $row = array_change_key_case($row, CASE_LOWER);
+
+            return [
+                'table_name' => (string) ($row['table_name'] ?? ''),
+                'status' => (string) ($row['status'] ?? ''),
+                'staged' => (bool) ($row['staged'] ?? false),
+            ];
+        }, $this->rows($pdo, 'SELECT table_name, status, staged FROM dolt_status ORDER BY table_name', []));
+
+        return [
+            'branch' => (string) ($identity['branch_name'] ?? ''),
+            'head' => (string) ($identity['head_hash'] ?? ''),
+            'history' => array_map('strval', $this->column(
+                $pdo,
+                'SELECT commit_hash FROM dolt_log ORDER BY commit_order DESC, commit_hash',
+            )),
+            'status' => $status,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $before
+     * @param array<string, mixed> $after
+     */
+    private function assertDoltRepositoryApplyEvidence(array $before, array $after, string $table, string $caseId): void
+    {
+        $beforeRepository = $before['repository'] ?? null;
+        $afterRepository = $after['repository'] ?? null;
+        self::assertIsArray($beforeRepository);
+        self::assertIsArray($afterRepository);
+        self::assertSame($beforeRepository['branch'], $afterRepository['branch']);
+        self::assertSame($beforeRepository['head'], $afterRepository['head']);
+        self::assertSame($beforeRepository['history'], $afterRepository['history']);
+        $changedTables = [$table, 'transformation_apply'];
+        if ($caseId === 'dolt-preprovisioned-target-sequential-null-semantics') {
+            $changedTables = [
+                $table,
+                'transformation_apply',
+                'value_label',
+                'value_label_set',
+                'variable',
+                'variable_value_label_set',
+            ];
+        }
+        sort($changedTables);
+        self::assertSame(array_map(static fn(string $changed): array => [
+            'table_name' => $changed,
+            'status' => 'modified',
+            'staged' => false,
+        ], $changedTables), $afterRepository['status']);
+    }
+
+    /** @param list<string> $tables */
+    private function assertNoForbiddenArtifactTables(array $tables): void
+    {
+        self::assertSame([], array_values(array_filter(
+            $tables,
+            static fn(string $table): bool => preg_match('/derived|output|staging|snapshot|rollback|recovery/i', $table) === 1,
+        )));
     }
 
     private function quoteDoltDatabase(string $database): string
