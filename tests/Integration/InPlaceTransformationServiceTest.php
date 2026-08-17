@@ -376,6 +376,7 @@ final class InPlaceTransformationServiceTest extends TestCase
         $fixture = $this->reserveFixtureIdentity($connection);
         $tableName = $fixture['table_name'];
 
+        $this->assertDoltWorkingSetCleanBeforeFixture($pdo, $connection);
         (new NormativeCatalog($pdo))->createTables();
         CatalogOwnership::markCurrentVersion($pdo);
         $pdo->exec(
@@ -387,6 +388,7 @@ final class InPlaceTransformationServiceTest extends TestCase
             . '(dataset_id, spec_version, source_format, physical_table_schema, physical_table_name, dataset_name, source_case_count, imported_at) '
             . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         )->execute([$fixture['dataset_id'], '1.0', 'fixture', null, $tableName, 'preexisting deterministic namespace', 0, self::IMPORTED_AT]);
+        $this->commitDoltFixture($pdo, $connection, $fixture);
 
         try {
             try {
