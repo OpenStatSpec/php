@@ -182,7 +182,7 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
                 self::fail('PostgreSQL accepted a replacement after the physical column limit was reached.');
             } catch (UnsupportedOperation $exception) {
                 self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
-                self::assertStringContainsString('physical PostgreSQL column slots', $exception->getMessage());
+                self::assertStringContainsString('cannot add another source variable to this wide table', $exception->getMessage());
             }
 
             self::assertSame(1599, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM variable WHERE dataset_id = ?', [$datasetId]));
