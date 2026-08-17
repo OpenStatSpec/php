@@ -6,11 +6,11 @@ namespace OpenStatSpec\Frontend\Spss\Binding;
 
 use OpenStatSpec\Transformation\Diagnostic\SourceSpan;
 
-final readonly class BoundVariableLabel implements BoundStatement
+final readonly class BoundMeasurementLevel implements BoundStatement
 {
     public function __construct(
         public string $variable,
-        public string $label,
+        public string $level,
         public SourceSpan $span,
     ) {}
 }

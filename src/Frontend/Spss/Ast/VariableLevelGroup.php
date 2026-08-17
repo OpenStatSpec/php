@@ -11,6 +11,8 @@ final readonly class VariableLevelGroup
     /** @param non-empty-list<string> $variables */
     public function __construct(
         public array $variables,
+        /** @var non-empty-list<SourceSpan> */
+        public array $variableSpans,
         public string $level,
         public SourceSpan $span,
     ) {}

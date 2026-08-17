@@ -76,9 +76,11 @@ final class ParserTest extends TestCase
         self::assertCount(1, $statement->rules);
         $rule = $statement->rules[0];
         self::assertInstanceOf(ValueInput::class, $rule->input);
-        self::assertSame([1.0, 2.0, 3.0], array_column($rule->input->values, 'value'));
+        self::assertSame(['1', '2', '3'], array_column($rule->input->values, 'value'));
+        self::assertSame(['1', '2', '3'], array_column($rule->input->values, 'numericToken'));
         self::assertNotNull($rule->output->value);
-        self::assertSame(0.0, $rule->output->value->value);
+        self::assertSame('0', $rule->output->value->value);
+        self::assertSame('0', $rule->output->value->numericToken);
     }
 
     public function testParsesVariableAndValueLabelGroups(): void

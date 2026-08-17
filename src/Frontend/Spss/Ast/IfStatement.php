@@ -11,6 +11,7 @@ final readonly class IfStatement implements Statement
     public function __construct(
         public Predicate $predicate,
         public string $target,
+        public SourceSpan $targetSpan,
         public ExpressionOperand $expression,
         public SourceSpan $span,
     ) {}

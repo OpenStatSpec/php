@@ -32,6 +32,7 @@ use OpenStatSpec\Frontend\Spss\Ast\ValueLabel;
 use OpenStatSpec\Frontend\Spss\Ast\ValueLabelGroup;
 use OpenStatSpec\Frontend\Spss\Ast\ValueLabelsStatement;
 use OpenStatSpec\Frontend\Spss\Ast\VariableLabelsStatement;
+use OpenStatSpec\Frontend\Spss\Ast\VariableLabelAssignment;
 use OpenStatSpec\Frontend\Spss\Ast\VariableLevelGroup;
 use OpenStatSpec\Frontend\Spss\Ast\VariableLevelStatement;
 use OpenStatSpec\Frontend\Spss\Ast\VariableOperand;
@@ -119,6 +120,7 @@ final class Parser
 
         return new ComputeStatement(
             $target->lexeme,
+            $target->span,
             $expression,
             SourceSpan::cover($command->span, $expression->span()),
         );
@@ -137,6 +139,7 @@ final class Parser
         return new IfStatement(
             $predicate,
             $target->lexeme,
+            $target->span,
             $expression,
             SourceSpan::cover($command->span, $expression->span()),
         );
@@ -295,6 +298,7 @@ final class Parser
                 'F',
                 (int) $matches[1],
                 (int) $decimalMatches[1],
+                $variable->span,
                 SourceSpan::cover($variable->span, $rightParenthesis->span),
             );
         } while ($this->current()->isWord());
@@ -310,10 +314,14 @@ final class Parser
         $groups = [];
         do {
             $variables = [];
+            $variableSpans = [];
             $first = $this->consumeIdentifier('VARIABLE LEVEL requires at least one variable.');
             $variables[] = $first->lexeme;
+            $variableSpans[] = $first->span;
             while ($this->current()->isWord()) {
-                $variables[] = $this->advance()->lexeme;
+                $variable = $this->advance();
+                $variables[] = $variable->lexeme;
+                $variableSpans[] = $variable->span;
             }
             $this->consume(TokenType::LeftParenthesis, 'Expected ( before the measurement level.');
             $level = $this->current();
@@ -327,6 +335,7 @@ final class Parser
             $rightParenthesis = $this->consume(TokenType::RightParenthesis, 'Expected ) after the measurement level.');
             $groups[] = new VariableLevelGroup(
                 $variables,
+                $variableSpans,
                 strtolower($level->lexeme),
                 SourceSpan::cover($first->span, $rightParenthesis->span),
             );
@@ -341,12 +350,16 @@ final class Parser
     private function recode(Token $command): RecodeStatement
     {
         $sources = [];
+        $sourceSpans = [];
         do {
-            $sources[] = $this->consumeIdentifier('Expected a source variable after RECODE.')->lexeme;
+            $source = $this->consumeIdentifier('Expected a source variable after RECODE.');
+            $sources[] = $source->lexeme;
+            $sourceSpans[] = $source->span;
         } while ($this->current()->isWord() && !$this->current()->isKeyword('INTO'));
 
         $rules = [];
         while ($this->match(TokenType::LeftParenthesis)) {
+            $leftParenthesis = $this->previous();
             $input = $this->recodeInput();
             if ($this->check(TokenType::Comma)) {
                 if (!$input instanceof ValueInput) {
@@ -365,75 +378,107 @@ final class Parser
             }
             $this->consume(TokenType::Equals, 'Expected = in a RECODE rule.');
             $output = $this->recodeOutput();
-            $this->consume(TokenType::RightParenthesis, 'Expected ) after a RECODE rule.');
-            $rules[] = new RecodeRule($input, $output);
+            $rightParenthesis = $this->consume(TokenType::RightParenthesis, 'Expected ) after a RECODE rule.');
+            $rules[] = new RecodeRule($input, $output, SourceSpan::cover($leftParenthesis->span, $rightParenthesis->span));
         }
         if ($rules === []) {
             $this->fail($this->current(), 'RECODE requires at least one parenthesized rule.');
         }
 
         $targets = [];
+        $targetSpans = [];
         if ($this->matchKeyword('INTO')) {
             do {
-                $targets[] = $this->consumeIdentifier('Expected a target variable after INTO.')->lexeme;
+                $target = $this->consumeIdentifier('Expected a target variable after INTO.');
+                $targets[] = $target->lexeme;
+                $targetSpans[] = $target->span;
             } while ($this->current()->isWord());
         }
 
-        return new RecodeStatement($command->line, $sources, $rules, $targets);
+        return new RecodeStatement(
+            $command->line,
+            $sources,
+            $sourceSpans,
+            $rules,
+            $targets,
+            $targetSpans,
+            SourceSpan::cover($command->span, $this->previous()->span),
+        );
     }
 
     private function recodeInput(): RecodeInput
     {
         if ($this->matchKeyword('SYSMIS')) {
-            return new SystemMissingInput();
+            return new SystemMissingInput($this->previous()->span);
         }
         if ($this->matchKeyword('MISSING')) {
-            return new MissingInput();
+            return new MissingInput($this->previous()->span);
         }
         if ($this->matchKeyword('ELSE')) {
-            return new ElseInput();
+            return new ElseInput($this->previous()->span);
         }
         if ($this->matchKeyword('LOWEST')) {
+            $lowest = $this->previous();
             $this->consumeKeyword('THRU', 'LOWEST must be followed by THRU.');
-            $upper = $this->matchKeyword('HIGHEST') ? null : $this->scalar('Expected an upper bound after LOWEST THRU.');
+            if ($this->matchKeyword('HIGHEST')) {
+                return new RangeInput(null, null, SourceSpan::cover($lowest->span, $this->previous()->span));
+            }
+            $upper = $this->scalar('Expected an upper bound after LOWEST THRU.');
 
-            return new RangeInput(null, $upper);
+            return new RangeInput(null, $upper, SourceSpan::cover($lowest->span, $upper->span));
         }
 
         $lower = $this->scalar('Expected a value or selector in a RECODE rule.');
         if (!$this->matchKeyword('THRU')) {
             return new ValueInput($lower);
         }
-        $upper = $this->matchKeyword('HIGHEST') ? null : $this->scalar('Expected an upper bound after THRU.');
+        if ($this->matchKeyword('HIGHEST')) {
+            return new RangeInput($lower, null, SourceSpan::cover($lower->span, $this->previous()->span));
+        }
+        $upper = $this->scalar('Expected an upper bound after THRU.');
 
-        return new RangeInput($lower, $upper);
+        return new RangeInput($lower, $upper, SourceSpan::cover($lower->span, $upper->span));
     }
 
     private function recodeOutput(): RecodeOutput
     {
         if ($this->matchKeyword('COPY')) {
-            return new RecodeOutput(RecodeOutputKind::Copy);
+            return new RecodeOutput(RecodeOutputKind::Copy, $this->previous()->span);
         }
         if ($this->matchKeyword('SYSMIS')) {
-            return new RecodeOutput(RecodeOutputKind::SystemMissing);
+            return new RecodeOutput(RecodeOutputKind::SystemMissing, $this->previous()->span);
         }
 
-        return new RecodeOutput(RecodeOutputKind::Value, $this->scalar('Expected a value, COPY, or SYSMIS after =.'));
+        $value = $this->scalar('Expected a value, COPY, or SYSMIS after =.');
+
+        return new RecodeOutput(RecodeOutputKind::Value, $value->span, $value);
     }
 
     private function variableLabels(Token $command): VariableLabelsStatement
     {
         $labels = [];
+        $assignments = [];
         while (!$this->check(TokenType::Terminator) && !$this->check(TokenType::EndOfFile)) {
-            $variable = $this->consumeIdentifier('Expected a variable name in VARIABLE LABELS.')->lexeme;
-            $label = $this->consume(TokenType::String, 'Expected a quoted variable label.')->lexeme;
-            $labels[$variable] = $label;
+            $variable = $this->consumeIdentifier('Expected a variable name in VARIABLE LABELS.');
+            $label = $this->consume(TokenType::String, 'Expected a quoted variable label.');
+            $labels[$variable->lexeme] = $label->lexeme;
+            $assignments[] = new VariableLabelAssignment(
+                $variable->lexeme,
+                $label->lexeme,
+                $variable->span,
+                SourceSpan::cover($variable->span, $label->span),
+            );
         }
         if ($labels === []) {
             $this->fail($this->current(), 'VARIABLE LABELS requires at least one variable and label.');
         }
 
-        return new VariableLabelsStatement($command->line, $labels);
+        return new VariableLabelsStatement(
+            $command->line,
+            $labels,
+            $assignments,
+            SourceSpan::cover($command->span, $assignments[array_key_last($assignments)]->span),
+        );
     }
 
     private function valueLabels(Token $command): ValueLabelsStatement
@@ -441,8 +486,11 @@ final class Parser
         $groups = [];
         do {
             $variables = [];
+            $variableSpans = [];
             while ($this->current()->isWord()) {
-                $variables[] = $this->advance()->lexeme;
+                $variable = $this->advance();
+                $variables[] = $variable->lexeme;
+                $variableSpans[] = $variable->span;
             }
             if ($variables === []) {
                 $this->fail($this->current(), 'VALUE LABELS requires at least one variable before its value-label pairs.');
@@ -451,16 +499,25 @@ final class Parser
             $labels = [];
             while (!$this->check(TokenType::Slash) && !$this->check(TokenType::Terminator) && !$this->check(TokenType::EndOfFile)) {
                 $value = $this->scalar('Expected a value in VALUE LABELS.');
-                $label = $this->consume(TokenType::String, 'Expected a quoted label after the value.')->lexeme;
-                $labels[] = new ValueLabel($value, $label);
+                $label = $this->consume(TokenType::String, 'Expected a quoted label after the value.');
+                $labels[] = new ValueLabel($value, $label->lexeme, SourceSpan::cover($value->span, $label->span));
             }
             if ($labels === []) {
                 $this->fail($this->current(), 'VALUE LABELS requires at least one value-label pair.');
             }
-            $groups[] = new ValueLabelGroup($variables, $labels);
+            $groups[] = new ValueLabelGroup(
+                $variables,
+                $variableSpans,
+                $labels,
+                SourceSpan::cover($variableSpans[0], $labels[array_key_last($labels)]->span),
+            );
         } while ($this->match(TokenType::Slash));
 
-        return new ValueLabelsStatement($command->line, $groups);
+        return new ValueLabelsStatement(
+            $command->line,
+            $groups,
+            SourceSpan::cover($command->span, $groups[array_key_last($groups)]->span),
+        );
     }
 
     private function string(Token $command): StringStatement
@@ -482,9 +539,15 @@ final class Parser
         if ($widthValue > 32767) {
             $this->fail($this->previous(), 'STRING width must be at most 32767.');
         }
-        $this->consume(TokenType::RightParenthesis, 'Expected ) after STRING width.');
+        $rightParenthesis = $this->consume(TokenType::RightParenthesis, 'Expected ) after STRING width.');
 
-        return new StringStatement($command->line, $variables, $widthValue);
+        return new StringStatement(
+            $command->line,
+            $variables,
+            $widthValue,
+            $command->span,
+            SourceSpan::cover($command->span, $rightParenthesis->span),
+        );
     }
 
     private function deleteVariables(Token $command): DeleteVariablesStatement
@@ -498,23 +561,31 @@ final class Parser
             $variables[] = $variable;
         } while ($this->current()->isWord());
 
-        return new DeleteVariablesStatement($command->line, $variables);
+        return new DeleteVariablesStatement(
+            $command->line,
+            $variables,
+            $command->span,
+            SourceSpan::cover($command->span, $this->previous()->span),
+        );
     }
     private function scalar(string $message): ScalarValue
     {
         if ($this->match(TokenType::String)) {
-            return new ScalarValue($this->previous()->lexeme);
+            $token = $this->previous();
+
+            return new ScalarValue($token->lexeme, null, $token->span);
         }
         if (!$this->match(TokenType::Number)) {
             $this->fail($this->current(), $message);
         }
         $lexeme = $this->previous()->lexeme;
-        $value = (float) $lexeme;
-        if (!is_finite($value)) {
-            $this->fail($this->previous(), 'Numeric literals must be finite IEEE-754 binary64 values.');
+        try {
+            DecimalBinary64::bits($lexeme);
+        } catch (TransformationFailure $failure) {
+            $this->fail($this->previous(), $failure->getMessage());
         }
 
-        return new ScalarValue($value);
+        return new ScalarValue($lexeme, $lexeme, $this->previous()->span);
     }
 
     private function consumeIdentifier(string $message): Token

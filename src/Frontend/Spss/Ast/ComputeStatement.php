@@ -10,6 +10,7 @@ final readonly class ComputeStatement implements Statement
 {
     public function __construct(
         public string $target,
+        public SourceSpan $targetSpan,
         public ExpressionOperand $expression,
         public SourceSpan $span,
     ) {}

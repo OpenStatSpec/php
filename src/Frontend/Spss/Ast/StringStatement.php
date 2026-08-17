@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Frontend\Spss\Ast;
 
+use OpenStatSpec\Transformation\Diagnostic\SourceSpan;
+
 final readonly class StringStatement implements Statement
 {
     /** @param list<string> $variables */
@@ -11,6 +13,8 @@ final readonly class StringStatement implements Statement
         public int $lineNumber,
         public array $variables,
         public int $width,
+        public SourceSpan $commandSpan,
+        public SourceSpan $span,
     ) {}
 
     public function line(): int

@@ -4,142 +4,83 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Frontend\Spss;
 
-use LogicException;
-use OpenStatSpec\Frontend\Spss\Ast\ElseInput;
-use OpenStatSpec\Frontend\Spss\Ast\RangeInput;
-use OpenStatSpec\Frontend\Spss\Ast\RecodeInput;
-use OpenStatSpec\Frontend\Spss\Ast\RecodeOutput;
-use OpenStatSpec\Frontend\Spss\Ast\RecodeOutputKind;
-use OpenStatSpec\Frontend\Spss\Ast\ScalarValue as AstScalarValue;
-use OpenStatSpec\Frontend\Spss\Ast\SystemMissingInput;
-use OpenStatSpec\Frontend\Spss\Ast\ValueInput;
-use OpenStatSpec\Frontend\Spss\Ast\ValueLabel as AstValueLabel;
+use OpenStatSpec\Frontend\Spss\Binding\BoundCompute;
+use OpenStatSpec\Frontend\Spss\Binding\BoundConditionalAssign;
+use OpenStatSpec\Frontend\Spss\Binding\BoundExecute;
+use OpenStatSpec\Frontend\Spss\Binding\BoundFormat;
+use OpenStatSpec\Frontend\Spss\Binding\BoundMeasurementLevel;
 use OpenStatSpec\Frontend\Spss\Binding\BoundProgram;
 use OpenStatSpec\Frontend\Spss\Binding\BoundRecode;
 use OpenStatSpec\Frontend\Spss\Binding\BoundValueLabels;
 use OpenStatSpec\Frontend\Spss\Binding\BoundVariableLabel;
-use OpenStatSpec\Frontend\Spss\Binding\BoundCreateVariable;
-use OpenStatSpec\Frontend\Spss\Binding\BoundDeleteVariable;
-use OpenStatSpec\Transformation\Model\Action\AssignValueAction;
-use OpenStatSpec\Transformation\Model\CreateVariableOperation;
-use OpenStatSpec\Transformation\Model\DeleteVariableOperation;
-use OpenStatSpec\Transformation\Model\Action\CopySourceAction;
-use OpenStatSpec\Transformation\Model\Action\SetMissingAction;
-use OpenStatSpec\Transformation\Model\RecodeAction;
-use OpenStatSpec\Transformation\Model\RecodeOperation;
-use OpenStatSpec\Transformation\Model\RecodeRule;
-use OpenStatSpec\Transformation\Model\RecodeSelector;
-use OpenStatSpec\Transformation\Model\ScalarValue;
-use OpenStatSpec\Transformation\Model\Selector\ElseSelector;
-use OpenStatSpec\Transformation\Model\Selector\ExactValueSelector;
-use OpenStatSpec\Transformation\Model\Selector\MissingValueSelector;
-use OpenStatSpec\Transformation\Model\Selector\NumericRangeSelector;
-use OpenStatSpec\Transformation\Model\SetValueLabelsOperation;
-use OpenStatSpec\Transformation\Model\SetVariableLabelOperation;
-use OpenStatSpec\Transformation\Model\TransformationPlan;
-use OpenStatSpec\Transformation\Model\ValueLabel;
-use OpenStatSpec\Transformation\Validation\PlanValidator;
+use OpenStatSpec\Transformation\Plan\Operation;
+use OpenStatSpec\Transformation\Plan\Operation\AssignOperation;
+use OpenStatSpec\Transformation\Plan\Operation\ConditionalAssignOperation;
+use OpenStatSpec\Transformation\Plan\Operation\ExecuteOperation;
+use OpenStatSpec\Transformation\Plan\Operation\RecodeOperation;
+use OpenStatSpec\Transformation\Plan\Operation\ReplaceValueLabelsOperation;
+use OpenStatSpec\Transformation\Plan\Operation\SetFormatOperation;
+use OpenStatSpec\Transformation\Plan\Operation\SetMeasurementLevelOperation;
+use OpenStatSpec\Transformation\Plan\Operation\SetVariableLabelOperation;
+use OpenStatSpec\Transformation\Plan\PlanContract;
+use OpenStatSpec\Transformation\Plan\TransformationPlan;
 
-/** Compiles only bound SPSS semantics into the source-neutral canonical model. */
+/** Compiles only bound SPSS semantics into the source-neutral official plan. */
 final class Compiler
 {
-    public function __construct(private readonly PlanValidator $validator = new PlanValidator()) {}
-
     public function compile(BoundProgram $program): TransformationPlan
     {
         $operations = [];
         foreach ($program->statements as $statement) {
-            if ($statement instanceof BoundCreateVariable) {
-                $operations[] = new CreateVariableOperation(
+            $operations[] = match (true) {
+                $statement instanceof BoundRecode => new RecodeOperation(
+                    $statement->sourceVariable,
+                    $statement->targetVariable,
+                    $statement->targetMode,
+                    $statement->rules,
+                    $statement->unmatched,
+                ),
+                $statement instanceof BoundCompute => new AssignOperation(
+                    $statement->target,
+                    $statement->targetMode,
+                    $statement->value,
+                ),
+                $statement instanceof BoundConditionalAssign => new ConditionalAssignOperation(
+                    $statement->condition,
+                    $statement->target,
+                    $statement->value,
+                ),
+                $statement instanceof BoundVariableLabel => new SetVariableLabelOperation(
                     $statement->variable,
-                    $statement->storageKind,
-                    $statement->storageKind === 'string' ? $statement->declaredStringWidth : null,
-                );
-                continue;
-            }
-            if ($statement instanceof BoundDeleteVariable) {
-                $operations[] = new DeleteVariableOperation($statement->variable);
-                continue;
-            }
-            if ($statement instanceof BoundRecode) {
-                $rules = [];
-                $hasElse = false;
-                foreach ($statement->rules as $rule) {
-                    $action = $this->action($rule->output);
-                    if ($rule->input instanceof ValueInput) {
-                        foreach ($rule->input->values as $value) {
-                            $rules[] = new RecodeRule(
-                                new ExactValueSelector($this->scalar($value)),
-                                $action,
-                            );
-                        }
-                        continue;
-                    }
-                    $selector = $this->selector($rule->input);
-                    $hasElse = $hasElse || $selector instanceof ElseSelector;
-                    $rules[] = new RecodeRule($selector, $action);
-                }
-                if (!$hasElse) {
-                    $defaultAction = $statement->sourceVariable === $statement->targetVariable
-                        ? new CopySourceAction()
-                        : new SetMissingAction();
-                    $rules[] = new RecodeRule(new ElseSelector(), $defaultAction);
-                }
-                $operations[] = new RecodeOperation($statement->sourceVariable, $statement->targetVariable, $rules);
-                continue;
-            }
-            if ($statement instanceof BoundVariableLabel) {
-                $operations[] = new SetVariableLabelOperation($statement->variable, $statement->label);
-                continue;
-            }
-            if ($statement instanceof BoundValueLabels) {
-                $labels = array_map(
-                    fn(AstValueLabel $label): ValueLabel => new ValueLabel(
-                        $this->scalar($label->value),
-                        $label->label,
-                    ),
+                    $statement->label,
+                ),
+                $statement instanceof BoundValueLabels => new ReplaceValueLabelsOperation(
+                    $statement->variable,
                     $statement->labels,
-                );
-                $operations[] = new SetValueLabelsOperation($statement->variable, $labels);
-                continue;
-            }
-
-            throw new LogicException(sprintf('Unsupported bound SPSS statement %s.', $statement::class));
+                ),
+                $statement instanceof BoundFormat => new SetFormatOperation(
+                    $statement->variable,
+                    $statement->family,
+                    $statement->width,
+                    $statement->decimals,
+                ),
+                $statement instanceof BoundMeasurementLevel => new SetMeasurementLevelOperation(
+                    $statement->variable,
+                    $statement->level,
+                ),
+                $statement instanceof BoundExecute => new ExecuteOperation(),
+                default => throw new \LogicException(sprintf(
+                    'Unsupported bound SPSS statement %s.',
+                    $statement::class,
+                )),
+            };
         }
 
-        $plan = new TransformationPlan($program->datasetId, $operations);
-        $this->validator->assertValid($plan);
+        $contract = array_any(
+            $operations,
+            static fn(Operation $operation): bool => $operation->minimumContract() === PlanContract::V02,
+        ) ? PlanContract::V02 : PlanContract::V01;
 
-        return $plan;
-    }
-
-    private function selector(RecodeInput $input): RecodeSelector
-    {
-        return match (true) {
-            $input instanceof ValueInput => new ExactValueSelector($this->scalar($input->value)),
-            $input instanceof RangeInput => new NumericRangeSelector(
-                $input->lower === null ? null : (float) $input->lower->value,
-                $input->upper === null ? null : (float) $input->upper->value,
-            ),
-            $input instanceof SystemMissingInput => new MissingValueSelector(),
-            $input instanceof ElseInput => new ElseSelector(),
-            default => throw new LogicException(sprintf('Unsupported SPSS recode input %s.', $input::class)),
-        };
-    }
-
-    private function action(RecodeOutput $output): RecodeAction
-    {
-        return match ($output->kind) {
-            RecodeOutputKind::Value => new AssignValueAction($this->scalar(
-                $output->value ?? throw new LogicException('A value output must contain a scalar.'),
-            )),
-            RecodeOutputKind::Copy => new CopySourceAction(),
-            RecodeOutputKind::SystemMissing => new SetMissingAction(),
-        };
-    }
-
-    private function scalar(AstScalarValue $value): ScalarValue
-    {
-        return is_string($value->value) ? ScalarValue::string($value->value) : ScalarValue::number($value->value);
+        return new TransformationPlan($contract, $program->inputAlias, $operations);
     }
 }

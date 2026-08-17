@@ -6,13 +6,11 @@ namespace OpenStatSpec\Frontend\Spss\Ast;
 
 use OpenStatSpec\Transformation\Diagnostic\SourceSpan;
 
-final readonly class FormatTarget
+final readonly class VariableLabelAssignment
 {
     public function __construct(
         public string $variable,
-        public string $family,
-        public int $width,
-        public int $decimals,
+        public string $label,
         public SourceSpan $variableSpan,
         public SourceSpan $span,
     ) {}
