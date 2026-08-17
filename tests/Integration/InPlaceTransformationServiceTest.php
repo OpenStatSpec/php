@@ -430,7 +430,7 @@ final class InPlaceTransformationServiceTest extends TestCase
         }
     }
 
-    public function testDoltDatabaseIsolationUsesExclusiveNamesWithoutLosingDsnSettings(): void
+    public function testDoltDatabaseIsolationSeparatesAdminAndTargetCredentials(): void
     {
         self::assertNull($this->doltAdminCredentials(false, 'root'));
         self::assertNull($this->doltAdminCredentials('root', false));
@@ -453,11 +453,18 @@ final class InPlaceTransformationServiceTest extends TestCase
                 'admin' => ['dsn' => $configuredDsn, 'user' => 'root', 'password' => 'root'],
                 'isolated' => [
                     'dsn' => 'mysql:host=127.0.0.1;port=3306;dbname=' . $firstDatabase . ';charset=utf8mb4',
-                    'user' => 'root',
-                    'password' => 'root',
+                    'user' => 'openstatspec',
+                    'password' => 'target-secret',
                 ],
             ],
-            $this->doltConnectionConfiguration($configuredDsn, 'root', 'root', $firstDatabase),
+            $this->doltConnectionConfiguration(
+                $configuredDsn,
+                'root',
+                'root',
+                'openstatspec',
+                'target-secret',
+                $firstDatabase,
+            ),
         );
         self::assertSame(
             'mysql:unix_socket=/tmp/dolt.sock;charset=utf8mb4;dbname=' . $secondDatabase,
@@ -772,6 +779,8 @@ final class InPlaceTransformationServiceTest extends TestCase
                 $dsn,
                 $adminCredentials['user'],
                 $adminCredentials['password'],
+                is_string($user) ? $user : null,
+                is_string($password) ? $password : null,
                 $options,
             );
         }
@@ -797,21 +806,23 @@ final class InPlaceTransformationServiceTest extends TestCase
     /**
      * @return array{
      *     admin: array{dsn: string, user: string, password: string},
-     *     isolated: array{dsn: string, user: string, password: string}
+     *     isolated: array{dsn: string, user: string|null, password: string|null}
      * }
      */
     private function doltConnectionConfiguration(
         string $dsn,
         string $adminUser,
         string $adminPassword,
+        ?string $targetUser,
+        ?string $targetPassword,
         string $database,
     ): array {
         return [
             'admin' => ['dsn' => $dsn, 'user' => $adminUser, 'password' => $adminPassword],
             'isolated' => [
                 'dsn' => $this->dsnForDoltDatabase($dsn, $database),
-                'user' => $adminUser,
-                'password' => $adminPassword,
+                'user' => $targetUser,
+                'password' => $targetPassword,
             ],
         ];
     }
@@ -821,20 +832,25 @@ final class InPlaceTransformationServiceTest extends TestCase
         string $dsn,
         string $adminUser,
         string $adminPassword,
+        ?string $targetUser,
+        ?string $targetPassword,
         array $options,
     ): PDO {
         $database = $this->newDoltDatabaseName();
-        $configuration = $this->doltConnectionConfiguration($dsn, $adminUser, $adminPassword, $database);
+        $configuration = $this->doltConnectionConfiguration(
+            $dsn,
+            $adminUser,
+            $adminPassword,
+            $targetUser,
+            $targetPassword,
+            $database,
+        );
         $admin = new PDO(
             $configuration['admin']['dsn'],
             $configuration['admin']['user'],
             $configuration['admin']['password'],
             $options,
         );
-        if ((new Connection($admin))->profileName !== 'dolt') {
-            throw new RuntimeException('The configured Dolt DSN does not identify a Dolt server.');
-        }
-
         $admin->exec('CREATE DATABASE ' . $this->quoteDoltDatabaseName($database));
         $this->doltTestDatabases[] = ['admin' => $admin, 'database' => $database];
 
@@ -844,6 +860,9 @@ final class InPlaceTransformationServiceTest extends TestCase
             $configuration['isolated']['password'],
             $options,
         );
+        if ((new Connection($pdo))->profileName !== 'dolt') {
+            throw new RuntimeException('The configured Dolt DSN does not identify a Dolt server.');
+        }
         self::assertSame($database, $this->scalar($pdo, 'SELECT DATABASE()', []));
 
         return $pdo;
