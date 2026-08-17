@@ -67,6 +67,20 @@ final class ParserTest extends TestCase
         self::assertSame(RecodeOutputKind::Copy, $statement->rules[3]->output->kind);
     }
 
+    public function testParsesCommaSeparatedRecodeSelectorsInSourceOrder(): void
+    {
+        $program = (new Parser())->parse('RECODE q1 (1,2,3 = 0).');
+
+        $statement = $program->statements[0];
+        self::assertInstanceOf(RecodeStatement::class, $statement);
+        self::assertCount(1, $statement->rules);
+        $rule = $statement->rules[0];
+        self::assertInstanceOf(ValueInput::class, $rule->input);
+        self::assertSame([1.0, 2.0, 3.0], array_column($rule->input->values, 'value'));
+        self::assertNotNull($rule->output->value);
+        self::assertSame(0.0, $rule->output->value->value);
+    }
+
     public function testParsesVariableAndValueLabelGroups(): void
     {
         $program = (new Parser())->parse(<<<'SPSS'
@@ -269,7 +283,9 @@ final class ParserTest extends TestCase
             self::assertSame($startOffset, $span->startOffset);
             self::assertSame($endOffset, $span->endOffset);
             self::assertSame(1, $span->startLine);
-            self::assertGreaterThan(0, $span->endColumn);
+            self::assertSame($startOffset + 1, $span->startColumn);
+            self::assertSame(1, $span->endLine);
+            self::assertSame($endOffset + 1, $span->endColumn);
         }
     }
 
@@ -279,6 +295,8 @@ final class ParserTest extends TestCase
         yield 'IF needs outer parentheses' => ['IF a = 1 target = 1.', 'spss_syntax_error', 3, 4];
         yield 'IF ELSE is not in the grammar' => ['IF (a = 1) target = 1 ELSE target = 0.', 'spss_syntax_error', 22, 26];
         yield 'arithmetic is unsupported' => ['COMPUTE target = a + 1.', 'expression_type_unsupported', 19, 20];
+        yield 'adjacent addition is unsupported' => ['COMPUTE target = a+1.', 'expression_type_unsupported', 18, 20];
+        yield 'adjacent subtraction is unsupported' => ['COMPUTE target = a-1.', 'expression_type_unsupported', 18, 20];
         yield 'predicate arithmetic is unsupported' => ['IF (a + 1 = 2) target = 1.', 'expression_type_unsupported', 6, 7];
         yield 'NOT is unsupported' => ['IF (NOT a = 1) target = 1.', 'expression_type_unsupported', 4, 7];
         yield 'string assignment is unsupported' => ["COMPUTE target = 'x'.", 'expression_type_unsupported', 17, 20];
@@ -289,12 +307,30 @@ final class ParserTest extends TestCase
         yield 'COMMENT is unsupported command' => ['COMMENT text.', 'unsupported_spss_command', 0, 7];
         yield 'unknown command is unsupported' => ['SORT CASES BY a.', 'unsupported_spss_command', 0, 4];
         yield 'keyword word is unsupported at command start' => ['SCALE.', 'unsupported_spss_command', 0, 5];
+        yield 'inline block comment is syntax error' => ['COMPUTE target = a/* comment */.', 'spss_syntax_error', 18, 20];
         yield 'leading plus is not numeric grammar' => ['COMPUTE target = +1.', 'spss_syntax_error', 17, 19];
         yield 'leading decimal is not numeric grammar' => ['COMPUTE target = .5.', 'spss_syntax_error', 17, 19];
         yield 'leading zero is not numeric grammar' => ['COMPUTE target = 01.', 'spss_syntax_error', 17, 19];
         yield 'NaN is not numeric grammar' => ['COMPUTE target = NaN.', 'spss_syntax_error', 17, 20];
         yield 'Infinity is not numeric grammar' => ['COMPUTE target = Infinity.', 'spss_syntax_error', 17, 25];
         yield 'trailing decimal point is not numeric grammar' => ['COMPUTE target = 1..', 'spss_syntax_error', 19, 20];
+    }
+
+    public function testMultilineDiagnosticHasExactStartAndEndCoordinates(): void
+    {
+        try {
+            (new Parser())->parse("COMPUTE target = 0.\nIF x = 1 target = 1.");
+            self::fail('Unparenthesized IF unexpectedly parsed.');
+        } catch (SpssSyntaxException $exception) {
+            $span = $exception->diagnostics[0]->span;
+            self::assertNotNull($span);
+            self::assertSame(23, $span->startOffset);
+            self::assertSame(24, $span->endOffset);
+            self::assertSame(2, $span->startLine);
+            self::assertSame(4, $span->startColumn);
+            self::assertSame(2, $span->endLine);
+            self::assertSame(5, $span->endColumn);
+        }
     }
 
     public function testRequestDtosRetainExactSourceAndOrderedSchema(): void

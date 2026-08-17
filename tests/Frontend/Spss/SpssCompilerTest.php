@@ -56,6 +56,22 @@ final class SpssCompilerTest extends TestCase
         self::assertInstanceOf(ElseSelector::class, $intoRecode->rules()[1]->selector());
     }
 
+    public function testExpandsGroupedRecodeValuesWithoutDroppingSelectors(): void
+    {
+        $plan = (new SpssCompiler())->compile('RECODE score (1,2=0).', self::DATASET_ID);
+        $operation = $plan->operations()[0];
+        self::assertInstanceOf(RecodeOperation::class, $operation);
+        self::assertCount(3, $operation->rules());
+
+        $first = $operation->rules()[0]->selector();
+        $second = $operation->rules()[1]->selector();
+        self::assertInstanceOf(\OpenStatSpec\Transformation\Model\Selector\ExactValueSelector::class, $first);
+        self::assertInstanceOf(\OpenStatSpec\Transformation\Model\Selector\ExactValueSelector::class, $second);
+        self::assertSame(1.0, $first->value()->numberValue());
+        self::assertSame(2.0, $second->value()->numberValue());
+        self::assertInstanceOf(ElseSelector::class, $operation->rules()[2]->selector());
+    }
+
     public function testExpandsParallelSourceAndIntoLists(): void
     {
         $plan = (new SpssCompiler())->compile('RECODE first second (1=2) INTO new_first new_second.', self::DATASET_ID);

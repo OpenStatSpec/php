@@ -189,7 +189,7 @@ final class Parser
 
     private function comparisonOperator(): Token
     {
-        if ($this->check(TokenType::ArithmeticOperator) || $this->check(TokenType::Slash)) {
+        if ($this->isArithmeticContinuation()) {
             $this->fail(
                 $this->current(),
                 'Arithmetic expressions are not supported.',
@@ -240,7 +240,7 @@ final class Parser
 
     private function rejectUnsupportedExpressionContinuation(): void
     {
-        if ($this->check(TokenType::ArithmeticOperator) || $this->check(TokenType::Slash)) {
+        if ($this->isArithmeticContinuation()) {
             $this->fail(
                 $this->current(),
                 'Arithmetic expressions are not supported.',
@@ -260,6 +260,16 @@ final class Parser
         );
 
         return new BooleanPredicate($operator, $operands, SourceSpan::cover($left->span(), $right->span()));
+    }
+
+    private function isArithmeticContinuation(): bool
+    {
+        if ($this->check(TokenType::ArithmeticOperator) || $this->check(TokenType::Slash)) {
+            return true;
+        }
+
+        return $this->check(TokenType::Number)
+            && ($this->current()->lexeme[0] === '+' || $this->current()->lexeme[0] === '-');
     }
 
     private function formats(Token $command): FormatsStatement
@@ -338,6 +348,21 @@ final class Parser
         $rules = [];
         while ($this->match(TokenType::LeftParenthesis)) {
             $input = $this->recodeInput();
+            if ($this->check(TokenType::Comma)) {
+                if (!$input instanceof ValueInput) {
+                    $this->fail($this->current(), 'Comma-separated RECODE selectors must all be typed literals.');
+                }
+                $values = [$input->value];
+                while ($this->match(TokenType::Comma)) {
+                    $comma = $this->previous();
+                    $additionalInput = $this->recodeInput();
+                    if (!$additionalInput instanceof ValueInput) {
+                        $this->fail($comma, 'Comma-separated RECODE selectors must all be typed literals.');
+                    }
+                    $values[] = $additionalInput->value;
+                }
+                $input = new ValueInput(...$values);
+            }
             $this->consume(TokenType::Equals, 'Expected = in a RECODE rule.');
             $output = $this->recodeOutput();
             $this->consume(TokenType::RightParenthesis, 'Expected ) after a RECODE rule.');

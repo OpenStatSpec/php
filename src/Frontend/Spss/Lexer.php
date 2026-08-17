@@ -49,6 +49,12 @@ final class Lexer
             }
 
             $next = $source[$offset + 1] ?? '';
+            if ($character === '/' && $next === '*') {
+                $this->fail(
+                    new SourceSpan($offset, $offset + 2, $line, $column, $line, $column + 2),
+                    'Inline block comments are not supported.',
+                );
+            }
             $punctuation = match (true) {
                 $character === '<' && $next === '=' => TokenType::LessThanOrEqual,
                 $character === '>' && $next === '=' => TokenType::GreaterThanOrEqual,

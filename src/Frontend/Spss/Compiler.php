@@ -65,9 +65,19 @@ final class Compiler
                 $rules = [];
                 $hasElse = false;
                 foreach ($statement->rules as $rule) {
+                    $action = $this->action($rule->output);
+                    if ($rule->input instanceof ValueInput) {
+                        foreach ($rule->input->values as $value) {
+                            $rules[] = new RecodeRule(
+                                new ExactValueSelector($this->scalar($value)),
+                                $action,
+                            );
+                        }
+                        continue;
+                    }
                     $selector = $this->selector($rule->input);
                     $hasElse = $hasElse || $selector instanceof ElseSelector;
-                    $rules[] = new RecodeRule($selector, $this->action($rule->output));
+                    $rules[] = new RecodeRule($selector, $action);
                 }
                 if (!$hasElse) {
                     $defaultAction = $statement->sourceVariable === $statement->targetVariable
