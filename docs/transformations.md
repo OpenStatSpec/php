@@ -131,6 +131,33 @@ as supported for every implemented SQL profile and states these target-creation
 boundaries. Dolt additionally reports its clean-working-set and stable
 branch/HEAD guard.
 
+## Service-matrix evidence gate
+
+Run the PHP adapter's in-place evidence matrix with the pinned specification
+checkout:
+
+```bash
+OPENSTATSPEC_SPECIFICATION_DIR=/path/to/openstatspec-specification \
+  vendor/bin/phpunit tests/Integration/InPlaceTransformationServiceTest.php
+```
+
+SQLite runs locally. PostgreSQL, MySQL, MariaDB, and Dolt run only when their
+respective `OPENSTATSPEC_PG_*`, `OPENSTATSPEC_MYSQL_*`,
+`OPENSTATSPEC_MARIADB_*`, or `OPENSTATSPEC_DOLT_*` configuration is supplied;
+an absent local profile is reported as skipped. CI supplies every service
+profile configuration, so a skipped configured service is not acceptable CI
+evidence.
+
+For every configured profile, the existing-target evidence proves that a
+recode plus label changes preserves the dataset UUID, physical table identity,
+and existing variable identities, with no copied, staging, snapshot, rollback,
+or parallel-history table. Numeric implicit target creation is evidenced only
+on SQLite and PostgreSQL. MySQL, MariaDB, and Dolt reject it before mutation;
+their target variable must be created and catalogued by deployment workflow
+before the recode. This is PHP adapter evidence only: it retains the legacy
+`openstatspec-transformation-plan-v1` contract and does not establish an
+official OpenStatSpec Transformation Plan 1.0 profile.
+
 ## Minimal PHP flow
 
 ```php
