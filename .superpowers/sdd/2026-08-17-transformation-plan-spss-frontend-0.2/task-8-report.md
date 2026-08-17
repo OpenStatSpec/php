@@ -63,3 +63,9 @@
 - RED reproduced SQLite's physical-namespace alias: catalog rows for `(NULL, odd"table)` and `(main, odd"table)` passed the raw schema comparison and produced a success audit.
 - Preflight now canonicalizes only SQLite's omitted/default and case-insensitive `main` schema spelling. PostgreSQL schemas and physical table identifiers retain their exact catalog spelling and comparison behavior.
 - The regression proves rejection before row or audit mutation with unchanged dataset and persistent-table counts. Focused execution passed 35 tests and 415 assertions with 2 PostgreSQL skips; full PHPUnit passed 436 tests and 2,748 assertions with 32 environment skips; PHPStan and PHP lint passed.
+
+## Review follow-up 3
+
+- RED reproduced the remaining SQLite alias: `(NULL, odd"table)` and `(main, ODD"TABLE)` passed the case-sensitive catalog query even though quoted SQLite identifiers resolve to the same table.
+- Ownership now compares canonical schema/table pairs across catalog rows. Only SQLite table names receive ASCII case-folding; quoted/special characters are preserved, and PostgreSQL keeps exact schema and table-name semantics.
+- The public-executor regression proves rejection before row/audit mutation with unchanged dataset and persistent-table counts. Focused execution passed 36 tests and 432 assertions with 2 PostgreSQL skips; full PHPUnit passed 437 tests and 2,765 assertions with 32 environment skips; PHPStan and PHP lint passed.

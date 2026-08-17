@@ -456,16 +456,20 @@ final readonly class PlanPreflight
     private function assertExclusivePhysicalTableBinding(DatasetBinding $dataset): void
     {
         $statement = $this->statement(
-            'SELECT dataset_id, physical_table_schema FROM dataset WHERE physical_table_name = ?',
+            'SELECT dataset_id, physical_table_schema, physical_table_name FROM dataset',
         );
-        CheckedPdo::execute($statement, [$dataset->table], 'Physical table ownership could not be queried.');
+        CheckedPdo::execute($statement, [], 'Physical table ownership could not be queried.');
         $canonicalSchema = $this->canonicalPhysicalSchema($dataset->schema);
+        $canonicalTable = $this->canonicalPhysicalTable($dataset->table);
         $owners = array_values(array_filter(
             $statement->fetchAll(PDO::FETCH_ASSOC),
-            function (array $row) use ($canonicalSchema): bool {
+            function (array $row) use ($canonicalSchema, $canonicalTable): bool {
                 $schema = $row['physical_table_schema'] ?? null;
-                return $schema !== null && !is_string($schema)
-                    || $this->canonicalPhysicalSchema($schema) === $canonicalSchema;
+                $table = $row['physical_table_name'] ?? null;
+                return is_string($table)
+                    && $this->canonicalPhysicalTable($table) === $canonicalTable
+                    && ($schema !== null && !is_string($schema)
+                        || $this->canonicalPhysicalSchema($schema) === $canonicalSchema);
             },
         ));
         if (count($owners) !== 1 || ($owners[0]['dataset_id'] ?? null) !== $dataset->datasetId) {
@@ -486,6 +490,11 @@ final readonly class PlanPreflight
         }
 
         return $schema;
+    }
+
+    private function canonicalPhysicalTable(string $table): string
+    {
+        return $this->connection->profileName === 'sqlite' ? strtolower($table) : $table;
     }
 
     /** @return array<string, VariableBinding> */

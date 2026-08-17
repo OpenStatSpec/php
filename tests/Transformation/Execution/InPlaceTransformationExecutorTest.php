@@ -305,6 +305,32 @@ final class InPlaceTransformationExecutorTest extends TestCase
         self::assertSame($beforePersistentTableCount, (int) $this->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"));
     }
 
+    public function testSqliteQuotedTableCaseAliasesCannotShareOnePhysicalTable(): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO dataset (dataset_id, spec_version, source_format, physical_table_schema, physical_table_name, dataset_name, source_case_count, imported_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )->execute(['99999999-9999-4999-8999-999999999999', '1.0', 'fixture', 'main', 'ODD"TABLE', 'Case-folded alias', 2, '2026-08-17 00:00:00']);
+        $plan = new TransformationPlan(PlanContract::V02, 'parent', [
+            new AssignOperation('target', TargetMode::Replace, new VariableOperand('source')),
+        ]);
+        $before = $this->state();
+        $beforeDatasetCount = (int) $this->scalar('SELECT COUNT(*) FROM dataset');
+        $beforePersistentTableCount = (int) $this->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
+        $failure = null;
+
+        try {
+            (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($this->request($plan));
+        } catch (TransformationFailure $caught) {
+            $failure = $caught;
+        }
+
+        self::assertInstanceOf(TransformationFailure::class, $failure, 'SQLite quoted table case aliases were treated as different physical tables.');
+        self::assertSame('invalid_catalog', $failure->diagnosticCode());
+        self::assertSame($before, $this->state());
+        self::assertSame($beforeDatasetCount, (int) $this->scalar('SELECT COUNT(*) FROM dataset'));
+        self::assertSame($beforePersistentTableCount, (int) $this->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"));
+    }
+
     public function testCrossDatasetValueLabelAssociationFailsBeforeEarlierUpdate(): void
     {
         $otherDataset = '99999999-9999-4999-8999-999999999999';
