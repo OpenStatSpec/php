@@ -114,6 +114,23 @@ final class InPlaceTransformationExecutorTest extends TestCase
         self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM transformation_apply'));
     }
 
+    public function testSuccessAuditCapturesStartedAtBeforeOperationsAndCompletedAtAfter(): void
+    {
+        $plan = new TransformationPlan(PlanContract::V02, 'parent', [
+            new AssignOperation('target', TargetMode::Replace, new VariableOperand('source')),
+        ]);
+        $startedBefore = gmdate('Y-m-d H:i:s');
+
+        (new InPlaceTransformationExecutor(new Connection($this->pdo)))->execute($this->request($plan));
+        $row = $this->rows('SELECT started_at, completed_at FROM transformation_apply ORDER BY apply_id DESC LIMIT 1');
+        self::assertCount(1, $row);
+
+        $completedAfter = gmdate('Y-m-d H:i:s');
+        self::assertGreaterThanOrEqual($startedBefore, $row[0]['started_at']);
+        self::assertLessThanOrEqual($completedAfter, $row[0]['completed_at']);
+        self::assertLessThanOrEqual($row[0]['started_at'], $row[0]['completed_at']);
+    }
+
     public function testStringRecodeUsesExactBoundValuesDespiteColumnCollation(): void
     {
         $payload = "x');--";

@@ -198,7 +198,14 @@ final class TransformationAuditMigratorTest extends TestCase
         $dataset = new DatasetBinding(self::DATASET_ID, 'Survey', null, 'data_survey');
 
         $pdo->beginTransaction();
-        $applyId = (new TransformationAuditWriter($pdo))->succeed($request, $dataset, 'sqlite', null, null);
+        $applyId = (new TransformationAuditWriter($pdo))->succeed(
+            $request,
+            $dataset,
+            'sqlite',
+            null,
+            null,
+            '2026-08-17 12:00:00',
+        );
         $pdo->commit();
 
         $row = $this->query($pdo, 'SELECT * FROM transformation_apply')->fetch(PDO::FETCH_ASSOC);
@@ -219,8 +226,9 @@ final class TransformationAuditMigratorTest extends TestCase
         self::assertNull($row['dolt_head_before']);
         self::assertNull($row['dolt_head_after']);
         self::assertSame(1, (int) $row['operation_count']);
-        self::assertIsString($row['started_at']);
+        self::assertSame('2026-08-17 12:00:00', $row['started_at']);
         self::assertIsString($row['completed_at']);
+        self::assertGreaterThanOrEqual($row['started_at'], $row['completed_at']);
         self::assertSame(1, (int) $this->query($pdo, 'SELECT COUNT(*) FROM transformation_apply')->fetchColumn());
     }
 
@@ -243,6 +251,7 @@ final class TransformationAuditMigratorTest extends TestCase
             'sqlite',
             null,
             null,
+            '2026-08-17 12:00:00',
         );
     }
 
@@ -265,6 +274,7 @@ final class TransformationAuditMigratorTest extends TestCase
             'sqlite',
             null,
             null,
+            '2026-08-17 12:00:00',
         );
         $pdo->commit();
 

@@ -34,6 +34,7 @@ final readonly class TransformationAuditWriter
         string $databaseProfile,
         ?DoltEvidence $before,
         ?DoltEvidence $after,
+        string $startedAt,
     ): string {
         if (!$this->pdo->inTransaction()) {
             throw new \LogicException('A successful transformation audit must be written inside the open apply transaction.');
@@ -44,11 +45,14 @@ final readonly class TransformationAuditWriter
         if ($dataset->datasetId !== $request->datasetId) {
             throw TransformationFailure::at('invalid_dataset_id', '$.dataset_id', 'Apply request and target binding identify different datasets.');
         }
+        if (!self::isTimestamp($startedAt)) {
+            throw new \InvalidArgumentException('The transformation audit started_at must be a UTC "Y-m-d H:i:s" timestamp.');
+        }
 
         $this->assertDatasetIdentity($dataset);
         [$branch, $headBefore, $headAfter] = $this->doltFields($request, $databaseProfile, $before, $after);
         $applyId = self::uuidV4();
-        $timestamp = gmdate('Y-m-d H:i:s');
+        $completedAt = gmdate('Y-m-d H:i:s');
         $contract = $request->plan->contract === PlanContract::V01
             ? 'openstatspec-in-place-transformation-v0.1'
             : 'openstatspec-in-place-transformation-v0.2';
@@ -77,8 +81,8 @@ SQL, 'The transformation audit insert could not be prepared.');
             $headBefore,
             $headAfter,
             count($request->plan->operations),
-            $timestamp,
-            $timestamp,
+            $startedAt,
+            $completedAt,
         ], 'The transformation audit insert could not be executed.');
 
         return $applyId;
@@ -142,5 +146,11 @@ SQL, 'The transformation audit insert could not be prepared.');
         $bytes[8] = chr((ord($bytes[8]) & 0x3f) | 0x80);
         $hex = bin2hex($bytes);
         return substr($hex, 0, 8) . '-' . substr($hex, 8, 4) . '-' . substr($hex, 12, 4) . '-' . substr($hex, 16, 4) . '-' . substr($hex, 20);
+    }
+
+    private static function isTimestamp(string $value): bool
+    {
+        $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', $value, new \DateTimeZone('UTC'));
+        return $parsed !== false && $parsed->format('Y-m-d H:i:s') === $value;
     }
 }

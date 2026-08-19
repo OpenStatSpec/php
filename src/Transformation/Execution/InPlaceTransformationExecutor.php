@@ -48,6 +48,7 @@ final readonly class InPlaceTransformationExecutor
             );
         }
 
+        $startedAt = gmdate('Y-m-d H:i:s');
         $bound = $this->preflight->bind($request);
         $guard = $this->doltGuard();
         $doltBefore = $guard?->beforeExecution($request);
@@ -67,6 +68,7 @@ final readonly class InPlaceTransformationExecutor
                 $this->connection->profileName,
                 $doltBefore,
                 $doltAfter,
+                $startedAt,
             );
             CheckedPdo::commit($this->connection->pdo);
             $transactionStarted = false;
