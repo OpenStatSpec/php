@@ -11,6 +11,7 @@ use OpenStatSpec\Frontend\Spss\SpssCompiler;
 use OpenStatSpec\Sql\CatalogOwnership;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
+use OpenStatSpec\Tests\Support\OfficialFixturePdoAccessors;
 use OpenStatSpec\Tests\Support\SpecificationManifest;
 use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
 use OpenStatSpec\Transformation\Diagnostic\TransformationFailure;
@@ -26,6 +27,8 @@ use RuntimeException;
 
 final class OfficialInPlaceTransformation01Test extends TestCase
 {
+    use OfficialFixturePdoAccessors;
+
     private const DATASET_ID = '66666666-6666-4666-8666-666666666666';
 
     /** @var list<array{admin: PDO, database: string}> */
@@ -647,32 +650,4 @@ final class OfficialInPlaceTransformation01Test extends TestCase
         return [(string) $row['contract_id'], (string) $row['plan_hash'], (int) $row['operation_count']];
     }
 
-    /** @param list<mixed> $parameters */
-    private function scalar(PDO $pdo, string $sql, array $parameters = []): mixed
-    {
-        $statement = $pdo->prepare($sql);
-        self::assertInstanceOf(PDOStatement::class, $statement);
-        $statement->execute($parameters);
-        return $statement->fetchColumn();
-    }
-
-    /** @return list<mixed> */
-    private function column(PDO $pdo, string $sql): array
-    {
-        $statement = $pdo->query($sql);
-        self::assertInstanceOf(PDOStatement::class, $statement);
-        return array_values($statement->fetchAll(PDO::FETCH_COLUMN));
-    }
-
-    /**
-     * @param list<mixed> $parameters
-     * @return list<array<string, mixed>>
-     */
-    private function rows(PDO $pdo, string $sql, array $parameters = []): array
-    {
-        $statement = $pdo->prepare($sql);
-        self::assertInstanceOf(PDOStatement::class, $statement);
-        $statement->execute($parameters);
-        return array_values($statement->fetchAll(PDO::FETCH_ASSOC));
-    }
 }

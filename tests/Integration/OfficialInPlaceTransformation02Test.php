@@ -7,6 +7,7 @@ namespace OpenStatSpec\Tests\Integration;
 use OpenStatSpec\Sql\CatalogOwnership;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
+use OpenStatSpec\Tests\Support\OfficialFixturePdoAccessors;
 use OpenStatSpec\Tests\Support\SpecificationManifest;
 use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
 use OpenStatSpec\Transformation\Diagnostic\TransformationFailure;
@@ -23,6 +24,8 @@ use RuntimeException;
 
 final class OfficialInPlaceTransformation02Test extends TestCase
 {
+    use OfficialFixturePdoAccessors;
+
     private const CREATE_DATASET_ID = '22222222-2222-4222-8222-222222222222';
     private const INEQUALITY_DATASET_ID = '44444444-4444-4444-8444-444444444444';
     private const ROLLBACK_DATASET_ID = '55555555-5555-4555-8555-555555555555';
@@ -1161,38 +1164,5 @@ final class OfficialInPlaceTransformation02Test extends TestCase
     private function scalarCount(PDO $pdo, string $sql, array $parameters): int
     {
         return (int) $this->scalar($pdo, $sql, $parameters);
-    }
-
-    /** @param list<mixed> $parameters */
-    private function scalar(PDO $pdo, string $sql, array $parameters): mixed
-    {
-        $statement = $pdo->prepare($sql);
-        self::assertInstanceOf(PDOStatement::class, $statement);
-        $statement->execute($parameters);
-        return $statement->fetchColumn();
-    }
-
-    /**
-     * @param list<mixed> $parameters
-     * @return list<mixed>
-     */
-    private function column(PDO $pdo, string $sql, array $parameters = []): array
-    {
-        $statement = $pdo->prepare($sql);
-        self::assertInstanceOf(PDOStatement::class, $statement);
-        $statement->execute($parameters);
-        return array_values($statement->fetchAll(PDO::FETCH_COLUMN));
-    }
-
-    /**
-     * @param list<mixed> $parameters
-     * @return list<array<string, mixed>>
-     */
-    private function rows(PDO $pdo, string $sql, array $parameters): array
-    {
-        $statement = $pdo->prepare($sql);
-        self::assertInstanceOf(PDOStatement::class, $statement);
-        $statement->execute($parameters);
-        return array_values($statement->fetchAll(PDO::FETCH_ASSOC));
     }
 }
