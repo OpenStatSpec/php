@@ -136,11 +136,11 @@ final readonly class TransformationAuditMigrator
         $columns = implode(', ', self::columns());
 
         // Drop any orphan archive table from a previous failed migration so
-        // the RENAME TABLE below has a free target name. If the archive
-        // exists because the prior migrate reached the RENAME step but
-        // crashed before the DROP, the next migrate() detects the v0.4
-        // schema (via mySqlAcceptsVersion02()) and short-circuits without
-        // rebuilding; this DROP simply reclaims the orphan name.
+        // the RENAME TABLE below has a free target name. This fires only
+        // when migrateMySqlFamilyByRename() actually runs, i.e. when a
+        // previous attempt reached the RENAME step but crashed before
+        // its DROP. A clean v0.4 install takes the short-circuit branch in
+        // migrateMySqlFamily() and never reaches this line.
         $this->pdo->exec('DROP TABLE IF EXISTS ' . $archive);
 
         $this->pdo->exec($this->createTableSql($staging, 'mysql'));
