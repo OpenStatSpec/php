@@ -299,6 +299,14 @@ final readonly class InPlaceOperationExecutor
         }
     }
 
+    /**
+     * Renders a preflighted typed value as the parameter token fed into
+     * the prepared UPDATE/INSERT statement. Binary64Value is rendered as
+     * its locale-independent decimal string so the bound binary64 round
+     * trips exactly through the engine column; StringValue is rendered
+     * verbatim. The resulting string is then bound as a PDO parameter,
+     * which the driver converts to the underlying column type.
+     */
     private function value(TypedValue $value): string
     {
         return match (true) {
