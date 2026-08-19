@@ -131,6 +131,14 @@ final readonly class InPlaceOperationExecutor
 
     private function createNumericTarget(DatasetBinding $dataset, VariableBinding $target): void
     {
+        if (!$this->connection->profile->ddlAtomic()) {
+            throw TransformationFailure::at(
+                'schema_change_not_atomic',
+                '$.operations',
+                'Numeric target creation reached the executor on a non-atomic profile; preflight should have rejected the plan.',
+            );
+        }
+
         CheckedPdo::exec(
             $this->connection->pdo,
             'ALTER TABLE ' . $dataset->qualifiedTable($this->connection->profile)
