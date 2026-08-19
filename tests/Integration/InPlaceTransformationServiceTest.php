@@ -324,6 +324,66 @@ final class InPlaceTransformationServiceTest extends TestCase
         }
     }
 
+    /** @param list<string> $expectedVersionFamilies */
+    #[DataProvider('physicalCaseOrderServices')]
+    public function testMySqlFamilyRejectsCaseFoldedTableAliasSharedWithAnotherDataset(
+        string $expectedProfile,
+        ?string $environmentPrefix,
+        string $driver,
+        array $expectedVersionFamilies,
+        ?string $expectedVersionEnvironment,
+    ): void {
+        unset($expectedVersionFamilies, $expectedVersionEnvironment);
+        $pdo = $this->servicePdo($expectedProfile, $environmentPrefix, $driver);
+        $connection = new Connection($pdo);
+        $lowerCaseTableNames = (int) $this->scalar($pdo, 'SELECT @@lower_case_table_names', []);
+        if ($lowerCaseTableNames === 0) {
+            self::markTestSkipped('MySQL-family lower_case_table_names=0 treats table names case-sensitively.');
+        }
+        $fixture = $this->installFixture($pdo, $connection);
+
+        try {
+            $quotedTable = $this->qualifiedTable($connection, $fixture['table_name']);
+            $aliasedTable = strtoupper($fixture['table_name']) === $fixture['table_name']
+                ? strtolower($fixture['table_name'])
+                : strtoupper($fixture['table_name']);
+            $pdo->prepare(
+                'INSERT INTO dataset (dataset_id, spec_version, source_format, physical_table_schema, physical_table_name, dataset_name, source_case_count, imported_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            )->execute([
+                '99999999-9999-4999-8999-999999999999',
+                '1.0',
+                'fixture',
+                null,
+                $aliasedTable,
+                'Case-folded alias',
+                0,
+                '2026-08-17 00:00:00',
+            ]);
+            $auditBefore = (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM transformation_apply', []);
+            self::assertNotSame($fixture['table_name'], $aliasedTable);
+
+            try {
+                (new InPlaceTransformationExecutor($connection))->execute(
+                    $this->applyRequest($this->existingTargetPlan()),
+                );
+                self::fail('Two case-folded MySQL-family datasets sharing one physical table were accepted.');
+            } catch (TransformationFailure $failure) {
+                self::assertSame('invalid_catalog', $failure->diagnosticCode());
+            }
+
+            self::assertSame($auditBefore, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM transformation_apply', []));
+            self::assertFalse($pdo->inTransaction());
+            self::assertNotSame(
+                0,
+                (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM information_schema.tables '
+                    . 'WHERE table_schema = DATABASE() AND table_name = ?', [$fixture['table_name']]),
+                $quotedTable . ' wide table missing before apply.',
+            );
+        } finally {
+            $this->purgeFixture($pdo, $connection, $fixture);
+        }
+    }
+
     public function testDoltRequiresExpectedContextBeforeMutation(): void
     {
         $pdo = $this->servicePdo('dolt', 'OPENSTATSPEC_DOLT', 'mysql');

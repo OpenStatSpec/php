@@ -513,7 +513,26 @@ final readonly class PlanPreflight
 
     private function canonicalPhysicalTable(string $table): string
     {
-        return $this->connection->profileName === 'sqlite' ? strtolower($table) : $table;
+        if ($this->connection->profileName === 'sqlite') {
+            return strtolower($table);
+        }
+        if (in_array($this->connection->profileName, ['mysql', 'mariadb', 'dolt'], true)
+            && $this->mysqlFamilyLowercasesTableNames()
+        ) {
+            return strtolower($table);
+        }
+        return $table;
+    }
+
+    private function mysqlFamilyLowercasesTableNames(): bool
+    {
+        try {
+            $statement = $this->statement('SELECT @@lower_case_table_names');
+            $value = $statement->fetchColumn();
+        } catch (PDOException) {
+            return false;
+        }
+        return is_numeric($value) && (int) $value !== 0;
     }
 
     /** @return array<string, VariableBinding> */
