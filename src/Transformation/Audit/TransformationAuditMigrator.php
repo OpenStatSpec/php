@@ -197,6 +197,10 @@ final readonly class TransformationAuditMigrator
             return "CONSTRAINT chk_transformation_apply_source_hash CHECK (source_hash ~ '^[0-9a-f]{64}$'), "
                 . "CONSTRAINT chk_transformation_apply_plan_hash CHECK (plan_hash ~ '^[0-9a-f]{64}$')";
         }
+        // MySQL/MariaDB: CAST(... AS BINARY) is the binary collation cast; the BINARY
+        // keyword as a type modifier is deprecated in MySQL 8.0.17+ in favor of
+        // COLLATE ... USING BINARY, but the cast form remains supported on every
+        // release line the adapter claims and reads more obviously to reviewers.
         return "CONSTRAINT chk_transformation_apply_source_hash CHECK (CHAR_LENGTH(source_hash) = 64 AND source_hash REGEXP '^[0-9a-f]{64}$' AND CAST(source_hash AS BINARY) = CAST(LOWER(source_hash) AS BINARY)), "
             . "CONSTRAINT chk_transformation_apply_plan_hash CHECK (CHAR_LENGTH(plan_hash) = 64 AND plan_hash REGEXP '^[0-9a-f]{64}$' AND CAST(plan_hash AS BINARY) = CAST(LOWER(plan_hash) AS BINARY))";
     }
