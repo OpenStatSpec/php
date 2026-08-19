@@ -21,8 +21,8 @@ final readonly class InPlaceApplyRequest
         if ($inputAlias !== $plan->inputAlias) {
             throw TransformationFailure::at('unknown_input_alias', '$.input_alias', 'Apply binding does not match the plan alias.');
         }
-        if (preg_match('/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/D', $datasetId) !== 1) {
-            throw TransformationFailure::at('invalid_dataset_id', '$.dataset_id', 'Apply dataset identity must be a canonical lowercase UUID.');
+        if (preg_match('/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89abcd][0-9a-f]{3}-[0-9a-f]{12}\z/D', $datasetId) !== 1) {
+            throw TransformationFailure::at('invalid_dataset_id', '$.dataset_id', 'Apply dataset identity must be a canonical lowercase UUID with an RFC 4122 (8/9/a/b) or Microsoft (c/d) variant.');
         }
         if (preg_match('/\A[0-9a-f]{64}\z/D', $sourceHash) !== 1) {
             throw TransformationFailure::at('invalid_source_hash', '$.source_hash', 'Apply source hash must be a lowercase SHA-256 value.');
