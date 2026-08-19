@@ -361,12 +361,14 @@ final class OfficialInPlaceTransformation02Test extends TestCase
             'SELECT variable_label FROM variable WHERE dataset_id = ? AND source_name = ?',
             [self::ROLLBACK_DATASET_ID, 'target'],
         ));
-        $reader = new class ($pdo, $connection, $table, $context['branch'], $context['head']) implements DoltEvidenceReader {
+        $concurrentPdo = $this->doltConcurrentSession($pdo, $connection);
+        $reader = new class ($pdo, $concurrentPdo, $connection, $table, $context['branch'], $context['head']) implements DoltEvidenceReader {
             public int $reads = 0;
             public bool $mutationObserved = false;
 
             public function __construct(
-                private readonly PDO $pdo,
+                private readonly PDO $executorPdo,
+                private readonly PDO $concurrentPdo,
                 private readonly Connection $connection,
                 private readonly string $table,
                 private readonly string $branch,
@@ -378,15 +380,24 @@ final class OfficialInPlaceTransformation02Test extends TestCase
                 if (++$this->reads === 1) {
                     return new DoltEvidence($this->branch, $this->head, []);
                 }
-                $statement = $this->pdo->query(
+                // The second PDO is a real concurrent session: make a DOLT_COMMIT
+                // that does not touch the executor's target rows but moves HEAD,
+                // so the executor must fail closed on dolt_context_changed.
+                $commit = $this->concurrentPdo->prepare('CALL DOLT_COMMIT(?, ?)');
+                if ($commit instanceof PDOStatement) {
+                    $commit->execute(['-Am', 'Concurrent commit detected by executor guard']);
+                }
+                $head = $this->concurrentPdo->query("SELECT dolt_hashof('HEAD')");
+                $newHead = $head instanceof PDOStatement ? (string) $head->fetchColumn() : $this->head;
+                $statement = $this->executorPdo->query(
                     'SELECT ' . $this->connection->profile->quoteIdentifier('target')
                     . ' FROM ' . $this->connection->profile->quoteIdentifier($this->table)
-                    . ' WHERE ' . $this->connection->profile->quoteIdentifier('__case_ordinal') . ' = 1',
+                    . ' WHERE ' . $this->connection->profile->quoteIdentifier('__case_ordinal') . ' ' . '= 1',
                 );
                 $this->mutationObserved = $statement instanceof PDOStatement
                     && (float) $statement->fetchColumn() === 1.0;
 
-                return new DoltEvidence($this->branch, 'concurrent-commit', []);
+                return new DoltEvidence($this->branch, $newHead, []);
             }
         };
 
@@ -420,6 +431,39 @@ final class OfficialInPlaceTransformation02Test extends TestCase
             'SELECT COUNT(*) FROM transformation_apply',
             [],
         ));
+    }
+
+    /**
+     * Opens a second PDO against the same Dolt database so the concurrent-commit
+     * guard test can issue a real DOLT_COMMIT from an independent session
+     * instead of faking the post-mutation evidence. The returned PDO is
+     * tracked so tearDown() can close it before the admin drops the database.
+     */
+    private function doltConcurrentSession(PDO $primaryPdo, Connection $primaryConnection): PDO
+    {
+        $statement = $primaryPdo->query('SELECT DATABASE()');
+        $database = $statement instanceof PDOStatement ? (string) $statement->fetchColumn() : '';
+        self::assertNotSame('', $database, 'The primary Dolt session must be connected to a database.');
+        $prefix = match ($primaryConnection->profileName) {
+            'dolt' => 'OPENSTATSPEC_DOLT',
+            'mysql' => 'OPENSTATSPEC_MYSQL',
+            'mariadb' => 'OPENSTATSPEC_MARIADB',
+            default => throw new RuntimeException('Concurrent session only supports MySQL-family profiles.'),
+        };
+        $baseDsn = getenv($prefix . '_DSN');
+        if (!is_string($baseDsn) || $baseDsn === '') {
+            self::markTestSkipped($prefix . '_DSN is not configured.');
+        }
+        $user = getenv($prefix . '_USER');
+        $password = getenv($prefix . '_PASSWORD');
+        $options = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_STRINGIFY_FETCHES => false];
+        $concurrent = new PDO(
+            $this->dsnForDatabase($baseDsn, $database),
+            is_string($user) ? $user : null,
+            is_string($password) ? $password : null,
+            $options,
+        );
+        return $concurrent;
     }
 
     /** @param array<string, mixed> $case */
