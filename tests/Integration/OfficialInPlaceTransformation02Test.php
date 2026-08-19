@@ -392,7 +392,7 @@ final class OfficialInPlaceTransformation02Test extends TestCase
                 $statement = $this->executorPdo->query(
                     'SELECT ' . $this->connection->profile->quoteIdentifier('target')
                     . ' FROM ' . $this->connection->profile->quoteIdentifier($this->table)
-                    . ' WHERE ' . $this->connection->profile->quoteIdentifier('__case_ordinal') . ' ' . '= 1',
+                    . ' WHERE ' . $this->connection->profile->quoteIdentifier('__case_ordinal') . ' = 1',
                 );
                 $this->mutationObserved = $statement instanceof PDOStatement
                     && (float) $statement->fetchColumn() === 1.0;
@@ -436,8 +436,10 @@ final class OfficialInPlaceTransformation02Test extends TestCase
     /**
      * Opens a second PDO against the same Dolt database so the concurrent-commit
      * guard test can issue a real DOLT_COMMIT from an independent session
-     * instead of faking the post-mutation evidence. The returned PDO is
-     * tracked so tearDown() can close it before the admin drops the database.
+     * instead of faking the post-mutation evidence. The PDO is kept alive by
+     * the anonymous reader closure that captures it; it is released (and
+     * therefore disconnected) when the reader goes out of scope after the
+     * executor throws.
      */
     private function doltConcurrentSession(PDO $primaryPdo, Connection $primaryConnection): PDO
     {
