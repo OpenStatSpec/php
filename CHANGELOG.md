@@ -17,6 +17,11 @@
 - SQLite and PostgreSQL may create numeric targets atomically. MySQL, MariaDB,
   and Dolt require targets to be pre-provisioned and catalogued. Dolt commits
   remain caller-owned.
+- Added a new runtime dependency on `brick/math ^0.19` for exact
+  decimal-to-binary64 conversion in the SPSS frontend. The dependency is
+  pinned in `composer.lock`; do not regenerate `composer.lock` without
+  re-running the full test matrix because PHP-native BCMath lacks the
+  bit-length and power-of-two helpers required by round-to-even rounding.
 
 ### Removed
 
