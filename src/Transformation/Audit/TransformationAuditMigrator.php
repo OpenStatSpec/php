@@ -105,24 +105,45 @@ final readonly class TransformationAuditMigrator
     {
         if (!$this->tableExists('mysql')) {
             $this->pdo->exec($this->createTableSql(self::TABLE, 'mysql'));
+        } elseif (!$this->mySqlAcceptsVersion02()) {
+            $this->assertReadableAuditTable();
+            $this->migrateMySqlFamilyByRename();
         } else {
             $this->assertReadableAuditTable();
-            $checks = $this->mySqlContractChecks();
-            $current = array_filter($checks, $this->checkIsCurrent(...));
-            if ($current === []) {
-                $this->pdo->exec(
-                    'ALTER TABLE ' . self::TABLE . ' ADD CONSTRAINT chk_transformation_apply_contract_v04 '
-                    . $this->contractCheck(),
-                );
-            }
-            if (count($current) !== count($checks)) {
-                $dropSyntax = $this->isMariaDb() ? ' DROP CONSTRAINT ' : ' DROP CHECK ';
-                foreach (array_diff_key($checks, $current) as $constraint => $_definition) {
-                    $this->pdo->exec('ALTER TABLE ' . self::TABLE . $dropSyntax . $this->quoteMySql($constraint));
-                }
-            }
         }
         $this->recordMigration();
+    }
+
+    /**
+     * Rebuild the audit table alongside its current name and use a single
+     * multi-table RENAME to swap the new version into place atomically.
+     *
+     * MySQL/MariaDB implicitly commit DDL, so the in-place ALTER TABLE
+     * DROP CHECK / ADD CONSTRAINT pair cannot be wrapped in a transaction
+     * and leaves the audit table in a mixed state if the second statement
+     * fails after the first succeeds. RENAME TABLE with two operands is
+     * atomic: every concurrent reader sees exactly one of the old or the
+     * new schema, never an inconsistent mixture.
+     *
+     * If any step before the atomic swap fails, the original table keeps
+     * its old schema and a subsequent migrate() call retries from a clean
+     * state.
+     */
+    private function migrateMySqlFamilyByRename(): void
+    {
+        $staging = self::TABLE . '_v04_pending';
+        $archive = self::TABLE . '_pre_v04_archive';
+        $columns = implode(', ', self::columns());
+
+        $this->pdo->exec($this->createTableSql($staging, 'mysql'));
+        $this->pdo->exec(
+            'INSERT INTO ' . $staging . ' (' . $columns . ') '
+            . 'SELECT ' . $columns . ' FROM ' . self::TABLE,
+        );
+        $this->pdo->exec(
+            'RENAME TABLE ' . self::TABLE . ' TO ' . $archive . ', ' . $staging . ' TO ' . self::TABLE,
+        );
+        $this->pdo->exec('DROP TABLE ' . $archive);
     }
 
     private function createTableSql(string $table, string $driver): string
@@ -232,6 +253,18 @@ SQL);
         return $checks;
     }
 
+    private function mySqlAcceptsVersion02(): bool
+    {
+        foreach ($this->mySqlContractChecks() as $definition) {
+            if (str_contains($definition, 'openstatspec-in-place-transformation-v0.1')
+                && str_contains($definition, 'openstatspec-in-place-transformation-v0.2')
+            ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** @param array<string, string> $checks */
     private function checksAreCurrent(array $checks): bool
     {
@@ -246,12 +279,6 @@ SQL);
             }
         }
         return true;
-    }
-
-    private function checkIsCurrent(string $definition): bool
-    {
-        return str_contains($definition, 'openstatspec-in-place-transformation-v0.1')
-            && str_contains($definition, 'openstatspec-in-place-transformation-v0.2');
     }
 
     private function recordMigration(): void
@@ -285,21 +312,9 @@ SQL);
         return $statement->fetchColumn() !== false;
     }
 
-    private function isMariaDb(): bool
-    {
-        $statement = $this->pdo->query('SELECT VERSION()');
-        $version = $statement === false ? false : $statement->fetchColumn();
-        return is_string($version) && str_contains(strtolower($version), 'mariadb');
-    }
-
     private function quotePostgreSql(string $identifier): string
     {
         return '"' . str_replace('"', '""', $identifier) . '"';
-    }
-
-    private function quoteMySql(string $identifier): string
-    {
-        return '`' . str_replace('`', '``', $identifier) . '`';
     }
 
     /** @return list<string> */
