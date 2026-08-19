@@ -6,9 +6,12 @@ namespace OpenStatSpec\Sql;
 
 use OpenStatSpec\Core\ServerVersionPolicy;
 use PDO;
+use PDOException;
 
 class MySqlProfile extends AbstractPdoSqlProfile
 {
+    private ?bool $lowerCaseTableNames = null;
+
     public function driverName(): string
     {
         return 'mysql';
@@ -104,5 +107,24 @@ class MySqlProfile extends AbstractPdoSqlProfile
         // Reserve enough SQL/identifier overhead for the maximum column count
         // and halve the remainder for worst-case emulated-prepare escaping.
         return intdiv(max(0, (int) $packet - 131_072), 2);
+    }
+
+    /**
+     * Reports whether the server treats physical table names case-insensitively
+     * (lower_case_table_names=1 or =2). Cached per profile instance because the
+     * setting is server-static for the lifetime of the connection.
+     */
+    public function lowerCaseTableNames(PDO $pdo): bool
+    {
+        if ($this->lowerCaseTableNames !== null) {
+            return $this->lowerCaseTableNames;
+        }
+        try {
+            $statement = $pdo->query('SELECT @@lower_case_table_names');
+            $value = $statement === false ? false : $statement->fetchColumn();
+        } catch (PDOException) {
+            $value = false;
+        }
+        return $this->lowerCaseTableNames = is_numeric($value) && (int) $value !== 0;
     }
 }
