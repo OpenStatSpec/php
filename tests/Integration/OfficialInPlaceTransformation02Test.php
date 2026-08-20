@@ -365,6 +365,7 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         $reader = new class ($pdo, $concurrentPdo, $connection, $table, self::ROLLBACK_DATASET_ID, $context['branch'], $context['head']) implements DoltEvidenceReader {
             public int $reads = 0;
             public bool $mutationObserved = false;
+            public ?string $newHead = null;
 
             public function __construct(
                 private readonly PDO $executorPdo,
@@ -395,7 +396,7 @@ final class OfficialInPlaceTransformation02Test extends TestCase
                     $commit->execute(['-Am', 'Concurrent commit detected by executor guard']);
                 }
                 $head = $this->concurrentPdo->query("SELECT dolt_hashof('HEAD')");
-                $newHead = $head instanceof PDOStatement ? (string) $head->fetchColumn() : $this->head;
+                $this->newHead = $head instanceof PDOStatement ? (string) $head->fetchColumn() : $this->head;
                 $statement = $this->executorPdo->query(
                     'SELECT ' . $this->connection->profile->quoteIdentifier('target')
                     . ' FROM ' . $this->connection->profile->quoteIdentifier($this->table)
@@ -404,7 +405,7 @@ final class OfficialInPlaceTransformation02Test extends TestCase
                 $this->mutationObserved = $statement instanceof PDOStatement
                     && (float) $statement->fetchColumn() === 1.0;
 
-                return new DoltEvidence($this->branch, $newHead, []);
+                return new DoltEvidence($this->branch, $this->newHead ?? $this->head, []);
             }
         };
 
@@ -435,6 +436,9 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         self::assertIsArray($afterRepository);
         self::assertSame($beforeRepository['branch'], $afterRepository['branch']);
         self::assertNotSame($beforeRepository['head'], $afterRepository['head'], 'The independent concurrent commit must remain in Dolt history.');
+        self::assertNotNull($reader->newHead);
+        self::assertSame($reader->newHead, $afterRepository['head']);
+        self::assertContains($reader->newHead, $afterRepository['history']);
         self::assertSame($case['after_failure']['rows'], $this->numericRows($pdo, $connection, $table, ['target']));
         self::assertSame($case['after_failure']['target_metadata']['variable_label'], $this->scalar(
             $pdo,
