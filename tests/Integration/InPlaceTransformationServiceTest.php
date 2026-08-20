@@ -511,6 +511,7 @@ final class InPlaceTransformationServiceTest extends TestCase
         $fixture = $this->installFixture($pdo, $connection);
         $constraint = 'task9_nontransactional_wide_' . $expectedProfile;
         $quotedConstraint = $connection->profile->quoteIdentifier($constraint);
+        $constraintInstalled = false;
 
         try {
             $pdo->exec(
@@ -520,6 +521,7 @@ final class InPlaceTransformationServiceTest extends TestCase
                 'ALTER TABLE transformation_apply ADD CONSTRAINT ' . $quotedConstraint
                 . " CHECK (actor <> 'integration-test')",
             );
+            $constraintInstalled = true;
             $before = $this->applyFailureSnapshot($pdo, $connection, $fixture);
 
             try {
@@ -534,7 +536,9 @@ final class InPlaceTransformationServiceTest extends TestCase
             self::assertFalse($pdo->inTransaction());
             self::assertSame($before, $this->applyFailureSnapshot($pdo, $connection, $fixture));
         } finally {
-            $pdo->exec('ALTER TABLE transformation_apply DROP CONSTRAINT ' . $quotedConstraint);
+            if ($constraintInstalled) {
+                $pdo->exec('ALTER TABLE transformation_apply DROP CONSTRAINT ' . $quotedConstraint);
+            }
             $this->purgeFixture($pdo, $connection, $fixture);
         }
     }

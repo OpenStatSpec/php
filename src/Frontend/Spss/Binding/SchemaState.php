@@ -67,6 +67,6 @@ final class SchemaState
 
     private function key(string $name): string
     {
-        return strtolower($name);
+        return mb_strtolower($name, 'UTF-8');
     }
 }

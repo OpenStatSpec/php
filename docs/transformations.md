@@ -27,6 +27,7 @@ existing dataset and mutates its registered wide table.
 use OpenStatSpec\Frontend\Spss\Request\SpssFrontendRequest;
 use OpenStatSpec\Frontend\Spss\SpssCompiler;
 use OpenStatSpec\Sql\Connection;
+use OpenStatSpec\Spss\SpssAdapter;
 use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
 

@@ -12,14 +12,18 @@ use OpenStatSpec\Transformation\Plan\TargetMode;
 
 final readonly class RecodeOperation implements Operation
 {
-    /** @param non-empty-list<RecodeRule> $rules */
+    /** @param list<RecodeRule> $rules */
     public function __construct(
         public string $source,
         public string $target,
         public TargetMode $targetMode,
         public array $rules,
         public Result $unmatched,
-    ) {}
+    ) {
+        if ($rules === []) {
+            throw new \InvalidArgumentException('A recode operation requires at least one rule.');
+        }
+    }
 
     /** @return array<string, mixed> */
     public function canonicalArray(): array

@@ -3,12 +3,12 @@
 ## Implementation
 
 - Added `InPlaceApplyRequest` with fail-fast alias, canonical UUID, lowercase SHA-256, non-empty actor, and paired Dolt-context validation.
-- Added explicit schema-v4 `TransformationAuditMigrator` for SQLite, PostgreSQL, MySQL, MariaDB, and Dolt. SQLite rebuilds the one logical audit table transactionally; server profiles replace only the contract check before apply.
+- Added explicit schema-v4 `TransformationAuditMigrator` for SQLite, PostgreSQL, MySQL, MariaDB, and Dolt. SQLite and MySQL-family profiles rebuild the one logical audit table through a staging relation; SQLite does so transactionally, while MySQL-family profiles use an atomic multi-table `RENAME TABLE` swap before dropping the archive.
 - Added success-only `TransformationAuditWriter`, which requires the caller's open apply transaction and stores canonical plan identity, source identity, actor, target identity, operation count, timestamps, and nullable Dolt evidence.
 - Wired `SpssAdapter::migrateCatalog()` to run the audit migration after normative table creation and before marking schema version 4.
 - Preserved official 0.1 audit rows while allowing both 0.1 and 0.2 binding contracts. No dataset/data table, snapshot, staging, rollback, or recovery relation was added.
 - MySQL-family hashes now use a MySQL 8.4/MariaDB/Dolt-compatible exact lowercase-hex check without `REGEXP BINARY`.
-- MySQL-family contract upgrades add the v0.1+v0.2 check before dropping older checks. A retry can recover an already check-less table, and an interrupted add-before-drop attempt retains the old check.
+- MySQL-family contract upgrades copy rows into a uniquely constrained staging table and atomically swap it into place with `RENAME TABLE`. Stale staging/archive relations are removed before retry, so an interrupted rebuild remains recoverable without manual cleanup.
 - Schema version 4 can be marked or accepted as ready only when the contiguous 1..4 migration history and readable compact audit relation both exist. Normative migration recording is private and limited to versions 1..3; the audit migrator alone records version 4.
 
 ## TDD evidence
@@ -34,7 +34,7 @@
 ## Self-review
 
 - SQLite v0.1 migration preserves the row and logical table name, verifies foreign keys before commit, leaves no `_v04` residue, and rolls back to the old table on copy failure.
-- PostgreSQL changes the old contract check in one native transaction; MySQL-family/Dolt DDL is explicit, add-before-drop, retryable, idempotent, and never invoked by the audit writer or inside an apply transaction.
+- PostgreSQL changes the old contract check in one native transaction; MySQL-family/Dolt DDL uses an explicit staging/copy/rename path, is retryable and idempotent, and is never invoked by the audit writer or inside an apply transaction.
 - The writer has no failure-row API and performs no migration, dataset copy, table copy, Dolt commit, branch operation, or recovery/version write.
 - Fresh catalogs record versions 1 through 4 exactly once; v3 ownership recognition remains backward compatible, while v4 marker recognition requires the compact audit relation.
 

@@ -45,7 +45,7 @@ final class TransformationPlan02Test extends TestCase
     #[DataProvider('cases')]
     public function testOfficialPlan02(array $case): void
     {
-        if (is_string($case['expected_error'])) {
+        if (is_string($case['expected_error'] ?? null)) {
             try {
                 (new PlanCodec())->fromArray($case['plan']);
                 self::fail('Expected ' . $case['expected_error']);

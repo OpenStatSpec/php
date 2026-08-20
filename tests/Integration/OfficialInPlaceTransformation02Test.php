@@ -490,7 +490,16 @@ final class OfficialInPlaceTransformation02Test extends TestCase
             $checkout = $concurrent->prepare('CALL DOLT_CHECKOUT(?)');
             if ($checkout instanceof PDOStatement) {
                 $checkout->execute([$branch]);
+                $result = $checkout->fetch(PDO::FETCH_ASSOC);
+                if (is_array($result) && array_key_exists('status', $result) && (int) $result['status'] !== 0) {
+                    throw new RuntimeException('DOLT_CHECKOUT failed: ' . (string) ($result['message'] ?? 'unknown error'));
+                }
             }
+        }
+        $confirmed = $concurrent->query('SELECT active_branch()');
+        $confirmedBranch = $confirmed instanceof PDOStatement ? (string) $confirmed->fetchColumn() : '';
+        if ($confirmedBranch !== $branch) {
+            throw new RuntimeException(sprintf('DOLT_CHECKOUT selected %s instead of %s.', $confirmedBranch, $branch));
         }
         return $concurrent;
     }

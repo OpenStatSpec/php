@@ -277,7 +277,7 @@ final class Binder
                 : $statement->sourceSpans[$index];
             $this->validateTargetName($targetName, $targetSpan);
             if ($targetMode === TargetMode::Create) {
-                $key = strtolower($targetName);
+                $key = mb_strtolower($targetName, 'UTF-8');
                 if ($schema->contains($targetName) || isset($seenTargets[$key])) {
                     $this->fail(
                         'target_already_exists',

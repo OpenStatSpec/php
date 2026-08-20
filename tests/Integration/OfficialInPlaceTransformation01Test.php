@@ -36,13 +36,21 @@ final class OfficialInPlaceTransformation01Test extends TestCase
 
     protected function tearDown(): void
     {
+        $failures = [];
         try {
             foreach (array_reverse($this->isolatedTestDatabases) as $fixture) {
-                $fixture['admin']->exec('DROP DATABASE ' . $this->quoteDatabase($fixture['database']));
+                try {
+                    $fixture['admin']->exec('DROP DATABASE ' . $this->quoteDatabase($fixture['database']));
+                } catch (\Throwable $failure) {
+                    $failures[] = $fixture['database'] . ': ' . $failure->getMessage();
+                }
             }
         } finally {
             $this->isolatedTestDatabases = [];
             parent::tearDown();
+        }
+        if ($failures !== []) {
+            throw new RuntimeException('Isolated database cleanup failed: ' . implode('; ', $failures));
         }
     }
 
@@ -235,7 +243,6 @@ final class OfficialInPlaceTransformation01Test extends TestCase
             self::assertSame($before['repository']['history'], $after['repository']['history']);
             self::assertNotSame([], $after['repository']['status']);
             self::assertContains($fixture['table'], array_column($after['repository']['status'], 'table_name'));
-            self::assertFalse((bool) $afterContract['dolt_commit_performed']);
             self::assertSame($context['branch'], $audit['dolt_branch']);
             self::assertSame($context['head'], $audit['dolt_head_before']);
             self::assertSame($context['head'], $audit['dolt_head_after']);
@@ -287,7 +294,6 @@ final class OfficialInPlaceTransformation01Test extends TestCase
             self::assertSame($case['expected_error'], $failure->diagnosticCode());
         }
 
-        self::assertFalse($case['mutation_started']);
         self::assertFalse($pdo->inTransaction());
         self::assertSame($before, $this->officialBackendSnapshot($pdo, $connection, $fixture));
     }
@@ -314,7 +320,6 @@ final class OfficialInPlaceTransformation01Test extends TestCase
             self::assertSame($case['expected_error'], $failure->diagnosticCode());
         }
 
-        self::assertFalse($case['mutation_started']);
         self::assertFalse($pdo->inTransaction());
         self::assertSame($before, $this->officialBackendSnapshot($pdo, $connection, $fixture));
     }

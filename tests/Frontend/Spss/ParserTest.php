@@ -173,7 +173,7 @@ final class ParserTest extends TestCase
 
     public function testParsesAllComparisonOperandPermutations(): void
     {
-        $program = (new Parser())->parse('IF (a = b AND 1 < c AND 2 >= 1) target = -1.25e+2.');
+        $program = (new Parser())->parse('IF (a = b AND 1 < c AND 2 >= 1 AND c > 3) target = -1.25e+2.');
 
         $statement = $program->statements[0];
         self::assertInstanceOf(IfStatement::class, $statement);
@@ -181,12 +181,20 @@ final class ParserTest extends TestCase
         self::assertInstanceOf(BooleanPredicate::class, $predicate);
         $first = $predicate->operands[0];
         $second = $predicate->operands[1];
+        $third = $predicate->operands[2];
+        $fourth = $predicate->operands[3];
         self::assertInstanceOf(Comparison::class, $first);
         self::assertInstanceOf(Comparison::class, $second);
+        self::assertInstanceOf(Comparison::class, $third);
+        self::assertInstanceOf(Comparison::class, $fourth);
         self::assertInstanceOf(VariableOperand::class, $first->left);
         self::assertInstanceOf(VariableOperand::class, $first->right);
         self::assertInstanceOf(LiteralOperand::class, $second->left);
         self::assertInstanceOf(VariableOperand::class, $second->right);
+        self::assertInstanceOf(LiteralOperand::class, $third->left);
+        self::assertInstanceOf(LiteralOperand::class, $third->right);
+        self::assertInstanceOf(VariableOperand::class, $fourth->left);
+        self::assertInstanceOf(LiteralOperand::class, $fourth->right);
         self::assertInstanceOf(LiteralOperand::class, $statement->expression);
         self::assertSame('-1.25e+2', $statement->expression->token);
     }
