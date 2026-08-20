@@ -475,9 +475,9 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         $active = $concurrent->query('SELECT active_branch()');
         $activeBranch = $active instanceof PDOStatement ? (string) $active->fetchColumn() : '';
         if ($activeBranch !== $branch) {
-            $checkout = $concurrent->prepare('CALL DOLT_CHECKOUT(?, ?)');
+            $checkout = $concurrent->prepare('CALL DOLT_CHECKOUT(?)');
             if ($checkout instanceof PDOStatement) {
-                $checkout->execute(['-b', $branch]);
+                $checkout->execute([$branch]);
             }
         }
         return $concurrent;
