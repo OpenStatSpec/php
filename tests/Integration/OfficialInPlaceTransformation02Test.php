@@ -362,7 +362,7 @@ final class OfficialInPlaceTransformation02Test extends TestCase
             [self::ROLLBACK_DATASET_ID, 'target'],
         ));
         $concurrentPdo = $this->doltConcurrentSession($pdo, $connection);
-        $reader = new class ($pdo, $concurrentPdo, $connection, $table, $context['branch'], $context['head']) implements DoltEvidenceReader {
+        $reader = new class ($pdo, $concurrentPdo, $connection, $table, self::ROLLBACK_DATASET_ID, $context['branch'], $context['head']) implements DoltEvidenceReader {
             public int $reads = 0;
             public bool $mutationObserved = false;
 
@@ -371,6 +371,7 @@ final class OfficialInPlaceTransformation02Test extends TestCase
                 private readonly PDO $concurrentPdo,
                 private readonly Connection $connection,
                 private readonly string $table,
+                private readonly string $datasetId,
                 private readonly string $branch,
                 private readonly string $head,
             ) {}
@@ -383,6 +384,12 @@ final class OfficialInPlaceTransformation02Test extends TestCase
                 // The second PDO is a real concurrent session: make a DOLT_COMMIT
                 // that does not touch the executor's target rows but moves HEAD,
                 // so the executor must fail closed on dolt_context_changed.
+                $metadata = $this->concurrentPdo->prepare(
+                    'UPDATE dataset SET dataset_name = ? WHERE dataset_id = ?',
+                );
+                if ($metadata instanceof PDOStatement) {
+                    $metadata->execute(['Concurrent commit probe', $this->datasetId]);
+                }
                 $commit = $this->concurrentPdo->prepare('CALL DOLT_COMMIT(?, ?)');
                 if ($commit instanceof PDOStatement) {
                     $commit->execute(['-Am', 'Concurrent commit detected by executor guard']);
