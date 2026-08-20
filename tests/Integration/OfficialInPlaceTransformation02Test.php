@@ -426,7 +426,15 @@ final class OfficialInPlaceTransformation02Test extends TestCase
         self::assertTrue($case['mutation_started']);
         self::assertTrue($reader->mutationObserved);
         self::assertFalse($pdo->inTransaction());
-        self::assertSame($before, $this->snapshot($pdo, $connection, self::ROLLBACK_DATASET_ID, $table));
+        $after = $this->snapshot($pdo, $connection, self::ROLLBACK_DATASET_ID, $table);
+        $beforeRepository = $before['repository'];
+        $afterRepository = $after['repository'];
+        unset($before['repository'], $after['repository']);
+        self::assertSame($before, $after, 'The failed apply must roll back data, metadata, and audit state.');
+        self::assertIsArray($beforeRepository);
+        self::assertIsArray($afterRepository);
+        self::assertSame($beforeRepository['branch'], $afterRepository['branch']);
+        self::assertNotSame($beforeRepository['head'], $afterRepository['head'], 'The independent concurrent commit must remain in Dolt history.');
         self::assertSame($case['after_failure']['rows'], $this->numericRows($pdo, $connection, $table, ['target']));
         self::assertSame($case['after_failure']['target_metadata']['variable_label'], $this->scalar(
             $pdo,
