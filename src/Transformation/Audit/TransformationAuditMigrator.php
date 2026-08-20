@@ -142,6 +142,9 @@ final readonly class TransformationAuditMigrator
         // its DROP. A clean v0.4 install takes the short-circuit branch in
         // migrateMySqlFamily() and never reaches this line.
         $this->pdo->exec('DROP TABLE IF EXISTS ' . $archive);
+        // A failure after staging CREATE but before the swap can leave the
+        // pending table behind; remove it before rebuilding from the source.
+        $this->pdo->exec('DROP TABLE IF EXISTS ' . $staging);
 
         $this->pdo->exec($this->createTableSql($staging, 'mysql'));
         $this->pdo->exec(

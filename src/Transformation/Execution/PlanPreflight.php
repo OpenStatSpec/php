@@ -493,8 +493,11 @@ final readonly class PlanPreflight
         ) {
             return 'main';
         }
+        $profile = $this->connection->profile;
+        $foldMysqlFamily = $profile instanceof \OpenStatSpec\Sql\MySqlProfile
+            && $profile->lowerCaseTableNames($this->connection->pdo);
         if ($schema !== null) {
-            return $schema;
+            return $foldMysqlFamily ? strtolower($schema) : $schema;
         }
 
         $statement = $this->statement(
@@ -508,7 +511,7 @@ final readonly class PlanPreflight
             throw TransformationFailure::at('invalid_catalog', '$.dataset_id', 'The active physical schema is unavailable.');
         }
 
-        return $active;
+        return $foldMysqlFamily ? strtolower((string) $active) : (string) $active;
     }
 
     private function canonicalPhysicalTable(string $table): string
