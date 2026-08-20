@@ -134,6 +134,7 @@ final readonly class TransformationAuditMigrator
         $staging = self::TABLE . '_v04_pending';
         $archive = self::TABLE . '_pre_v04_archive';
         $columns = implode(', ', self::columns());
+        $constraintSuffix = '_v04_' . bin2hex(random_bytes(4));
 
         // Drop any orphan archive table from a previous failed migration so
         // the RENAME TABLE below has a free target name. This fires only
@@ -146,7 +147,7 @@ final readonly class TransformationAuditMigrator
         // pending table behind; remove it before rebuilding from the source.
         $this->pdo->exec('DROP TABLE IF EXISTS ' . $staging);
 
-        $this->pdo->exec($this->createTableSql($staging, 'mysql', '_v04_pending'));
+        $this->pdo->exec($this->createTableSql($staging, 'mysql', $constraintSuffix));
         $this->pdo->exec(
             'INSERT INTO ' . $staging . ' (' . $columns . ') '
             . 'SELECT ' . $columns . ' FROM ' . self::TABLE,
