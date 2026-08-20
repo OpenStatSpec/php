@@ -361,7 +361,7 @@ final class OfficialInPlaceTransformation02Test extends TestCase
             'SELECT variable_label FROM variable WHERE dataset_id = ? AND source_name = ?',
             [self::ROLLBACK_DATASET_ID, 'target'],
         ));
-        $concurrentPdo = $this->doltConcurrentSession($pdo, $connection);
+        $concurrentPdo = $this->doltConcurrentSession($pdo, $connection, $context['branch']);
         $reader = new class ($pdo, $concurrentPdo, $connection, $table, self::ROLLBACK_DATASET_ID, $context['branch'], $context['head']) implements DoltEvidenceReader {
             public int $reads = 0;
             public bool $mutationObserved = false;
@@ -448,7 +448,7 @@ final class OfficialInPlaceTransformation02Test extends TestCase
      * therefore disconnected) when the reader goes out of scope after the
      * executor throws.
      */
-    private function doltConcurrentSession(PDO $primaryPdo, Connection $primaryConnection): PDO
+    private function doltConcurrentSession(PDO $primaryPdo, Connection $primaryConnection, string $branch): PDO
     {
         $statement = $primaryPdo->query('SELECT DATABASE()');
         $database = $statement instanceof PDOStatement ? (string) $statement->fetchColumn() : '';
@@ -472,6 +472,14 @@ final class OfficialInPlaceTransformation02Test extends TestCase
             is_string($password) ? $password : null,
             $options,
         );
+        $active = $concurrent->query('SELECT active_branch()');
+        $activeBranch = $active instanceof PDOStatement ? (string) $active->fetchColumn() : '';
+        if ($activeBranch !== $branch) {
+            $checkout = $concurrent->prepare('CALL DOLT_CHECKOUT(?, ?)');
+            if ($checkout instanceof PDOStatement) {
+                $checkout->execute(['-b', $branch]);
+            }
+        }
         return $concurrent;
     }
 
