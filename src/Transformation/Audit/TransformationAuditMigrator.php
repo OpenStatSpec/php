@@ -146,7 +146,7 @@ final readonly class TransformationAuditMigrator
         // pending table behind; remove it before rebuilding from the source.
         $this->pdo->exec('DROP TABLE IF EXISTS ' . $staging);
 
-        $this->pdo->exec($this->createTableSql($staging, 'mysql'));
+        $this->pdo->exec($this->createTableSql($staging, 'mysql', '_v04_pending'));
         $this->pdo->exec(
             'INSERT INTO ' . $staging . ' (' . $columns . ') '
             . 'SELECT ' . $columns . ' FROM ' . self::TABLE,
@@ -157,10 +157,11 @@ final readonly class TransformationAuditMigrator
         $this->pdo->exec('DROP TABLE ' . $archive);
     }
 
-    private function createTableSql(string $table, string $driver): string
+    private function createTableSql(string $table, string $driver, string $constraintSuffix = ''): string
     {
         $applyUuid = $driver === 'pgsql' ? 'UUID' : 'VARCHAR(36)';
         $text = $driver === 'mysql' ? 'LONGTEXT' : 'TEXT';
+        $constraint = static fn(string $name): string => $name . $constraintSuffix;
 
         return 'CREATE TABLE ' . $table . ' ('
             . 'apply_id ' . $applyUuid . ' NOT NULL PRIMARY KEY, '
@@ -180,16 +181,16 @@ final readonly class TransformationAuditMigrator
             . 'operation_count INTEGER NOT NULL, '
             . 'started_at TIMESTAMP NOT NULL, '
             . 'completed_at TIMESTAMP NOT NULL, '
-            . 'CONSTRAINT fk_transformation_apply_dataset FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id), '
-            . 'CONSTRAINT chk_transformation_apply_contract ' . $this->contractCheck() . ', '
-            . "CONSTRAINT chk_transformation_apply_profile CHECK (database_profile IN ('sqlite', 'postgresql', 'mysql', 'mariadb', 'dolt')), "
-            . "CONSTRAINT chk_transformation_apply_status CHECK (status IN ('succeeded', 'failed')), "
-            . 'CONSTRAINT chk_transformation_apply_operation_count CHECK (operation_count > 0), '
-            . 'CONSTRAINT chk_transformation_apply_dolt CHECK ('
+            . 'CONSTRAINT ' . $constraint('fk_transformation_apply_dataset') . ' FOREIGN KEY (dataset_id) REFERENCES dataset(dataset_id), '
+            . 'CONSTRAINT ' . $constraint('chk_transformation_apply_contract') . ' ' . $this->contractCheck() . ', '
+            . "CONSTRAINT " . $constraint('chk_transformation_apply_profile') . " CHECK (database_profile IN ('sqlite', 'postgresql', 'mysql', 'mariadb', 'dolt')), "
+            . "CONSTRAINT " . $constraint('chk_transformation_apply_status') . " CHECK (status IN ('succeeded', 'failed')), "
+            . 'CONSTRAINT ' . $constraint('chk_transformation_apply_operation_count') . ' CHECK (operation_count > 0), '
+            . 'CONSTRAINT ' . $constraint('chk_transformation_apply_dolt') . ' CHECK ('
             . "(database_profile <> 'dolt' AND dolt_branch IS NULL AND dolt_head_before IS NULL AND dolt_head_after IS NULL) "
             . "OR (database_profile = 'dolt' AND dolt_branch IS NOT NULL AND dolt_head_before IS NOT NULL "
             . "AND (status = 'failed' OR dolt_head_after = dolt_head_before))), "
-            . $this->hashChecks($driver)
+            . $this->hashChecks($driver, $constraintSuffix)
             . ')';
     }
 
@@ -198,22 +199,23 @@ final readonly class TransformationAuditMigrator
         return "CHECK (contract_id IN ('openstatspec-in-place-transformation-v0.1', 'openstatspec-in-place-transformation-v0.2'))";
     }
 
-    private function hashChecks(string $driver): string
+    private function hashChecks(string $driver, string $constraintSuffix = ''): string
     {
+        $constraint = static fn(string $name): string => $name . $constraintSuffix;
         if ($driver === 'sqlite') {
-            return "CONSTRAINT chk_transformation_apply_source_hash CHECK (length(source_hash) = 64 AND source_hash NOT GLOB '*[^0-9a-f]*'), "
-                . "CONSTRAINT chk_transformation_apply_plan_hash CHECK (length(plan_hash) = 64 AND plan_hash NOT GLOB '*[^0-9a-f]*')";
+            return 'CONSTRAINT ' . $constraint('chk_transformation_apply_source_hash') . " CHECK (length(source_hash) = 64 AND source_hash NOT GLOB '*[^0-9a-f]*'), "
+                . 'CONSTRAINT ' . $constraint('chk_transformation_apply_plan_hash') . " CHECK (length(plan_hash) = 64 AND plan_hash NOT GLOB '*[^0-9a-f]*')";
         }
         if ($driver === 'pgsql') {
-            return "CONSTRAINT chk_transformation_apply_source_hash CHECK (source_hash ~ '^[0-9a-f]{64}$'), "
-                . "CONSTRAINT chk_transformation_apply_plan_hash CHECK (plan_hash ~ '^[0-9a-f]{64}$')";
+            return 'CONSTRAINT ' . $constraint('chk_transformation_apply_source_hash') . " CHECK (source_hash ~ '^[0-9a-f]{64}$'), "
+                . 'CONSTRAINT ' . $constraint('chk_transformation_apply_plan_hash') . " CHECK (plan_hash ~ '^[0-9a-f]{64}$')";
         }
         // MySQL/MariaDB: CAST(... AS BINARY) is the binary collation cast; the BINARY
         // keyword as a type modifier is deprecated in MySQL 8.0.17+ in favor of
         // COLLATE ... USING BINARY, but the cast form remains supported on every
         // release line the adapter claims and reads more obviously to reviewers.
-        return "CONSTRAINT chk_transformation_apply_source_hash CHECK (CHAR_LENGTH(source_hash) = 64 AND source_hash REGEXP '^[0-9a-f]{64}$' AND CAST(source_hash AS BINARY) = CAST(LOWER(source_hash) AS BINARY)), "
-            . "CONSTRAINT chk_transformation_apply_plan_hash CHECK (CHAR_LENGTH(plan_hash) = 64 AND plan_hash REGEXP '^[0-9a-f]{64}$' AND CAST(plan_hash AS BINARY) = CAST(LOWER(plan_hash) AS BINARY))";
+        return 'CONSTRAINT ' . $constraint('chk_transformation_apply_source_hash') . " CHECK (CHAR_LENGTH(source_hash) = 64 AND source_hash REGEXP '^[0-9a-f]{64}$' AND CAST(source_hash AS BINARY) = CAST(LOWER(source_hash) AS BINARY)), "
+            . 'CONSTRAINT ' . $constraint('chk_transformation_apply_plan_hash') . " CHECK (CHAR_LENGTH(plan_hash) = 64 AND plan_hash REGEXP '^[0-9a-f]{64}$' AND CAST(plan_hash AS BINARY) = CAST(LOWER(plan_hash) AS BINARY))";
     }
 
     private function sqliteAcceptsVersion02(): bool

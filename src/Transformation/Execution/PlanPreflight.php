@@ -488,10 +488,10 @@ final readonly class PlanPreflight
 
     private function canonicalPhysicalSchema(?string $schema): string
     {
-        if ($this->connection->profileName === 'sqlite'
-            && ($schema === null || strcasecmp($schema, 'main') === 0)
-        ) {
-            return 'main';
+        if ($this->connection->profileName === 'sqlite') {
+            return $schema === null || strcasecmp($schema, 'main') === 0
+                ? 'main'
+                : strtolower($schema);
         }
         $profile = $this->connection->profile;
         $foldMysqlFamily = $profile instanceof \OpenStatSpec\Sql\MySqlProfile
