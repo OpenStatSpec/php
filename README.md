@@ -112,14 +112,55 @@ $export = $adapter->export(
 
 Pass only loss codes consciously accepted for that conversion. `operation_catalog` records successful and failed imports/exports; `fidelity_event_catalog` records emitted diagnostics. A failed preflight is therefore auditable even when it created no dataset. Each operation also records the selected SPSS engine package and Composer version in engine_details.
 
+## Transformation API
+
+The adapter claims official Transformation Plan 0.1/0.2, SPSS Syntax Frontend
+0.2, and In-Place Transformation 0.1/0.2 conformance. Compile an alias-based
+frontend request, then bind that alias to the existing dataset at apply time:
+
+```php
+use OpenStatSpec\Frontend\Spss\Request\SpssFrontendRequest;
+use OpenStatSpec\Frontend\Spss\SpssCompiler;
+use OpenStatSpec\Sql\Connection;
+use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
+use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
+
+$compiled = (new SpssCompiler())->compile(SpssFrontendRequest::fromArray($request));
+$apply = new InPlaceApplyRequest(
+    plan: $compiled->plan,
+    inputAlias: 'parent',
+    datasetId: $datasetId,
+    sourceHash: $compiled->sourceHash,
+    actor: 'analyst@example.org',
+    expectedBranch: $branch,
+    expectedHead: $head,
+);
+$result = (new InPlaceTransformationExecutor(new Connection($pdo)))->execute($apply);
+```
+
+Run `SpssAdapter::migrateCatalog()` before apply. SQLite and PostgreSQL may
+create numeric targets atomically; MySQL, MariaDB, and Dolt require target
+columns and catalog entries to be pre-provisioned. Dolt additionally requires
+the expected branch and HEAD plus a clean working set. The executor never
+creates a Dolt commit: inspection and commit policy remain caller-owned.
+
+Version 0.6.0 removes the package-local
+`openstatspec-transformation-plan-v1` API and its non-standard SPSS `STRING`
+and `DELETE VARIABLES` transformation commands without a compatibility layer.
+See [docs/transformations.md](docs/transformations.md) for migration details,
+supported operations, and atomicity guarantees.
+
 ## Architecture
 
 - `src/Core` - diagnostics and fail-closed fidelity policy.
 - `src/Sql` - PDO profiles, strict-wide DDL, import/export and catalogues.
 - `src/Spss` - SAV/ZSAV gating, typed V3 engine bridge and public adapter API.
+- `src/Transformation` - official plans, compact apply audit, and in-place execution.
+- `src/Frontend/Spss` - official SPSS Frontend 0.2 request compilation.
 
 See [docs/architecture.md](docs/architecture.md) for the complete relational contract.
-See [docs/transformations.md](docs/transformations.md) for the current package-local legacy transformation plan, frontend boundaries, in-place guarantees, supported syntax, and the required migration path to the official OpenStatSpec plan profiles. The capability declaration exposes no official plan or frontend contract claim yet.
+See [docs/transformations.md](docs/transformations.md) for frontend boundaries,
+official contract identifiers, in-place guarantees, and migration guidance.
 
 ## Upgrading an existing catalogue
 

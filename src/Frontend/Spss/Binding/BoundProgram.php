@@ -6,6 +6,6 @@ namespace OpenStatSpec\Frontend\Spss\Binding;
 
 final readonly class BoundProgram
 {
-    /** @param list<BoundStatement> $statements */
-    public function __construct(public string $datasetId, public array $statements) {}
+    /** @param non-empty-list<BoundStatement> $statements */
+    public function __construct(public string $inputAlias, public array $statements) {}
 }

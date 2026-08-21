@@ -4,15 +4,16 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Frontend\Spss;
 
+use OpenStatSpec\Transformation\Diagnostic\SourceSpan;
+use OpenStatSpec\Transformation\Diagnostic\TransformationDiagnostic;
+
 final class Lexer
 {
     /** @return list<Token> */
     public function tokenize(string $source): array
     {
-        $source = preg_replace('/^\xEF\xBB\xBF/', '', $source) ?? $source;
-        $source = str_replace(["\r\n", "\r"], "\n", $source);
         $tokens = [];
-        $offset = 0;
+        $offset = str_starts_with($source, "\xEF\xBB\xBF") ? 3 : 0;
         $line = 1;
         $column = 1;
         $atStatementStart = true;
@@ -21,21 +22,23 @@ final class Lexer
         while ($offset < $length) {
             $character = $this->characterAt($source, $offset, $line, $column);
             if (ctype_space($character)) {
+                if ($character === "\r") {
+                    $this->advanceCarriageReturn($source, $offset, $line, $column);
+                    continue;
+                }
                 $this->advance($character, $offset, $line, $column);
                 continue;
             }
 
             if ($atStatementStart && $character === '*') {
-                while ($offset < $length && $this->characterAt($source, $offset, $line, $column) !== '.') {
-                    $this->advance($this->characterAt($source, $offset, $line, $column), $offset, $line, $column);
-                }
-                if ($offset === $length) {
-                    $this->fail($line, $column, 'Comment is missing its period terminator.');
-                }
-                $this->advance('.', $offset, $line, $column);
-                continue;
+                $this->fail(
+                    new SourceSpan($offset, $offset + 1, $line, $column, $line, $column + 1),
+                    'Leading-star comments are not supported.',
+                    'unsupported_spss_command',
+                );
             }
 
+            $tokenOffset = $offset;
             $tokenLine = $line;
             $tokenColumn = $column;
             $atStatementStart = false;
@@ -45,18 +48,45 @@ final class Lexer
                 continue;
             }
 
-            $punctuation = match ($character) {
-                '(' => TokenType::LeftParenthesis,
-                ')' => TokenType::RightParenthesis,
-                '=' => TokenType::Equals,
-                ',' => TokenType::Comma,
-                '/' => TokenType::Slash,
-                '.' => TokenType::Terminator,
+            $next = $source[$offset + 1] ?? '';
+            if ($character === '/' && $next === '*') {
+                $this->fail(
+                    new SourceSpan($offset, $offset + 2, $line, $column, $line, $column + 2),
+                    'Inline block comments are not supported.',
+                );
+            }
+            $punctuation = match (true) {
+                $character === '<' && $next === '=' => TokenType::LessThanOrEqual,
+                $character === '>' && $next === '=' => TokenType::GreaterThanOrEqual,
+                $character === '<' => TokenType::LessThan,
+                $character === '>' => TokenType::GreaterThan,
+                $character === '(' => TokenType::LeftParenthesis,
+                $character === ')' => TokenType::RightParenthesis,
+                $character === '=' => TokenType::Equals,
+                $character === ',' => TokenType::Comma,
+                $character === '/' => TokenType::Slash,
+                $character === '.' => TokenType::Terminator,
+                $character === '+' || $character === '-' || $character === '*' => TokenType::ArithmeticOperator,
                 default => null,
             };
             if ($punctuation !== null) {
-                $tokens[] = new Token($punctuation, $character, $tokenLine, $tokenColumn);
+                $lexeme = ($punctuation === TokenType::LessThanOrEqual || $punctuation === TokenType::GreaterThanOrEqual)
+                    ? $character . $next
+                    : $character;
                 $this->advance($character, $offset, $line, $column);
+                if (strlen($lexeme) === 2) {
+                    $this->advance($next, $offset, $line, $column);
+                }
+                $tokens[] = new Token(
+                    $punctuation,
+                    $lexeme,
+                    $tokenLine,
+                    $tokenColumn,
+                    $tokenOffset,
+                    $offset,
+                    $line,
+                    $column,
+                );
                 if ($punctuation === TokenType::Terminator) {
                     $atStatementStart = true;
                 }
@@ -77,15 +107,41 @@ final class Lexer
                     }
                     $this->advance($identifierCharacter, $offset, $line, $column);
                 }
-                $tokens[] = new Token(TokenType::Identifier, substr($source, $start, $offset - $start), $tokenLine, $tokenColumn);
+                $lexeme = substr($source, $start, $offset - $start);
+                $type = match (strtoupper($lexeme)) {
+                    'COMPUTE' => TokenType::Compute,
+                    'IF' => TokenType::If,
+                    'AND' => TokenType::And,
+                    'OR' => TokenType::Or,
+                    'FORMATS' => TokenType::Formats,
+                    'VARIABLE' => TokenType::Variable,
+                    'LEVEL' => TokenType::Level,
+                    'NOMINAL' => TokenType::Nominal,
+                    'ORDINAL' => TokenType::Ordinal,
+                    'SCALE' => TokenType::Scale,
+                    default => TokenType::Identifier,
+                };
+                $tokens[] = new Token(
+                    $type,
+                    $lexeme,
+                    $tokenLine,
+                    $tokenColumn,
+                    $tokenOffset,
+                    $offset,
+                    $line,
+                    $column,
+                );
                 continue;
             }
 
             $encoded = json_encode($character, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
-            $this->fail($line, $column, sprintf('Unexpected character %s.', $encoded === false ? '?' : $encoded));
+            $this->fail(
+                new SourceSpan($offset, $offset + strlen($character), $line, $column, $line, $column + 1),
+                sprintf('Unexpected character %s.', $encoded === false ? '?' : $encoded),
+            );
         }
 
-        $tokens[] = new Token(TokenType::EndOfFile, '', $line, $column);
+        $tokens[] = new Token(TokenType::EndOfFile, '', $line, $column, $offset, $offset, $line, $column);
 
         return $tokens;
     }
@@ -95,6 +151,7 @@ final class Lexer
         $quote = $this->characterAt($source, $offset, $line, $column);
         $tokenLine = $line;
         $tokenColumn = $column;
+        $tokenOffset = $offset;
         $this->advance($quote, $offset, $line, $column);
         $value = '';
         $length = strlen($source);
@@ -102,8 +159,13 @@ final class Lexer
         while ($offset < $length) {
             $character = $this->characterAt($source, $offset, $line, $column);
             if ($character !== $quote) {
-                $value .= $character;
-                $this->advance($character, $offset, $line, $column);
+                if ($character === "\r") {
+                    $value .= "\n";
+                    $this->advanceCarriageReturn($source, $offset, $line, $column);
+                } else {
+                    $value .= $character;
+                    $this->advance($character, $offset, $line, $column);
+                }
                 continue;
             }
             $this->advance($character, $offset, $line, $column);
@@ -113,26 +175,51 @@ final class Lexer
                 continue;
             }
 
-            return new Token(TokenType::String, $value, $tokenLine, $tokenColumn);
+            return new Token(
+                TokenType::String,
+                $value,
+                $tokenLine,
+                $tokenColumn,
+                $tokenOffset,
+                $offset,
+                $line,
+                $column,
+            );
         }
 
-        $this->fail($tokenLine, $tokenColumn, 'String literal is not closed.');
+        $this->fail(
+            new SourceSpan($tokenOffset, $offset, $tokenLine, $tokenColumn, $line, $column),
+            'String literal is not closed.',
+        );
     }
 
     private function number(string $source, int &$offset, int &$line, int &$column): Token
     {
         $tokenLine = $line;
         $tokenColumn = $column;
+        $tokenOffset = $offset;
         $remaining = substr($source, $offset);
-        if (preg_match('/^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[Ee][+-]?\d+)?/', $remaining, $matches) !== 1) {
-            $this->fail($line, $column, 'Invalid numeric literal.');
+        if (preg_match('/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[Ee][+-]?\d+)?/', $remaining, $matches) !== 1) {
+            $this->fail(
+                new SourceSpan($offset, $offset + 1, $line, $column, $line, $column + 1),
+                'Invalid numeric literal.',
+            );
         }
         $lexeme = $matches[0];
         foreach (str_split($lexeme) as $character) {
             $this->advance($character, $offset, $line, $column);
         }
 
-        return new Token(TokenType::Number, $lexeme, $tokenLine, $tokenColumn);
+        return new Token(
+            TokenType::Number,
+            $lexeme,
+            $tokenLine,
+            $tokenColumn,
+            $tokenOffset,
+            $offset,
+            $line,
+            $column,
+        );
     }
 
     private function startsNumber(string $source, int $offset): bool
@@ -176,8 +263,7 @@ final class Lexer
             || preg_match('/\A.\z/usD', $character) !== 1
         ) {
             $this->fail(
-                $line,
-                $column,
+                new SourceSpan($offset, $offset + 1, $line, $column, $line, $column + 1),
                 sprintf('Invalid UTF-8 sequence beginning with byte 0x%02X.', $firstByte),
             );
         }
@@ -196,8 +282,20 @@ final class Lexer
         }
     }
 
-    private function fail(int $line, int $column, string $message): never
+    private function advanceCarriageReturn(string $source, int &$offset, int &$line, int &$column): void
     {
-        throw new SpssSyntaxException([new Diagnostic($line, $column, $message)]);
+        ++$offset;
+        if (($source[$offset] ?? '') === "\n") {
+            ++$offset;
+        }
+        ++$line;
+        $column = 1;
+    }
+
+    private function fail(SourceSpan $span, string $message, string $code = 'spss_syntax_error'): never
+    {
+        throw new SpssSyntaxException([
+            new TransformationDiagnostic($code, '$.source_text', $message, $span),
+        ]);
     }
 }

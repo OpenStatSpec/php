@@ -84,21 +84,26 @@ Encrypted files, Portable (`.por`) files and arbitrary external-engine formats a
 
 ### Transformations
 
-The src/Transformation package owns the statistics-package-neutral canonical
-plan, validation, deterministic plan identity, and PDO in-place executor. An
-apply preserves the canonical dataset UUID and registered wide-table identity.
-It does not publish a derived dataset or create a persistent data copy,
-snapshot, rollback table, or OpenStatSpec-managed version.
+`src/Transformation/Plan` owns the official Transformation Plan 0.1/0.2 model,
+strict codec, validation, and deterministic plan identity.
+`src/Frontend/Spss` is the separate official SPSS Frontend 0.2 boundary.
+`src/Transformation/Execution` binds an alias-based plan to one existing
+dataset and applies it through the active PDO profile; it never invokes the
+frontend. The Stata and SAS directories are placeholders only.
 
-The src/Frontend/Spss package is a separate language boundary that turns the
-documented SPSS subset into a canonical plan. The executor accepts that plan
-and does not import or invoke the SPSS frontend. The Stata and SAS directories
-are documented placeholders only; they contain no implementation and make no
-support claim.
+Apply preserves the canonical dataset UUID, registered wide-table identity,
+case order/count, dataset count, and persistent data-table count. It does not
+publish a derived dataset or create a persistent data copy, output/staging
+table, snapshot, rollback table, or OpenStatSpec-managed version. The explicit
+catalog migration provisions `transformation_apply`; one compact success row
+is written inside the native apply transaction.
 
-All implemented PDO profiles remain eligible transformation targets. Dolt adds
-active-branch, HEAD, and clean-working-set guards; it is not a gateway for the
-feature. Dolt owns history and rollback. See the
+SQLite and PostgreSQL may create numeric targets atomically. MySQL, MariaDB,
+and Dolt require the intended target column and catalog row to be
+pre-provisioned; a create-target plan fails before mutation. Dolt additionally
+requires caller-supplied branch/HEAD expectations and a clean working set. The
+executor never commits or otherwise changes Dolt history: review and commit
+remain caller-owned. See the
 [transformation manual](transformations.md) for the complete contract and
 operational guidance.
 
@@ -129,7 +134,8 @@ $adapter->migrateCatalog();
 The command creates and versions the canonical catalogue through
 `openstatspec_schema_migration`; it also applies the write-format migration to
 SQLite, MySQL/MariaDB/Dolt and PostgreSQL compatibility catalogues, then backfills
-each exportable legacy dataset into the singular standard tables.
+each exportable legacy dataset into the singular standard tables and provisions
+the compact official transformation-apply audit relation.
 
 A completely empty dedicated namespace is initialized automatically on its
 first ordinary import or export attempt. An existing catalogue is never

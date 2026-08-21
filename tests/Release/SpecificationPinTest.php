@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace OpenStatSpec\Tests\Release;
 
 use OpenStatSpec\Core\CapabilityDeclaration;
+use OpenStatSpec\Tests\Support\SpecificationManifest;
 use PHPUnit\Framework\TestCase;
 
 final class SpecificationPinTest extends TestCase
 {
     public function testEverySpecificationCheckoutUsesTheStableReleaseCommit(): void
     {
+        self::assertSame('v0.3.0', CapabilityDeclaration::SPECIFICATION_RELEASE);
         self::assertSame(
             'cd8f198c68b849eb8ed018a894670a0904c2181d',
             CapabilityDeclaration::SPECIFICATION_COMMIT,
@@ -56,5 +58,18 @@ final class SpecificationPinTest extends TestCase
             array_fill(0, count($refs), CapabilityDeclaration::SPECIFICATION_COMMIT),
             $refs,
         );
+
+        foreach ([
+            'transformation/plan-0.1.schema.json',
+            'transformation/plan-0.2.schema.json',
+            'transformation/spss-syntax-frontend-0.2.schema.json',
+            'conformance/transformation-plan-0.1.json',
+            'conformance/transformation-plan-0.2.json',
+            'conformance/spss-syntax-frontend-0.2.json',
+            'conformance/in-place-transformation-0.1.json',
+            'conformance/in-place-transformation-0.2.json',
+        ] as $relative) {
+            self::assertFileExists(SpecificationManifest::path($relative));
+        }
     }
 }

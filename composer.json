@@ -12,8 +12,10 @@
     ]
   },
   "require": {
-    "ext-pdo": "*",
     "php": "^8.4.1",
+    "ext-mbstring": "*",
+    "ext-pdo": "*",
+    "brick/math": "^0.19",
     "openstatspec/spss-sav": "^3.0"
   },
   "repositories": [

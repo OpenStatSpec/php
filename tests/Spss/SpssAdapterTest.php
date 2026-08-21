@@ -62,7 +62,7 @@ final class SpssAdapterTest extends TestCase
 
         (new SpssAdapter($pdo, new FakeSpssEngine($this->fixture())))->migrateCatalog();
 
-        self::assertSame([['schema_version' => 3]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
+        self::assertSame([['schema_version' => 4]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
     }
 
     public function testFailedMigrationDoesNotAdvanceOlderIdentityVersion(): void
@@ -102,7 +102,7 @@ final class SpssAdapterTest extends TestCase
         $result = $adapter->import('fixture.sav', 'Old catalog import');
 
         self::assertSame(2, $result->caseCount);
-        self::assertSame([['schema_version' => 3]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
+        self::assertSame([['schema_version' => 4]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
     }
 
     public function testExportRequiresExplicitMigrationForOlderIdentityWithoutJournalMutation(): void
@@ -127,7 +127,7 @@ final class SpssAdapterTest extends TestCase
         $result = $adapter->export('Old catalog export', 'old-catalog.sav');
 
         self::assertSame(2, $result->caseCount);
-        self::assertSame([['schema_version' => 3]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
+        self::assertSame([['schema_version' => 4]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
     }
 
     public function testReadOnlyFreshInitializationFailureDoesNotCreateCurrentIdentity(): void
@@ -175,7 +175,7 @@ final class SpssAdapterTest extends TestCase
         $import = $adapter->import('fixture.sav', 'Customer survey');
 
         self::assertSame('Customer survey', $import->datasetName);
-        self::assertSame([['schema_version' => 3]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
+        self::assertSame([['schema_version' => 4]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
         self::assertSame(2, $import->caseCount);
         self::assertSame([], $import->diagnostics);
         self::assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/', $import->operationId);
@@ -940,7 +940,7 @@ final class SpssAdapterTest extends TestCase
             self::rows($pdo, 'SELECT spec_version, source_format, physical_table_name, dataset_name, source_case_count FROM dataset'),
         );
         self::assertSame(
-            [['version' => 1], ['version' => 2], ['version' => 3]],
+            [['version' => 1], ['version' => 2], ['version' => 3], ['version' => 4]],
             self::rows($pdo, 'SELECT version FROM openstatspec_schema_migration ORDER BY version'),
         );
         self::assertSame(

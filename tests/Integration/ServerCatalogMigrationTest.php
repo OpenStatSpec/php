@@ -32,10 +32,21 @@ final class ServerCatalogMigrationTest extends TestCase
                 $pdo->prepare('INSERT INTO multiple_response_sets (dataset_name, set_ordinal, name, set_type, category_labels, label_source) VALUES (?, ?, ?, ?, ?, ?)')->execute([$datasetName, 1, '$Legacy MR', 'dichotomy', 'counted_values', 'set_label']);
                 $pdo->prepare('INSERT INTO variable_set (variable_set_id, dataset_id, source_ordinal, set_name) VALUES (?, ?, NULL, ?)')->execute(['vs-' . $token, $datasetId, 'Legacy variable set']);
                 $pdo->prepare('INSERT INTO multiple_response_set (multiple_response_set_id, dataset_id, source_ordinal, set_name, set_kind, category_label_behavior) VALUES (?, ?, NULL, ?, ?, ?)')->execute(['mr-' . $token, $datasetId, '$Legacy MR', 'MD', 'counted_values']);
+                $legacyApplyId = $this->makeVersion01Audit($pdo, $name, $datasetId, 'unused_' . $token);
 
                 $adapter->migrateCatalog();
                 self::assertSame(2, (int) $this->scalar($pdo, 'SELECT source_ordinal FROM variable_set WHERE dataset_id = ?', [$datasetId]), $name . ': variable-set source order');
                 self::assertSame(1, (int) $this->scalar($pdo, 'SELECT source_ordinal FROM multiple_response_set WHERE dataset_id = ?', [$datasetId]), $name . ': MR-set source order');
+                self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM transformation_apply WHERE apply_id = ?', [$legacyApplyId]), $name . ': existing 0.1 audit row');
+                $this->assertAuditContracts($pdo, $name, $datasetId, 'unused_' . $token);
+                $this->assertUppercaseHashesRejected($pdo, $name, $datasetId, 'unused_' . $token);
+                if ($name !== 'postgresql') {
+                    $this->dropAuditContractChecks($pdo, $name);
+                    $pdo->exec('DELETE FROM openstatspec_schema_migration WHERE version = 4');
+
+                    $adapter->migrateCatalog();
+                    $this->assertUnknownAuditContractRejected($pdo, $name, $datasetId, 'unused_' . $token);
+                }
                 $this->assertNotNullAndUnique($pdo, $name);
                 foreach ([
                     ['INSERT INTO variable_set (variable_set_id, dataset_id, source_ordinal, set_name) VALUES (?, ?, ?, ?)', ['vs-duplicate-' . $token, $datasetId, 2, 'Duplicate variable set']],
@@ -50,7 +61,9 @@ final class ServerCatalogMigrationTest extends TestCase
                 }
                 $adapter->migrateCatalog();
                 self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM openstatspec_schema_migration WHERE version = 3', []), $name . ': migration marker must be idempotent');
+                self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM openstatspec_schema_migration WHERE version = 4', []), $name . ': audit migration marker must be idempotent');
             } finally {
+                $pdo->prepare('DELETE FROM transformation_apply WHERE dataset_id = ?')->execute([$datasetId]);
                 $pdo->prepare('DELETE FROM multiple_response_set WHERE dataset_id = ?')->execute([$datasetId]);
                 $pdo->prepare('DELETE FROM variable_set WHERE dataset_id = ?')->execute([$datasetId]);
                 $pdo->prepare('DELETE FROM multiple_response_sets WHERE dataset_name = ?')->execute([$datasetName]);
@@ -58,6 +71,163 @@ final class ServerCatalogMigrationTest extends TestCase
                 $pdo->prepare('DELETE FROM dataset WHERE dataset_id = ?')->execute([$datasetId]);
             }
         }
+    }
+
+    private function makeVersion01Audit(PDO $pdo, string $profile, string $datasetId, string $table): string
+    {
+        $driver = (string) $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        if ($driver === 'pgsql') {
+            $pdo->exec('ALTER TABLE transformation_apply DROP CONSTRAINT chk_transformation_apply_contract');
+        } else {
+            $this->dropAuditContractChecks($pdo, $profile);
+        }
+        $pdo->exec("ALTER TABLE transformation_apply ADD CONSTRAINT chk_transformation_apply_contract CHECK (contract_id = 'openstatspec-in-place-transformation-v0.1')");
+        $pdo->exec('DELETE FROM openstatspec_schema_migration WHERE version = 4');
+
+        $applyId = $this->uuidV4();
+        $dolt = $profile === 'dolt';
+        $pdo->prepare('INSERT INTO transformation_apply VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
+            $applyId,
+            'openstatspec-in-place-transformation-v0.1',
+            $profile,
+            $datasetId,
+            null,
+            $table,
+            str_repeat('c', 64),
+            str_repeat('d', 64),
+            '{}',
+            'legacy-migration-test',
+            'succeeded',
+            $dolt ? 'migration-test' : null,
+            $dolt ? 'migration-head' : null,
+            $dolt ? 'migration-head' : null,
+            1,
+            '2026-08-16 00:00:00',
+            '2026-08-16 00:00:01',
+        ]);
+        return $applyId;
+    }
+
+    private function assertAuditContracts(PDO $pdo, string $profile, string $datasetId, string $table): void
+    {
+        $insert = $pdo->prepare(<<<'SQL'
+INSERT INTO transformation_apply (
+    apply_id, contract_id, database_profile, dataset_id, physical_table_schema,
+    physical_table_name, source_hash, plan_hash, canonical_plan_json, actor,
+    status, dolt_branch, dolt_head_before, dolt_head_after, operation_count,
+    started_at, completed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+SQL);
+        foreach (['openstatspec-in-place-transformation-v0.1', 'openstatspec-in-place-transformation-v0.2'] as $contract) {
+            $dolt = $profile === 'dolt';
+            $insert->execute([
+                $this->uuidV4(),
+                $contract,
+                $profile,
+                $datasetId,
+                null,
+                $table,
+                str_repeat('a', 64),
+                str_repeat('b', 64),
+                '{}',
+                'migration-test',
+                'succeeded',
+                $dolt ? 'migration-test' : null,
+                $dolt ? 'migration-head' : null,
+                $dolt ? 'migration-head' : null,
+                1,
+                '2026-08-17 00:00:00',
+                '2026-08-17 00:00:01',
+            ]);
+        }
+        self::assertSame(
+            2,
+            (int) $this->scalar($pdo, "SELECT COUNT(*) FROM transformation_apply WHERE dataset_id = ? AND actor = 'migration-test'", [$datasetId]),
+            $profile . ': both official audit contracts',
+        );
+    }
+
+    private function assertUppercaseHashesRejected(PDO $pdo, string $profile, string $datasetId, string $table): void
+    {
+        foreach (['source' => [str_repeat('A', 64), str_repeat('b', 64)], 'plan' => [str_repeat('a', 64), str_repeat('B', 64)]] as $hash => [$sourceHash, $planHash]) {
+            try {
+                $this->insertAudit($pdo, $profile, $datasetId, $table, 'openstatspec-in-place-transformation-v0.2', $sourceHash, $planHash);
+                self::fail($profile . ': uppercase ' . $hash . ' hash was accepted');
+            } catch (PDOException) {
+                // The exact lowercase-hex database check is the assertion.
+            }
+        }
+    }
+
+    private function assertUnknownAuditContractRejected(PDO $pdo, string $profile, string $datasetId, string $table): void
+    {
+        try {
+            $this->insertAudit($pdo, $profile, $datasetId, $table, 'foreign-contract', str_repeat('a', 64), str_repeat('b', 64));
+            self::fail($profile . ': missing contract check was not recovered');
+        } catch (PDOException) {
+            // A retry after the interrupted upgrade restored the current check.
+        }
+    }
+
+    private function insertAudit(
+        PDO $pdo,
+        string $profile,
+        string $datasetId,
+        string $table,
+        string $contract,
+        string $sourceHash,
+        string $planHash,
+    ): void {
+        $dolt = $profile === 'dolt';
+        $pdo->prepare('INSERT INTO transformation_apply VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
+            $this->uuidV4(),
+            $contract,
+            $profile,
+            $datasetId,
+            null,
+            $table,
+            $sourceHash,
+            $planHash,
+            '{}',
+            'migration-rejection-test',
+            'succeeded',
+            $dolt ? 'migration-test' : null,
+            $dolt ? 'migration-head' : null,
+            $dolt ? 'migration-head' : null,
+            1,
+            '2026-08-17 00:00:00',
+            '2026-08-17 00:00:01',
+        ]);
+    }
+
+    private function dropAuditContractChecks(PDO $pdo, string $profile): void
+    {
+        $statement = $pdo->query(<<<'SQL'
+SELECT table_constraint.constraint_name
+FROM information_schema.table_constraints table_constraint
+JOIN information_schema.check_constraints check_constraint
+  ON check_constraint.constraint_schema = table_constraint.constraint_schema
+ AND check_constraint.constraint_name = table_constraint.constraint_name
+WHERE table_constraint.constraint_schema = DATABASE()
+  AND table_constraint.table_name = 'transformation_apply'
+  AND table_constraint.constraint_type = 'CHECK'
+  AND check_constraint.check_clause LIKE '%contract_id%'
+SQL);
+        $constraints = $statement === false ? [] : $statement->fetchAll(PDO::FETCH_COLUMN);
+        $drop = $profile === 'mariadb' ? 'DROP CONSTRAINT' : 'DROP CHECK';
+        foreach ($constraints as $constraint) {
+            self::assertIsString($constraint);
+            $pdo->exec('ALTER TABLE transformation_apply ' . $drop . ' `' . str_replace('`', '``', $constraint) . '`');
+        }
+    }
+
+    private function uuidV4(): string
+    {
+        $bytes = random_bytes(16);
+        $bytes[6] = chr((ord($bytes[6]) & 0x0f) | 0x40);
+        $bytes[8] = chr((ord($bytes[8]) & 0x3f) | 0x80);
+        $hex = bin2hex($bytes);
+        return substr($hex, 0, 8) . '-' . substr($hex, 8, 4) . '-' . substr($hex, 12, 4) . '-' . substr($hex, 16, 4) . '-' . substr($hex, 20);
     }
 
     private function makeV3Legacy(PDO $pdo): void

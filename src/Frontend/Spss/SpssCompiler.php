@@ -6,9 +6,10 @@ namespace OpenStatSpec\Frontend\Spss;
 
 use OpenStatSpec\Frontend\Spss\Ast\Program;
 use OpenStatSpec\Frontend\Spss\Binding\BoundProgram;
-use OpenStatSpec\Transformation\Model\TransformationPlan;
+use OpenStatSpec\Frontend\Spss\Request\InputSchema;
+use OpenStatSpec\Frontend\Spss\Request\SpssFrontendRequest;
 
-/** Public facade for the SPSS lexer/parser/binder/compiler pipeline. */
+/** Public facade for the official SPSS lexer/parser/binder/compiler pipeline. */
 final class SpssCompiler
 {
     public function __construct(
@@ -22,18 +23,17 @@ final class SpssCompiler
         return $this->parser->parse($source);
     }
 
-    public function bind(string $datasetId, Program $program): BoundProgram
+    public function bind(string $inputAlias, InputSchema $inputSchema, Program $program): BoundProgram
     {
-        return $this->binder->bind($datasetId, $program);
+        return $this->binder->bind($inputAlias, $inputSchema, $program);
     }
 
-    public function compile(string $source, string $datasetId): TransformationPlan
+    public function compile(SpssFrontendRequest $request): SpssCompilationResult
     {
-        return $this->compiler->compile($this->binder->bind($datasetId, $this->parser->parse($source)));
-    }
+        $sourceHash = $request->sourceHash();
+        $program = $this->parser->parse($request->sourceText);
+        $bound = $this->binder->bind($request->inputAlias, $request->inputSchema, $program);
 
-    public function compileForDataset(string $datasetId, string $source): TransformationPlan
-    {
-        return $this->compile($source, $datasetId);
+        return new SpssCompilationResult($this->compiler->compile($bound), $sourceHash);
     }
 }

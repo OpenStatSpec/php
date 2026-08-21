@@ -71,7 +71,7 @@ jobs:
           coverage: none
           extensions: pdo_pgsql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "PostgreSqlSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest"
+      - run: vendor/bin/phpunit --filter "PostgreSqlSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest|OfficialInPlaceTransformation01Test|OfficialInPlaceTransformation02Test"
 
   mysql-integration:
     name: MySQL ${{ matrix.mysql }} integration / PHP ${{ matrix.php }}
@@ -89,6 +89,7 @@ jobs:
           MYSQL_USER: openstatspec
           MYSQL_PASSWORD: openstatspec
           MYSQL_ROOT_PASSWORD: root
+          MYSQL_ROOT_HOST: "%"
         ports:
           - 3306:3306
         options: >-
@@ -100,6 +101,8 @@ jobs:
       OPENSTATSPEC_MYSQL_DSN: mysql:host=127.0.0.1;port=3306;dbname=openstatspec;charset=utf8mb4
       OPENSTATSPEC_MYSQL_USER: openstatspec
       OPENSTATSPEC_MYSQL_PASSWORD: openstatspec
+      OPENSTATSPEC_MYSQL_ADMIN_USER: root
+      OPENSTATSPEC_MYSQL_ADMIN_PASSWORD: root
       OPENSTATSPEC_EXPECTED_MYSQL_VERSION: ${{ matrix.mysql }}
     steps:
       - uses: actions/checkout@v7
@@ -115,7 +118,9 @@ jobs:
           coverage: none
           extensions: pdo_mysql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "MySqlSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest"
+      - run: vendor/bin/phpunit --filter "MySqlSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest|OfficialInPlaceTransformation01Test|OfficialInPlaceTransformation02Test"
+      - name: Require official MySQL 0.1 cases to execute
+        run: vendor/bin/phpunit tests/Integration/OfficialInPlaceTransformation01Test.php --filter '/mysql/' --fail-on-skipped
 
   mariadb-integration:
     name: MariaDB ${{ matrix.mariadb }} integration / PHP ${{ matrix.php }}
@@ -159,7 +164,7 @@ jobs:
           coverage: none
           extensions: pdo_mysql, pdo_sqlite, bcmath, mbstring, zlib
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "MariaDbSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest"
+      - run: vendor/bin/phpunit --filter "MariaDbSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest|OfficialInPlaceTransformation01Test|OfficialInPlaceTransformation02Test"
 
   dolt-integration:
     name: Dolt ${{ matrix.dolt.version }} integration / PHP ${{ matrix.php }}
@@ -213,4 +218,4 @@ jobs:
           done
           exit 1
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "DoltSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest"
+      - run: vendor/bin/phpunit --filter "DoltSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest|OfficialInPlaceTransformation01Test|OfficialInPlaceTransformation02Test"

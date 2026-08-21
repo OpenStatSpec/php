@@ -16,4 +16,9 @@ final readonly class VariableBinding
         public ?int $declaredStringWidth,
         public bool $persisted = true,
     ) {}
+
+    public function isNumeric(): bool
+    {
+        return $this->storageKind === 'numeric';
+    }
 }

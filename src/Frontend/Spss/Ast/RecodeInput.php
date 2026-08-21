@@ -4,4 +4,9 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Frontend\Spss\Ast;
 
-interface RecodeInput {}
+use OpenStatSpec\Transformation\Diagnostic\SourceSpan;
+
+interface RecodeInput
+{
+    public function span(): SourceSpan;
+}

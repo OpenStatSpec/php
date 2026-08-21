@@ -15,7 +15,8 @@ final class CatalogOwnership
     private const IDENTITY_TABLE = 'catalog_identity';
     private const CONTRACT_ID = 'openstatspec-strict-wide-table-v1';
     private const MIGRATION_TABLE = 'openstatspec_schema_migration';
-    private const SCHEMA_VERSION = 3;
+    private const AUDIT_TABLE = 'transformation_apply';
+    private const SCHEMA_VERSION = 4;
 
     /** @return array<string, mixed> */
     public static function binding(PDO $pdo): array
@@ -93,7 +94,7 @@ final class CatalogOwnership
     public static function assertReadyForUse(PDO $pdo): void
     {
         if (self::tableExists($pdo, self::IDENTITY_TABLE)) {
-            if (self::validateIdentity($pdo) < self::SCHEMA_VERSION) {
+            if (self::validateIdentity($pdo) < self::SCHEMA_VERSION || !self::currentMigrationComplete($pdo)) {
                 throw self::migrationRequired();
             }
             self::assertExclusiveNamespace($pdo);
@@ -119,6 +120,20 @@ final class CatalogOwnership
 
         self::ensure($pdo);
         throw self::migrationRequired();
+    }
+
+    /** Transformation preflight must never initialize a fresh namespace. */
+    public static function assertReadyForUseReadOnly(PDO $pdo): void
+    {
+        if (!self::tableExists($pdo, self::IDENTITY_TABLE)
+            && !self::tableExists($pdo, self::MIGRATION_TABLE)
+            && self::catalogCollisions($pdo) === []
+            && self::namespaceObjects($pdo) === []
+        ) {
+            throw self::migrationRequired();
+        }
+
+        self::assertReadyForUse($pdo);
     }
 
     public static function isFreshPending(PDO $pdo): bool
@@ -148,8 +163,30 @@ final class CatalogOwnership
     public static function markCurrentVersion(PDO $pdo): void
     {
         self::validateIdentity($pdo);
+        if (!self::currentMigrationComplete($pdo)) {
+            throw self::migrationRequired();
+        }
         $statement = $pdo->prepare('UPDATE ' . self::IDENTITY_TABLE . ' SET schema_version = ? WHERE catalog_identity_key = 1');
         $statement->execute([self::SCHEMA_VERSION]);
+    }
+
+    private static function currentMigrationComplete(PDO $pdo): bool
+    {
+        return self::tableExists($pdo, self::MIGRATION_TABLE)
+            && self::tableExists($pdo, self::AUDIT_TABLE)
+            && self::validateLegacyMarker($pdo) === self::SCHEMA_VERSION
+            && self::canSelectColumns($pdo, self::AUDIT_TABLE, self::auditColumns());
+    }
+
+    /** @return list<string> */
+    private static function auditColumns(): array
+    {
+        return [
+            'apply_id', 'contract_id', 'database_profile', 'dataset_id', 'physical_table_schema',
+            'physical_table_name', 'source_hash', 'plan_hash', 'canonical_plan_json', 'actor',
+            'status', 'dolt_branch', 'dolt_head_before', 'dolt_head_after', 'operation_count',
+            'started_at', 'completed_at',
+        ];
     }
 
     /** @return array<string, mixed> */
@@ -235,15 +272,19 @@ final class CatalogOwnership
         $canonicalComplete = $canonical !== [] && self::matchesCompleteDefinition($pdo, $canonical, $canonicalDefinition);
         $legacyComplete = $legacy !== [] && self::matchesCompleteDefinition($pdo, $legacy, $legacyDefinition);
         $journalsComplete = $journals === [] || self::isRecognizedJournalOnlyLegacyCatalog($pdo, $journals);
+        $auditPresent = in_array(self::AUDIT_TABLE, $collisions, true);
+        $auditComplete = !$auditPresent || self::canSelectColumns($pdo, self::AUDIT_TABLE, self::auditColumns());
         if (($canonical !== [] && !$canonicalComplete)
             || ($legacy !== [] && !$legacyComplete)
             || !$journalsComplete
+            || !$auditComplete
         ) {
             return false;
         }
-        return $markerVersion === self::SCHEMA_VERSION
-            ? $canonicalComplete
-            : ($canonicalComplete || $legacyComplete);
+        if ($markerVersion >= 3) {
+            return $canonicalComplete && ($markerVersion < self::SCHEMA_VERSION || $auditPresent);
+        }
+        return $canonicalComplete || $legacyComplete;
     }
 
     /** @param list<string> $collisions */
@@ -707,6 +748,7 @@ final class CatalogOwnership
             'variable_value_label_set', 'missing_rule', 'dataset_attribute', 'variable_attribute',
             'document', 'variable_set', 'variable_set_member', 'multiple_response_set',
             'multiple_response_member', 'operation', 'fidelity_event', 'datasets', 'variables',
+            'transformation_apply',
             'dataset_weight_variables', 'dataset_metadata', 'file_technical_metadata', 'documents',
             'value_labels', 'missing_rules', 'missing_rule_values', 'variable_display_metadata',
             'variable_roles', 'file_attributes', 'variable_attributes', 'variable_sets',

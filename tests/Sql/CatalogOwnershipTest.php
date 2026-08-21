@@ -8,6 +8,7 @@ use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\CatalogOwnership;
 use OpenStatSpec\Sql\NormativeCatalog;
+use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
 use PDO;
 use PDOStatement;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -191,6 +192,7 @@ final class CatalogOwnershipTest extends TestCase
         $pdo = $this->sqlite();
         CatalogOwnership::ensure($pdo);
         (new NormativeCatalog($pdo))->createTables();
+        (new TransformationAuditMigrator($pdo))->migrate();
         CatalogOwnership::markCurrentVersion($pdo);
         $pdo->exec('CREATE TABLE application_data (id INTEGER PRIMARY KEY)');
 
@@ -209,11 +211,63 @@ final class CatalogOwnershipTest extends TestCase
         (new NormativeCatalog($pdo))->createTables();
         $pdo->exec('CREATE TABLE dataset_registered (case_ordinal INTEGER PRIMARY KEY)');
         $pdo->exec("INSERT INTO dataset (dataset_id, spec_version, source_format, physical_table_name, dataset_name, source_case_count, imported_at) VALUES ('registered', '1.0', 'sav', 'dataset_registered', 'registered', 0, '2026-07-28 00:00:00')");
+        (new TransformationAuditMigrator($pdo))->migrate();
         CatalogOwnership::markCurrentVersion($pdo);
 
         CatalogOwnership::ensure($pdo);
 
-        self::assertSame(3, (int) $this->query($pdo, 'SELECT schema_version FROM catalog_identity')->fetchColumn());
+        self::assertSame(4, (int) $this->query($pdo, 'SELECT schema_version FROM catalog_identity')->fetchColumn());
+    }
+
+    public function testCurrentVersionCannotBeMarkedBeforeAuditMigrationCompletes(): void
+    {
+        $pdo = $this->sqlite();
+        CatalogOwnership::ensure($pdo);
+        (new NormativeCatalog($pdo))->createTables();
+
+        try {
+            CatalogOwnership::markCurrentVersion($pdo);
+            self::fail('Schema version 4 was marked without audit migration 4.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::CatalogMigrationRequired, $exception->diagnosticCode);
+        }
+
+        self::assertSame(1, (int) $this->query($pdo, 'SELECT schema_version FROM catalog_identity')->fetchColumn());
+        self::assertSame([1, 2, 3], array_map(
+            'intval',
+            $this->query($pdo, 'SELECT version FROM openstatspec_schema_migration ORDER BY version')->fetchAll(PDO::FETCH_COLUMN),
+        ));
+    }
+
+    public function testVersionFourIdentityWithoutAuditMigrationIsNotReadyForUse(): void
+    {
+        $pdo = $this->sqlite();
+        CatalogOwnership::ensure($pdo);
+        (new NormativeCatalog($pdo))->createTables();
+        $pdo->exec('UPDATE catalog_identity SET schema_version = 4');
+
+        try {
+            CatalogOwnership::assertReadyForUse($pdo);
+            self::fail('Schema version 4 without audit migration 4 was accepted.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::CatalogMigrationRequired, $exception->diagnosticCode);
+        }
+    }
+
+    public function testVersionFourMarkerWithoutAuditTableIsNotReadyForUse(): void
+    {
+        $pdo = $this->sqlite();
+        CatalogOwnership::ensure($pdo);
+        (new NormativeCatalog($pdo))->createTables();
+        $pdo->exec("INSERT INTO openstatspec_schema_migration VALUES (4, '2026-08-17 00:00:00')");
+        $pdo->exec('UPDATE catalog_identity SET schema_version = 4');
+
+        try {
+            CatalogOwnership::assertReadyForUse($pdo);
+            self::fail('Schema version and marker 4 without the audit table were accepted.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::CatalogMigrationRequired, $exception->diagnosticCode);
+        }
     }
 
     public function testOlderIdentityVersionIsAcceptedWithoutPrematureUpgrade(): void
@@ -231,7 +285,7 @@ final class CatalogOwnershipTest extends TestCase
     {
         $pdo = $this->sqlite();
         CatalogOwnership::ensure($pdo);
-        $pdo->exec('UPDATE catalog_identity SET schema_version = 4');
+        $pdo->exec('UPDATE catalog_identity SET schema_version = 5');
 
         try {
             CatalogOwnership::ensure($pdo);
@@ -240,7 +294,7 @@ final class CatalogOwnershipTest extends TestCase
             self::assertSame(DiagnosticCode::CatalogNamespaceCollision, $exception->diagnosticCode);
         }
 
-        self::assertSame(4, (int) $this->query($pdo, 'SELECT schema_version FROM catalog_identity')->fetchColumn());
+        self::assertSame(5, (int) $this->query($pdo, 'SELECT schema_version FROM catalog_identity')->fetchColumn());
     }
 
     public function testForeignCatalogNameFailsBeforeOwnershipObjectsAreCreated(): void
