@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.0] - 2026-08-21
 
 ### Added
 
@@ -11,6 +11,8 @@
 
 ### Changed
 
+- Pinned the release to stable OpenStatSpec specification `v0.3.0` at immutable
+  commit `cd8f198c68b849eb8ed018a894670a0904c2181d`.
 - Transformations now compile `SpssFrontendRequest` into an alias-based
   `SpssCompilationResult` and apply it through `InPlaceApplyRequest` with an
   explicit actor and optional controlled Dolt context.
@@ -86,7 +88,8 @@
 - Pinned active conformance fixtures and capabilities to released OpenStatSpec
   specification v0.1.0 at commit `d287c2cde9ade71f04e27dd012caec876901aed5`.
 
-[Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/OpenStatSpec/php/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/OpenStatSpec/php/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/OpenStatSpec/php/compare/v0.3.0...v0.4.0
 
