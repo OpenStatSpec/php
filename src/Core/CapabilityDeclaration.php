@@ -18,9 +18,9 @@ use PDO;
 /** Machine-readable SPSS 1.0 and SQL-profile capability declaration. */
 final readonly class CapabilityDeclaration implements JsonSerializable
 {
-    public const SPECIFICATION_STATUS = 'stable';
-    public const SPECIFICATION_RELEASE = 'v0.3.0';
-    public const SPECIFICATION_COMMIT = 'cd8f198c68b849eb8ed018a894670a0904c2181d';
+    public const SPECIFICATION_STATUS = 'released';
+    public const SPECIFICATION_RELEASE = 'v0.5.0';
+    public const SPECIFICATION_COMMIT = '864e84479f554b8ee250ffed44c4dfb963750d4a';
 
     private Connection $connection;
 

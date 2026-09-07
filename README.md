@@ -6,6 +6,11 @@ It imports an unencrypted SPSS `.sav` or `.zsav` dataset into a relational datab
 
 ## Status
 
+PHP v0.7.0 targets released OpenStatSpec specification `v0.5.0` at immutable
+commit `864e84479f554b8ee250ffed44c4dfb963750d4a`
+(`specification_status: released`). Composer derives the package version from its
+Git tag; it is independent of the specification version.
+
 This is an early reference implementation. Its round-trip contract is **semantic**, not byte-identical: supported cases, order, variables, values, dictionary metadata and technical metadata are preserved; compression layout, timestamps and other writer-specific bytes are not promised.
 
 SQLite, PostgreSQL 17.x/18.x, MySQL 8.4.x/9.7.x, MariaDB
@@ -73,7 +78,10 @@ $export = $adapter->export('survey_2026', '/data/survey-export.sav');
 ```
 
 Export needs only read access to an already migrated catalogue and its wide
-tables. It reads authoritative normative metadata directly and never initializes,
+tables. Initialize or upgrade the catalogue with `SpssAdapter::migrateCatalog()`
+using a write-capable deployment connection before using a read-only exporter;
+an uninitialized or outdated catalogue fails with `catalog_migration_required`.
+It reads authoritative normative metadata directly and never initializes,
 migrates, synchronizes compatibility tables, or writes database audit records—even
 on failure. `SpssExportResult` no longer has `operationId`; export creates no
 `operation_id`. Diagnostics and accepted loss codes remain in the result.
@@ -132,7 +140,9 @@ Pass only loss codes consciously accepted for that conversion. `operation_catalo
 
 The adapter claims official Transformation Plan 0.1/0.2, SPSS Syntax Frontend
 0.2, and In-Place Transformation 0.1/0.2 conformance. Compile an alias-based
-frontend request, then bind that alias to the existing dataset at apply time:
+frontend request, then bind that alias to the existing dataset at apply time.
+The specification pin does not claim support for optional Transformation Plan,
+SPSS Syntax Frontend, or In-Place Transformation 0.3.
 
 ```php
 use OpenStatSpec\Frontend\Spss\Request\SpssFrontendRequest;
@@ -241,7 +251,8 @@ Run the local gate before committing:
 
 ```bash
 composer install
-composer check
+# Checkout specification v0.5.0 at 864e84479f554b8ee250ffed44c4dfb963750d4a first.
+OPENSTATSPEC_SPECIFICATION_DIR=/path/to/exact-specification-checkout composer check
 ```
 
 Install the tracked pre-commit hook once per clone:
@@ -261,7 +272,9 @@ DDL snapshots. Other engines retain family policies; the packaged Dolt write
 list is limited to the exact 2.2.2 and 2.2.3 versions tested by existing CI.
 It does not infer evidence or support for any other patch.
 
-Optional SELECT-only export coverage (also usable on Dolt 2.3.0) creates and
+CI runs `DoltReadOnlyExportTest` on both exact Dolt 2.2.2 and 2.2.3 with
+root/root admin credentials. Locally opt-in SELECT-only export coverage
+(also usable on Dolt 2.3.0) creates and
 removes its own unique test database and user. It checks SAV/ZSAV output, failure
 safety and unchanged working/staged roots and history, without expanding write
 support:

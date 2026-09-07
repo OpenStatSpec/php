@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: OpenStatSpec/specification
-          ref: cd8f198c68b849eb8ed018a894670a0904c2181d
+          ref: 864e84479f554b8ee250ffed44c4dfb963750d4a
           path: openstatspec-specification
       - uses: shivammathur/setup-php@v2
         with:
@@ -63,7 +63,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: OpenStatSpec/specification
-          ref: cd8f198c68b849eb8ed018a894670a0904c2181d
+          ref: 864e84479f554b8ee250ffed44c4dfb963750d4a
           path: openstatspec-specification
       - uses: shivammathur/setup-php@v2
         with:
@@ -110,7 +110,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: OpenStatSpec/specification
-          ref: cd8f198c68b849eb8ed018a894670a0904c2181d
+          ref: 864e84479f554b8ee250ffed44c4dfb963750d4a
           path: openstatspec-specification
       - uses: shivammathur/setup-php@v2
         with:
@@ -156,7 +156,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: OpenStatSpec/specification
-          ref: cd8f198c68b849eb8ed018a894670a0904c2181d
+          ref: 864e84479f554b8ee250ffed44c4dfb963750d4a
           path: openstatspec-specification
       - uses: shivammathur/setup-php@v2
         with:
@@ -196,6 +196,9 @@ jobs:
       OPENSTATSPEC_DOLT_PASSWORD: openstatspec
       OPENSTATSPEC_DOLT_ADMIN_USER: root
       OPENSTATSPEC_DOLT_ADMIN_PASSWORD: root
+      OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_DSN: mysql:host=127.0.0.1;port=3306;charset=utf8mb4
+      OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_USER: root
+      OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_PASSWORD: root
       OPENSTATSPEC_EXPECTED_DOLT_VERSION: ${{ matrix.dolt.version }}
     steps:
       - uses: actions/checkout@v7
@@ -203,7 +206,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: OpenStatSpec/specification
-          ref: cd8f198c68b849eb8ed018a894670a0904c2181d
+          ref: 864e84479f554b8ee250ffed44c4dfb963750d4a
           path: openstatspec-specification
       - uses: shivammathur/setup-php@v2
         with:
@@ -218,4 +221,4 @@ jobs:
           done
           exit 1
       - run: composer install --no-interaction --prefer-dist
-      - run: vendor/bin/phpunit --filter "DoltSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest|OfficialInPlaceTransformation01Test|OfficialInPlaceTransformation02Test"
+      - run: vendor/bin/phpunit --filter "DoltReadOnlyExportTest|DoltSpssRoundTripTest|ServerVersionEvidenceTest|ServerCatalogMigrationTest|StrictSpssDictionaryConformanceTest|OfficialSpssConformanceManifestTest|InPlaceTransformationServiceTest|OfficialInPlaceTransformation01Test|OfficialInPlaceTransformation02Test"

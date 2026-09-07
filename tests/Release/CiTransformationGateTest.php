@@ -32,6 +32,19 @@ final class CiTransformationGateTest extends TestCase
         );
     }
 
+    public function testDoltSelectOnlyExportGateHasAdminCredentials(): void
+    {
+        $workflow = file_get_contents(dirname(__DIR__, 2) . '/.github/workflows/ci.yml');
+        self::assertIsString($workflow);
+        $job = $this->job($workflow, 'dolt-integration');
+        $environment = $this->environment($job, 6);
+
+        self::assertSame('mysql:host=127.0.0.1;port=3306;charset=utf8mb4', $environment['OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_DSN'] ?? null);
+        self::assertSame('root', $environment['OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_USER'] ?? null);
+        self::assertSame('root', $environment['OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_PASSWORD'] ?? null);
+        self::assertMatchesRegularExpression('/vendor\/bin\/phpunit --filter "[^"\r\n]*DoltReadOnlyExportTest/', $job);
+    }
+
     private function job(string $workflow, string $name): string
     {
         $matched = preg_match(
