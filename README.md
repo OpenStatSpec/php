@@ -6,7 +6,7 @@ It imports an unencrypted SPSS `.sav` or `.zsav` dataset into a relational datab
 
 ## Status
 
-PHP v0.7.0 targets released OpenStatSpec specification `v0.5.0` at immutable
+PHP v0.7.1 targets released OpenStatSpec specification `v0.5.0` at immutable
 commit `864e84479f554b8ee250ffed44c4dfb963750d4a`
 (`specification_status: released`). Composer derives the package version from its
 Git tag; it is independent of the specification version.

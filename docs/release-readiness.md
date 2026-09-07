@@ -1,6 +1,6 @@
 # PHP adapter release readiness
 
-This page records the release contract for PHP adapter v0.7.0. It does not mean
+This page records the release contract for PHP adapter v0.7.1. It does not mean
 that a package tag or Packagist publication has happened. Composer derives the
 package version from the Git tag; `composer.json` has no `version` key.
 
@@ -11,7 +11,7 @@ released OpenStatSpec specification `v0.5.0` at exact commit
 `864e84479f554b8ee250ffed44c4dfb963750d4a`, with
 `specification_status: released`.
 
-Release v0.7.0 selects `database_io_policy: openstatspec-database-io-v1`.
+Release v0.7.1 selects `database_io_policy: openstatspec-database-io-v1`.
 SAV/ZSAV export is database-read-only, including failures, and no longer returns
 `SpssExportResult::operationId` or writes operation/fidelity audit records.
 Initialize or upgrade the catalogue with `SpssAdapter::migrateCatalog()` using a
@@ -32,7 +32,7 @@ caller-owned Dolt commit rules remain unchanged; see the
 
 ## Required gates
 
-Before tagging v0.7.0:
+Before tagging v0.7.1:
 
 1. Verify `git rev-parse HEAD` in the specification checkout equals
    `864e84479f554b8ee250ffed44c4dfb963750d4a`, and the published `v0.5.0` tag
@@ -68,8 +68,8 @@ Before tagging v0.7.0:
 7. Confirm README, changelog, and release notes agree on the exact specification
    pin, breaking export changes, initialization requirement, and Dolt defaults.
    Run `composer install --dry-run --no-dev` and
-   `composer archive --format=zip --dir=/tmp/openstatspec-php-v070-package`;
+   `composer archive --format=zip --dir=/tmp/openstatspec-php-v071-package`;
    inspect the archive without publishing it. No separate build is required.
 8. Publication is a separate maintainer action: create and verify annotated
-   tag `v0.7.0` on the reviewed `main` commit, publish the GitHub release, and
+   tag `v0.7.1` on the reviewed `main` commit, publish the GitHub release, and
    confirm Packagist installation. Do not infer publication from this checklist.

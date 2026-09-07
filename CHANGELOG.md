@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1] - 2026-09-07
+
+### Changed
+
+- Updated the installed and exact CI-tested `openstatspec/spss-sav` codec from
+  3.0.3 to 3.0.4 and aligned engine capability declarations and conformance tests.
+- No adapter API, specification pin, or database support changes.
+
 ## [0.7.0] - 2026-09-07
 
 ### Changed
