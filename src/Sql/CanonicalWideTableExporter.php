@@ -78,7 +78,12 @@ final readonly class CanonicalWideTableExporter
                 label: $variable['variable_label'] === null ? null : $this->text($variable['variable_label']),
                 valueLabels: new ValueLabelSet($labels, [$name]),
                 missingValues: $this->missingValues($variableId),
-                measure: Measure::tryFrom($this->integer($variable['measurement_level'] ?? 0)) ?? Measure::UNKNOWN,
+                measure: match ($variable['measurement_level']) {
+                    'nominal' => Measure::NOMINAL,
+                    'ordinal' => Measure::ORDINAL,
+                    'scale' => Measure::SCALE,
+                    default => Measure::tryFrom($this->integer($variable['measurement_level'] ?? 0)) ?? Measure::UNKNOWN,
+                },
                 alignment: Alignment::tryFrom($this->integer($variable['display_alignment'] ?? 0)) ?? Alignment::LEFT,
                 columns: max(0, $this->integer($variable['display_width'] ?? 8)),
                 role: VariableRole::tryFrom($this->integer($variable['variable_role'] ?? 0)) ?? throw $this->invalid('Invalid variable role.'),
@@ -147,9 +152,16 @@ final readonly class CanonicalWideTableExporter
     /** @param array<string, mixed> $variable */
     private function format(array $variable, string $prefix, VariableType $type): VariableFormat
     {
+        if ($type === VariableType::NUMERIC
+            && ($variable[$prefix . '_format_family'] ?? null) === null
+            && ($variable[$prefix . '_format_width'] ?? null) === null
+            && ($variable[$prefix . '_format_decimals'] ?? null) === null
+        ) {
+            return new VariableFormat(5, 8, 2);
+        }
         $width = $this->integer($variable[$prefix . '_format_width']);
         return new VariableFormat(
-            $this->integer($variable[$prefix . '_format_family']),
+            $variable[$prefix . '_format_family'] === 'F' ? 5 : $this->integer($variable[$prefix . '_format_family']),
             $type === VariableType::STRING ? min($width, 255) : $width,
             $this->integer($variable[$prefix . '_format_decimals']),
         );

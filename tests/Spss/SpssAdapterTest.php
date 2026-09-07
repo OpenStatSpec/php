@@ -11,6 +11,11 @@ use OpenStatSpec\Spss\PhpSpssEngine;
 use OpenStatSpec\Spss\SpssAdapter;
 use OpenStatSpec\Spss\SpssSourceNormalizer;
 use OpenStatSpec\Sql\CatalogOwnership;
+use OpenStatSpec\Sql\Connection;
+use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
+use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
+use OpenStatSpec\Transformation\Plan\PlanCodec;
+use PHPUnit\Framework\Attributes\DataProvider;
 use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Sql\SqliteWideTableImporter;
 use OpenStatSpec\Tests\Support\FakeSpssEngine;
@@ -165,12 +170,23 @@ final class SpssAdapterTest extends TestCase
         }
     }
 
-    public function testExportRejectsInvalidNormativeMetadataWithoutTouchingDestinationOrDatabase(): void
+    /** @return iterable<string, array{string}> */
+    public static function invalidExportMetadata(): iterable
+    {
+        yield 'storage' => ["storage_kind = 'invalid'"];
+        yield 'unknown format' => ["print_format_family = 'invalid'"];
+        yield 'empty format' => ["print_format_family = ''"];
+        yield 'partial format' => ['print_format_width = NULL'];
+        yield 'unknown measurement' => ["measurement_level = 'invalid'"];
+    }
+
+    #[DataProvider('invalidExportMetadata')]
+    public function testExportRejectsInvalidNormativeMetadataWithoutTouchingDestinationOrDatabase(string $assignment): void
     {
         $pdo = new PDO('sqlite::memory:');
         $adapter = new SpssAdapter($pdo, new FakeSpssEngine($this->fixture()));
         $adapter->import('fixture.sav', 'invalid dictionary');
-        $pdo->exec("UPDATE variable SET storage_kind = 'invalid' WHERE source_ordinal = 1");
+        $pdo->exec("UPDATE variable SET $assignment WHERE source_ordinal = 1");
         $before = self::rows($pdo, 'SELECT total_changes() AS changes');
         $pdo->exec('PRAGMA query_only = ON');
         $target = sys_get_temp_dir() . '/oss-' . bin2hex(random_bytes(8)) . '.sav';
@@ -732,6 +748,63 @@ final class SpssAdapterTest extends TestCase
                 [],
                 self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table'"),
             );
+        }
+    }
+
+    /** @return iterable<string, array{list<array<string, mixed>>, ?Measure}> */
+    public static function exportTransformations(): iterable
+    {
+        yield 'format' => [[['op' => 'set_format', 'variable' => 'Respondent_ID', 'family' => 'F', 'width' => 10, 'decimals' => 2]], null];
+        foreach (['nominal' => Measure::NOMINAL, 'ordinal' => Measure::ORDINAL, 'scale' => Measure::SCALE] as $level => $measure) {
+            yield $level => [[['op' => 'set_measurement_level', 'variable' => 'Respondent_ID', 'level' => $level]], $measure];
+        }
+        yield 'assignment target' => [[['op' => 'assign', 'target' => 'Created', 'target_mode' => 'create', 'value' => ['kind' => 'variable', 'variable' => 'Respondent_ID']]], null];
+        yield 'recode target' => [[['op' => 'recode', 'source' => 'Respondent_ID', 'target' => 'Created', 'target_mode' => 'create', 'rules' => [['match' => ['kind' => 'values', 'values' => [['type' => 'binary64', 'bits' => '401c000000000000']]], 'result' => ['kind' => 'copy']]], 'unmatched' => ['kind' => 'copy']]], null];
+    }
+
+    /** @param list<array<string, mixed>> $operations */
+    #[DataProvider('exportTransformations')]
+    public function testRealExportAfterTransformation(array $operations, ?Measure $measure): void
+    {
+        $source = sys_get_temp_dir() . '/oss-transform-' . bin2hex(random_bytes(8)) . '.sav';
+        $target = $source . '.zsav';
+        $engine = new PhpSpssEngine();
+        $pdo = new PDO('sqlite::memory:');
+        $adapter = new SpssAdapter($pdo, $engine);
+        try {
+            $engine->write($source, $this->engineFixture());
+            $adapter->import($source, 'transformed');
+            // Imported IDs currently have random UUID variant bits; use a valid apply binding.
+            $pdo->exec('PRAGMA foreign_keys = OFF');
+            foreach (['dataset', 'variable', 'value_label_set', 'dataset_weight_variable', 'document', 'fidelity_event'] as $table) {
+                $pdo->exec("UPDATE $table SET dataset_id = '018f47f2-8b6a-4c3d-8e1f-123456789abc' WHERE dataset_id IS NOT NULL");
+            }
+            $pdo->exec('PRAGMA foreign_keys = ON');
+            $dataset = self::rows($pdo, 'SELECT dataset_id, source_hash FROM dataset')[0];
+            $plan = (new PlanCodec())->fromArray(['contract' => 'openstatspec-transformation-plan-v0.2', 'input_alias' => 'parent', 'operations' => $operations]);
+            (new InPlaceTransformationExecutor(new Connection($pdo)))->execute(new InPlaceApplyRequest($plan, 'parent', $dataset['dataset_id'], $dataset['source_hash'], 'export regression'));
+            $before = self::rows($pdo, 'SELECT total_changes() AS changes');
+            $pdo->exec('PRAGMA query_only = ON');
+            foreach (['sav', 'zsav'] as $format) {
+                $target = $source . '.' . $format;
+                $adapter->export('transformed', $target);
+                $read = $engine->read($target);
+                $created = isset($operations[0]['target']);
+                self::assertSame($created ? [[7.0, 'blue', 7.0], [8.0, 'green', 8.0]] : $this->engineFixture()->rows(), $read->rows());
+                self::assertSame($measure ?? Measure::SCALE, $read->variables()[0]->measure);
+                $expected = new VariableFormat(5, $operations[0]['op'] === 'set_format' ? 10 : 8, $operations[0]['op'] === 'set_format' ? 2 : 0);
+                self::assertEquals($expected, $read->variables()[0]->printFormat);
+                self::assertEquals($expected, $read->variables()[0]->writeFormat);
+                if ($created) {
+                    self::assertEquals(new VariableFormat(5, 8, 2), $read->variables()[2]->printFormat);
+                    self::assertEquals(new VariableFormat(5, 8, 2), $read->variables()[2]->writeFormat);
+                }
+                self::assertSame($before, self::rows($pdo, 'SELECT total_changes() AS changes'));
+                unlink($target);
+            }
+        } finally {
+            @unlink($source);
+            @unlink($target);
         }
     }
 
