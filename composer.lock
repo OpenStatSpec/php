@@ -67,16 +67,16 @@
         },
         {
             "name": "openstatspec/spss-sav",
-            "version": "3.0.3",
+            "version": "3.1.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/OpenStatSpec/php-spss.git",
-                "reference": "6c42f7273c741c4117a841cd767eb4434ac92a4b"
+                "reference": "249f8a0b3a46dc503cc24f42a5c8f629e421a60b"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/OpenStatSpec/php-spss/zipball/6c42f7273c741c4117a841cd767eb4434ac92a4b",
-                "reference": "6c42f7273c741c4117a841cd767eb4434ac92a4b",
+                "url": "https://api.github.com/repos/OpenStatSpec/php-spss/zipball/249f8a0b3a46dc503cc24f42a5c8f629e421a60b",
+                "reference": "249f8a0b3a46dc503cc24f42a5c8f629e421a60b",
                 "shasum": ""
             },
             "require": {
@@ -87,7 +87,7 @@
             },
             "require-dev": {
                 "friendsofphp/php-cs-fixer": "^3.95",
-                "infection/infection": "^0.34",
+                "infection/infection": "^0.34 || ^0.35",
                 "php-parallel-lint/php-parallel-lint": "^1.4",
                 "phpstan/phpstan": "^2.2",
                 "phpstan/phpstan-phpunit": "^2.0",
@@ -213,7 +213,7 @@
                 "issues": "https://github.com/OpenStatSpec/php-spss/issues",
                 "source": "https://github.com/OpenStatSpec/php-spss"
             },
-            "time": "2026-08-03T08:08:43+00:00"
+            "time": "2026-09-07T18:47:21+00:00"
         }
     ],
     "packages-dev": [
@@ -4735,5 +4735,5 @@
     "platform-overrides": {
         "php": "8.4.1"
     },
-    "plugin-api-version": "2.6.0"
+    "plugin-api-version": "2.9.0"
 }
