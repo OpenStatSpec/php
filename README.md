@@ -66,8 +66,21 @@ $import = $adapter->import('/data/survey.zsav', 'survey_2026');
 // SpssImportResult: operationId, datasetName, caseCount, diagnostics
 
 $export = $adapter->export('survey_2026', '/data/survey-export.sav');
-// SpssExportResult: operationId, datasetName, caseCount, diagnostics, allowLoss
+// SpssExportResult: datasetName, targetPath, caseCount, diagnostics, allowLoss
 ```
+
+Export needs only read access to an already migrated catalogue and its wide
+tables. It reads authoritative normative metadata directly and never initializes,
+migrates, synchronizes compatibility tables, or writes database audit records—even
+on failure. `SpssExportResult` no longer has `operationId`; export creates no
+`operation_id`. Diagnostics and accepted loss codes remain in the result.
+The destination is replaced only after successful writing to a temporary file in
+its directory; a writer failure preserves an existing destination. Injected
+engines receive that temporary path and must use the Dataset's target format.
+
+Server identity is still checked for reads, but export does not require a packaged
+write-version claim or any external support declaration. Import, migration and
+transformation write safeguards and tested server versions are unchanged.
 
 Use `GuardedImportSpssEngine` when an engine must read from an ephemeral
 descriptor while the adapter and database receive only a logical source path:
@@ -110,7 +123,7 @@ $export = $adapter->export(
 );
 ```
 
-Pass only loss codes consciously accepted for that conversion. `operation_catalog` records successful and failed imports/exports; `fidelity_event_catalog` records emitted diagnostics. A failed preflight is therefore auditable even when it created no dataset. Each operation also records the selected SPSS engine package and Composer version in engine_details.
+Pass only loss codes consciously accepted for that conversion. `operation_catalog` records journaled imports; `fidelity_event_catalog` records their emitted diagnostics. Import preflight failures after catalogue readiness are auditable even when no dataset was created. Each journaled import also records the selected SPSS engine package and Composer version in `engine_details`. Export returns diagnostics or throws without recording an operation.
 
 ## Transformation API
 
@@ -243,7 +256,21 @@ MySQL 8.4.11/9.7.2, MariaDB 11.4.12/11.8.8/12.3.2, and Dolt
 Those checks use their PDO drivers and php-spss V3 read/write paths, not only
 DDL snapshots. Family policies remain runtime claims and exact patches are CI
 evidence points; Dolt's 2.2.x family claim additionally has an explicit 2.2.2
-minimum and 2.3.0 exclusive upper bound.
+minimum and 2.3.0 exclusive upper bound for writes.
+
+Optional SELECT-only export coverage (also usable on Dolt 2.3.0) creates and
+removes its own unique test database and user. It checks SAV/ZSAV output, failure
+safety and unchanged working/staged roots and history, without expanding write
+support:
+
+```bash
+OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_DSN='mysql:host=127.0.0.1;port=13387;charset=utf8mb4' \
+  vendor/bin/phpunit tests/Integration/DoltReadOnlyExportTest.php
+```
+
+The test defaults to `root` with an empty password; optional
+`OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_USER` and
+`OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_PASSWORD` override these test credentials.
 
 ## Contributing
 

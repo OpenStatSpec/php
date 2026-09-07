@@ -93,6 +93,17 @@ final class CatalogOwnership
 
     public static function assertReadyForUse(PDO $pdo): void
     {
+        self::assertReady($pdo, true);
+    }
+
+    /** Reads and transformation preflight must never initialize a namespace. */
+    public static function assertReadyForUseReadOnly(PDO $pdo): void
+    {
+        self::assertReady($pdo, false);
+    }
+
+    private static function assertReady(PDO $pdo, bool $initialize): void
+    {
         if (self::tableExists($pdo, self::IDENTITY_TABLE)) {
             if (self::validateIdentity($pdo) < self::SCHEMA_VERSION || !self::currentMigrationComplete($pdo)) {
                 throw self::migrationRequired();
@@ -118,22 +129,12 @@ final class CatalogOwnership
             throw self::collision('The active database namespace contains unowned catalogue objects: ' . implode(', ', $collisions) . '.');
         }
 
-        self::ensure($pdo);
-        throw self::migrationRequired();
-    }
-
-    /** Transformation preflight must never initialize a fresh namespace. */
-    public static function assertReadyForUseReadOnly(PDO $pdo): void
-    {
-        if (!self::tableExists($pdo, self::IDENTITY_TABLE)
-            && !self::tableExists($pdo, self::MIGRATION_TABLE)
-            && self::catalogCollisions($pdo) === []
-            && self::namespaceObjects($pdo) === []
-        ) {
-            throw self::migrationRequired();
+        if ($initialize) {
+            self::ensure($pdo);
+        } elseif (($objects = self::namespaceObjects($pdo)) !== []) {
+            throw self::collision('A fresh OpenStatSpec claim requires an empty namespace; found: ' . implode(', ', self::objectLabels($objects)) . '.');
         }
-
-        self::assertReadyForUse($pdo);
+        throw self::migrationRequired();
     }
 
     public static function isFreshPending(PDO $pdo): bool

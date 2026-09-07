@@ -13,6 +13,7 @@ final class FakeSpssEngine implements SpssEngine
     /** @var list<array{targetPath: string, dataset: Dataset}> */
     private array $writes = [];
     private ?string $lastReadPath = null;
+    public ?Throwable $writeFailure = null;
 
     /** @param ?array<string, mixed> $identityOverride */
     public function __construct(
@@ -83,6 +84,10 @@ final class FakeSpssEngine implements SpssEngine
     public function write(string $targetPath, Dataset $dataset): void
     {
         $this->writes[] = ['targetPath' => $targetPath, 'dataset' => $dataset];
+        if ($this->writeFailure !== null) {
+            file_put_contents($targetPath, 'partial output');
+            throw $this->writeFailure;
+        }
     }
 
     /** @return array{targetPath: string, dataset: Dataset} */
