@@ -9,8 +9,11 @@ It imports an unencrypted SPSS `.sav` or `.zsav` dataset into a relational datab
 This is an early reference implementation. Its round-trip contract is **semantic**, not byte-identical: supported cases, order, variables, values, dictionary metadata and technical metadata are preserved; compression layout, timestamps and other writer-specific bytes are not promised.
 
 SQLite, PostgreSQL 17.x/18.x, MySQL 8.4.x/9.7.x, MariaDB
-11.4.x/11.8.x/12.3.x and Dolt 2.2.x with the explicit
-`>=2.2.2,<2.3.0` floor/range are implemented PDO profiles.
+11.4.x/11.8.x/12.3.x and exact Dolt 2.2.2/2.2.3 are implemented PDO write profiles.
+The SAV/ZSAV 1.0 capability declaration selects
+`database_io_policy: openstatspec-database-io-v1`: exports are database-read-only,
+and default Dolt writes use the packaged exact-version policy without external
+declaration files. Unknown patches (including 2.2.4) fail before mutation.
 Server-family claims are conservative compatibility policies; CI records exact
 evidence at PostgreSQL 17.10/18.4, MySQL 8.4.11/9.7.2 and MariaDB
 11.4.12/11.8.8/12.3.2, and Dolt 2.2.2/2.2.3. Each service job verifies its live normalized product
@@ -24,7 +27,7 @@ version before the run counts as evidence.
 | PostgreSQL / `postgresql` | 17.x and 18.x | 17.10 and 18.4 |
 | MySQL / `mysql` | 8.4.x and 9.7.x | 8.4.11 and 9.7.2 |
 | MariaDB / `mariadb` | 11.4.x, 11.8.x, and 12.3.x | 11.4.12, 11.8.8, and 12.3.2 |
-| Dolt / `dolt` | 2.2.x family with `>=2.2.2,<2.3.0` | 2.2.2 and 2.2.3 |
+| Dolt / `dolt` | Writes: exact 2.2.2 and 2.2.3 only | 2.2.2 and 2.2.3 |
 
 The PHP SQLite core profile remains `>=3.24.0,<4.0.0`. The Python adapter's
 optional Transformation Workflow has its own narrower `>=3.35.0,<4.0.0`
@@ -254,9 +257,9 @@ SAV and ZSAV integration round trips against exact PostgreSQL 17.10/18.4,
 MySQL 8.4.11/9.7.2, MariaDB 11.4.12/11.8.8/12.3.2, and Dolt
 2.2.2/2.2.3.
 Those checks use their PDO drivers and php-spss V3 read/write paths, not only
-DDL snapshots. Family policies remain runtime claims and exact patches are CI
-evidence points; Dolt's 2.2.x family claim additionally has an explicit 2.2.2
-minimum and 2.3.0 exclusive upper bound for writes.
+DDL snapshots. Other engines retain family policies; the packaged Dolt write
+list is limited to the exact 2.2.2 and 2.2.3 versions tested by existing CI.
+It does not infer evidence or support for any other patch.
 
 Optional SELECT-only export coverage (also usable on Dolt 2.3.0) creates and
 removes its own unique test database and user. It checks SAV/ZSAV output, failure

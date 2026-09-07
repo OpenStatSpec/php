@@ -31,9 +31,10 @@ final class ServerVersionPolicyTest extends TestCase
         yield 'MariaDB old' => ['mariadb', '10.11.11-MariaDB', false, null];
         yield 'MariaDB unclaimed family' => ['mariadb', '11.5.0-MariaDB', false, null];
         yield 'MariaDB future family' => ['mariadb', '12.4.0-MariaDB', false, null];
-        yield 'Dolt floor supported' => ['dolt', '2.2.2', true, 'Dolt 2.2.x (>=2.2.2 <2.3.0)'];
-        yield 'Dolt exact latest CI release supported' => ['dolt', '2.2.3', true, 'Dolt 2.2.x (>=2.2.2 <2.3.0)'];
-        yield 'Dolt future patch supported' => ['dolt', '2.2.999', true, 'Dolt 2.2.x (>=2.2.2 <2.3.0)'];
+        yield 'Dolt floor supported' => ['dolt', '2.2.2', true, 'Dolt 2.2.2 or 2.2.3'];
+        yield 'Dolt exact latest CI release supported' => ['dolt', '2.2.3', true, 'Dolt 2.2.2 or 2.2.3'];
+        yield 'Dolt unknown patch rejected' => ['dolt', '2.2.4', false, null];
+        yield 'Dolt future patch rejected' => ['dolt', '2.2.999', false, null];
         yield 'Dolt below floor 2.2.0' => ['dolt', '2.2.0', false, null];
         yield 'Dolt below floor 2.2.1' => ['dolt', '2.2.1', false, null];
         yield 'Dolt previous family' => ['dolt', '2.1.999', false, null];
@@ -93,7 +94,7 @@ final class ServerVersionPolicyTest extends TestCase
         self::assertSame($expected, ServerVersionPolicy::normalize($profile, $version));
     }
 
-    public function testDoltBelowFloorFailsBeforeDdl(): void
+    public function testDoltUnknownPatchFailsBeforeDdl(): void
     {
         $pdo = $this->createMock(PDO::class);
         $pdo->method('getAttribute')->willReturnCallback(static fn(int $attribute): string => match ($attribute) {
@@ -105,7 +106,7 @@ final class ServerVersionPolicyTest extends TestCase
             $value = match ($query) {
                 'SELECT @@version' => '8.0.33',
                 'SELECT @@version_comment' => 'Dolt',
-                'SELECT DOLT_VERSION()' => '2.2.1',
+                'SELECT DOLT_VERSION()' => '2.2.4',
                 default => throw new \LogicException('Unexpected identity probe: ' . $query),
             };
             $statement = $this->createMock(PDOStatement::class);
@@ -119,10 +120,10 @@ final class ServerVersionPolicyTest extends TestCase
         $adapter = new SpssAdapter($pdo);
         try {
             $adapter->migrateCatalog();
-            self::fail('A Dolt release below the claimed floor was accepted.');
+            self::fail('An untested Dolt patch was accepted.');
         } catch (UnsupportedOperation $exception) {
             self::assertSame(DiagnosticCode::TargetCapabilityExceeded, $exception->diagnosticCode);
-            self::assertStringContainsString('outside the claimed profile Dolt 2.2.x (>=2.2.2 <2.3.0)', $exception->getMessage());
+            self::assertStringContainsString('outside the claimed profile Dolt 2.2.2 or 2.2.3', $exception->getMessage());
         }
     }
 
