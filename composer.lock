@@ -67,7 +67,7 @@
         },
         {
             "name": "openstatspec/spss-sav",
-            "version": "3.0.4",
+            "version": "3.1.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/OpenStatSpec/php-spss.git",
