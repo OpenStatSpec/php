@@ -38,7 +38,7 @@ final class ServerIdentityTest extends TestCase
 
         $connection = new Connection($pdo);
         self::assertTrue($connection->claimedSupported);
-        self::assertSame('Dolt 2.2.x (>=2.2.2 <2.3.0)', $connection->matchedClaim);
+        self::assertSame('Dolt 2.2.2 or 2.2.3', $connection->matchedClaim);
         self::assertInstanceOf(DoltProfile::class, $connection->profile);
     }
 

@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.7.0] - Unreleased
+
+### Changed
+
+- Pin capabilities and all CI fixtures to released OpenStatSpec specification
+  `v0.5.0` at immutable commit `864e84479f554b8ee250ffed44c4dfb963750d4a`.
+  Report `specification_status: released` and select the optional
+  `database_io_policy: openstatspec-database-io-v1` contract.
+- **Breaking:** SAV/ZSAV export is database-read-only, including failures; it
+  no longer creates operation or fidelity audit records. Initialize or upgrade
+  the catalogue with `SpssAdapter::migrateCatalog()` on a write-capable deployment
+  connection before export. Unready catalogues fail with
+  `catalog_migration_required`; export never initializes or migrates them.
+- Export authoritative normative metadata, including transformed labels and
+  numeric format defaults. Publish output only after a successful temporary-file
+  write, preserving an existing destination on writer failure. Injected engines
+  receive the temporary path and must use the Dataset's target format.
+- **Breaking:** Default Dolt writes now support exactly 2.2.2 and 2.2.3, not
+  the previous patch range. No external declaration files are required; unknown
+  versions (including 2.2.4) fail before mutation. Read-only exports verify
+  server identity without requiring a supported write version.
+- Keep Transformation Plan 0.1/0.2, SPSS Syntax Frontend 0.2, and In-Place
+  Transformation 0.1/0.2 claims unchanged. Optional 0.3 contracts in the new
+  specification are not implemented or claimed.
+- Run the real SELECT-only Dolt export regression in CI on both exact supported
+  versions, checking SAV/ZSAV output, failure safety, and unchanged roots/history.
+
+### Removed
+
+- **Breaking:** Remove `SpssExportResult::operationId` and its constructor
+  argument. Export creates no `operation_id`; diagnostics and accepted loss
+  codes remain available in the result. Import operation IDs are unchanged.
+
 ## [0.6.0] - 2026-08-21
 
 ### Added
@@ -89,6 +122,7 @@
   specification v0.1.0 at commit `d287c2cde9ade71f04e27dd012caec876901aed5`.
 
 [Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.6.0...HEAD
+[0.7.0]: https://github.com/OpenStatSpec/php/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/OpenStatSpec/php/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/OpenStatSpec/php/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/OpenStatSpec/php/compare/v0.3.0...v0.4.0

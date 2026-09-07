@@ -30,7 +30,7 @@ The public `SpssAdapter` chooses a profile from the PDO driver:
 | `sqlite` | SQLite | in-memory unit and round-trip suite |
 | `pgsql` | PostgreSQL | 17.x/18.x claim; live 17.10/18.4 SAV/ZSAV CI evidence |
 | `mysql` | MySQL/MariaDB | MySQL 8.4.x/9.7.x and MariaDB 11.4.x/11.8.x/12.3.x claims; live 8.4.11/9.7.2 and 11.4.12/11.8.8/12.3.2 CI evidence |
-| `mysql` | Dolt | 2.2.x claim with `>=2.2.2,<2.3.0` range; live 2.2.2/2.2.3 SAV/ZSAV CI evidence; detected by `@@version_comment` plus `DOLT_VERSION()` |
+| `mysql` | Dolt | Packaged writes on exact 2.2.2/2.2.3 only under `openstatspec-database-io-v1` with SAV/ZSAV 1.0; live CI evidence for those exact versions; detected by `@@version_comment` plus `DOLT_VERSION()` |
 
 Every profile creates the same logical strict-wide layout and metadata catalogue. Physical SQL types, identifier limits and capability preflight are profile-specific. A source that cannot be represented must be rejected before an incomplete substitute is created.
 
@@ -50,9 +50,13 @@ The catalogue is the semantic dictionary for the physical data table. It records
 - typed ordered value labels and all supported user-missing forms;
 - documents and technical file metadata;
 - file/variable attributes, variable sets, multiple-response sets and roles; and
-- import/export operation records and fidelity events.
+- import operation records and fidelity events.
 
-`SpssImportResult` carries an operation ID, dataset name, case count and diagnostics. `SpssExportResult` carries the same operational evidence plus explicitly accepted loss codes.
+`SpssImportResult` carries an operation ID, dataset name, case count and diagnostics. `SpssExportResult` carries dataset name, target path, case count, diagnostics and explicitly accepted loss codes, but no operation ID.
+
+Export reads the singular normative catalogue and existing physical wide table directly. The compatibility catalogue is not synchronized or used as an alternative semantic dictionary; only writer-supported technical provenance fields without normative counterparts are read from `file_technical_metadata`. No export path writes database state, including validation failures, missing catalogues and writer failures. Reads identify the server without requiring a packaged write-version claim. Write safeguards and the tested version matrix remain unchanged.
+
+The writer receives a temporary filesystem path in the destination directory and the target format in the typed Dataset. Only a successful write is published by rename; failure leaves an existing destination intact and removes temporary output. No database staging, copies, temporary tables or audit entries are used. Export does not manage a read transaction; callers needing a consistent snapshot during concurrent edits must supply one.
 
 ## Round trip and fidelity policy
 
@@ -60,7 +64,7 @@ The objective is semantic equivalence for represented features, not byte identit
 
 An exporter may emit machine-readable `FidelityDiagnostic` values for a known loss boundary. Export is fail-closed: it refuses to write until each emitted diagnostic code is present in the caller's `allowLoss` list. That makes intentional lossy conversion explicit rather than silently producing a downgraded file.
 
-The singular OpenStatSpec `operation` and `fidelity_event` tables are the authoritative audit record. Legacy `operation_catalog` and `fidelity_event_catalog` remain mirrored only for transition compatibility. A failed preflight creates a failed `operation` and at least one `fidelity_event` with a null dataset reference, direction, event code, source item and timestamp.
+The singular OpenStatSpec `operation` and `fidelity_event` tables are the authoritative audit record. Legacy `operation_catalog` and `fidelity_event_catalog` remain mirrored only for transition compatibility. An import preflight failure after catalogue readiness creates a failed `operation` and at least one `fidelity_event` with a null dataset reference, direction, event code, source item and timestamp. Export never writes these audit tables.
 
 ## SAV/ZSAV boundary
 
@@ -120,9 +124,9 @@ This package requires neither Yii2 nor Laravel. Applications supply a PDO connec
 Every normal import writes the singular OpenStatSpec catalogue tables from the
 normative schema: `dataset`, `variable`, value-label and missing-rule tables,
 attributes, `document`, variable/multiple-response sets, `operation`, and
-`fidelity_event`. The older plural tables are a compatibility read model for
-existing exports; they are not the standard contract for a newly imported
-dataset.
+`fidelity_event`. The older plural tables remain for compatibility and explicit
+legacy migration; they are not the standard contract for a newly imported
+dataset or the semantic source for public exports.
 
 Before upgrading an existing database explicitly, run:
 
@@ -138,7 +142,7 @@ each exportable legacy dataset into the singular standard tables and provisions
 the compact official transformation-apply audit relation.
 
 A completely empty dedicated namespace is initialized automatically on its
-first ordinary import or export attempt. An existing catalogue is never
+first ordinary import attempt. Export never initializes even an empty namespace. An existing catalogue is never
 upgraded implicitly: when its identity or validated pre-identity state is older,
 ordinary use fails with `catalog_migration_required` before journal or schema
 mutation, and deployment must call `migrateCatalog()` explicitly.

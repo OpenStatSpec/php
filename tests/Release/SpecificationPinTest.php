@@ -10,11 +10,11 @@ use PHPUnit\Framework\TestCase;
 
 final class SpecificationPinTest extends TestCase
 {
-    public function testEverySpecificationCheckoutUsesTheStableReleaseCommit(): void
+    public function testEverySpecificationCheckoutUsesTheReleasedSpecificationCommit(): void
     {
-        self::assertSame('v0.3.0', CapabilityDeclaration::SPECIFICATION_RELEASE);
+        self::assertSame('v0.5.0', CapabilityDeclaration::SPECIFICATION_RELEASE);
         self::assertSame(
-            'cd8f198c68b849eb8ed018a894670a0904c2181d',
+            '864e84479f554b8ee250ffed44c4dfb963750d4a',
             CapabilityDeclaration::SPECIFICATION_COMMIT,
         );
         $workflowFiles = glob(dirname(__DIR__, 2) . '/.github/workflows/*.{yml,yaml}', GLOB_BRACE);

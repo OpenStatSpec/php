@@ -15,7 +15,6 @@ final readonly class SpssExportResult
 {
     /** @param list<FidelityDiagnostic> $diagnostics */
     public function __construct(
-        public string $operationId,
         public string $datasetName,
         public string $targetPath,
         public int $caseCount,

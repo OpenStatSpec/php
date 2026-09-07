@@ -18,9 +18,9 @@ use PDO;
 /** Machine-readable SPSS 1.0 and SQL-profile capability declaration. */
 final readonly class CapabilityDeclaration implements JsonSerializable
 {
-    public const SPECIFICATION_STATUS = 'stable';
-    public const SPECIFICATION_RELEASE = 'v0.3.0';
-    public const SPECIFICATION_COMMIT = 'cd8f198c68b849eb8ed018a894670a0904c2181d';
+    public const SPECIFICATION_STATUS = 'released';
+    public const SPECIFICATION_RELEASE = 'v0.5.0';
+    public const SPECIFICATION_COMMIT = '864e84479f554b8ee250ffed44c4dfb963750d4a';
 
     private Connection $connection;
 
@@ -44,6 +44,7 @@ final readonly class CapabilityDeclaration implements JsonSerializable
             'specification_release' => self::SPECIFICATION_RELEASE,
             'specification_commit' => self::SPECIFICATION_COMMIT,
             'profile' => 'SPSS SAV/ZSAV 1.0',
+            'database_io_policy' => 'openstatspec-database-io-v1',
             'directions' => ['import', 'export', 'semantic_round_trip'],
             'required_capabilities' => $this->engine->capabilities(),
             'engine' => $this->engine->identity(),
@@ -161,10 +162,8 @@ final readonly class CapabilityDeclaration implements JsonSerializable
                 'active_probe_results' => $active ? $this->connection->identityProbeResults : null,
             ] : null,
             'claimed_server_versions' => ServerVersionPolicy::claim($name),
-            'claimed_version_range' => $name === 'dolt' ? [
-                'minimum_inclusive' => '2.2.2',
-                'maximum_exclusive' => '2.3.0',
-            ] : null,
+            'claimed_version_range' => null,
+            'exact_supported_versions' => $name === 'dolt' ? ['2.2.2', '2.2.3'] : null,
             'ci_tested_server_versions' => ServerVersionPolicy::ciTestedVersions($name),
             'exact_ci_tested_versions' => $name === 'dolt' ? ['2.2.2', '2.2.3'] : null,
             'theoretical_limits' => $theoretical,

@@ -6,11 +6,19 @@ It imports an unencrypted SPSS `.sav` or `.zsav` dataset into a relational datab
 
 ## Status
 
+PHP v0.7.0 targets released OpenStatSpec specification `v0.5.0` at immutable
+commit `864e84479f554b8ee250ffed44c4dfb963750d4a`
+(`specification_status: released`). Composer derives the package version from its
+Git tag; it is independent of the specification version.
+
 This is an early reference implementation. Its round-trip contract is **semantic**, not byte-identical: supported cases, order, variables, values, dictionary metadata and technical metadata are preserved; compression layout, timestamps and other writer-specific bytes are not promised.
 
 SQLite, PostgreSQL 17.x/18.x, MySQL 8.4.x/9.7.x, MariaDB
-11.4.x/11.8.x/12.3.x and Dolt 2.2.x with the explicit
-`>=2.2.2,<2.3.0` floor/range are implemented PDO profiles.
+11.4.x/11.8.x/12.3.x and exact Dolt 2.2.2/2.2.3 are implemented PDO write profiles.
+The SAV/ZSAV 1.0 capability declaration selects
+`database_io_policy: openstatspec-database-io-v1`: exports are database-read-only,
+and default Dolt writes use the packaged exact-version policy without external
+declaration files. Unknown patches (including 2.2.4) fail before mutation.
 Server-family claims are conservative compatibility policies; CI records exact
 evidence at PostgreSQL 17.10/18.4, MySQL 8.4.11/9.7.2 and MariaDB
 11.4.12/11.8.8/12.3.2, and Dolt 2.2.2/2.2.3. Each service job verifies its live normalized product
@@ -24,7 +32,7 @@ version before the run counts as evidence.
 | PostgreSQL / `postgresql` | 17.x and 18.x | 17.10 and 18.4 |
 | MySQL / `mysql` | 8.4.x and 9.7.x | 8.4.11 and 9.7.2 |
 | MariaDB / `mariadb` | 11.4.x, 11.8.x, and 12.3.x | 11.4.12, 11.8.8, and 12.3.2 |
-| Dolt / `dolt` | 2.2.x family with `>=2.2.2,<2.3.0` | 2.2.2 and 2.2.3 |
+| Dolt / `dolt` | Writes: exact 2.2.2 and 2.2.3 only | 2.2.2 and 2.2.3 |
 
 The PHP SQLite core profile remains `>=3.24.0,<4.0.0`. The Python adapter's
 optional Transformation Workflow has its own narrower `>=3.35.0,<4.0.0`
@@ -66,8 +74,24 @@ $import = $adapter->import('/data/survey.zsav', 'survey_2026');
 // SpssImportResult: operationId, datasetName, caseCount, diagnostics
 
 $export = $adapter->export('survey_2026', '/data/survey-export.sav');
-// SpssExportResult: operationId, datasetName, caseCount, diagnostics, allowLoss
+// SpssExportResult: datasetName, targetPath, caseCount, diagnostics, allowLoss
 ```
+
+Export needs only read access to an already migrated catalogue and its wide
+tables. Initialize or upgrade the catalogue with `SpssAdapter::migrateCatalog()`
+using a write-capable deployment connection before using a read-only exporter;
+an uninitialized or outdated catalogue fails with `catalog_migration_required`.
+It reads authoritative normative metadata directly and never initializes,
+migrates, synchronizes compatibility tables, or writes database audit records—even
+on failure. `SpssExportResult` no longer has `operationId`; export creates no
+`operation_id`. Diagnostics and accepted loss codes remain in the result.
+The destination is replaced only after successful writing to a temporary file in
+its directory; a writer failure preserves an existing destination. Injected
+engines receive that temporary path and must use the Dataset's target format.
+
+Server identity is still checked for reads, but export does not require a packaged
+write-version claim or any external support declaration. Import, migration and
+transformation write safeguards and tested server versions are unchanged.
 
 Use `GuardedImportSpssEngine` when an engine must read from an ephemeral
 descriptor while the adapter and database receive only a logical source path:
@@ -110,13 +134,15 @@ $export = $adapter->export(
 );
 ```
 
-Pass only loss codes consciously accepted for that conversion. `operation_catalog` records successful and failed imports/exports; `fidelity_event_catalog` records emitted diagnostics. A failed preflight is therefore auditable even when it created no dataset. Each operation also records the selected SPSS engine package and Composer version in engine_details.
+Pass only loss codes consciously accepted for that conversion. `operation_catalog` records journaled imports; `fidelity_event_catalog` records their emitted diagnostics. Import preflight failures after catalogue readiness are auditable even when no dataset was created. Each journaled import also records the selected SPSS engine package and Composer version in `engine_details`. Export returns diagnostics or throws without recording an operation.
 
 ## Transformation API
 
 The adapter claims official Transformation Plan 0.1/0.2, SPSS Syntax Frontend
 0.2, and In-Place Transformation 0.1/0.2 conformance. Compile an alias-based
-frontend request, then bind that alias to the existing dataset at apply time:
+frontend request, then bind that alias to the existing dataset at apply time.
+The specification pin does not claim support for optional Transformation Plan,
+SPSS Syntax Frontend, or In-Place Transformation 0.3.
 
 ```php
 use OpenStatSpec\Frontend\Spss\Request\SpssFrontendRequest;
@@ -225,7 +251,8 @@ Run the local gate before committing:
 
 ```bash
 composer install
-composer check
+# Checkout specification v0.5.0 at 864e84479f554b8ee250ffed44c4dfb963750d4a first.
+OPENSTATSPEC_SPECIFICATION_DIR=/path/to/exact-specification-checkout composer check
 ```
 
 Install the tracked pre-commit hook once per clone:
@@ -241,9 +268,25 @@ SAV and ZSAV integration round trips against exact PostgreSQL 17.10/18.4,
 MySQL 8.4.11/9.7.2, MariaDB 11.4.12/11.8.8/12.3.2, and Dolt
 2.2.2/2.2.3.
 Those checks use their PDO drivers and php-spss V3 read/write paths, not only
-DDL snapshots. Family policies remain runtime claims and exact patches are CI
-evidence points; Dolt's 2.2.x family claim additionally has an explicit 2.2.2
-minimum and 2.3.0 exclusive upper bound.
+DDL snapshots. Other engines retain family policies; the packaged Dolt write
+list is limited to the exact 2.2.2 and 2.2.3 versions tested by existing CI.
+It does not infer evidence or support for any other patch.
+
+CI runs `DoltReadOnlyExportTest` on both exact Dolt 2.2.2 and 2.2.3 with
+root/root admin credentials. Locally opt-in SELECT-only export coverage
+(also usable on Dolt 2.3.0) creates and
+removes its own unique test database and user. It checks SAV/ZSAV output, failure
+safety and unchanged working/staged roots and history, without expanding write
+support:
+
+```bash
+OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_DSN='mysql:host=127.0.0.1;port=13387;charset=utf8mb4' \
+  vendor/bin/phpunit tests/Integration/DoltReadOnlyExportTest.php
+```
+
+The test defaults to `root` with an empty password; optional
+`OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_USER` and
+`OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_PASSWORD` override these test credentials.
 
 ## Contributing
 

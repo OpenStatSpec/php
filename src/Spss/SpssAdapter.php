@@ -8,7 +8,7 @@ use OpenStatSpec\Core\CapabilityDeclaration;
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\FidelityPolicy;
 use OpenStatSpec\Core\UnsupportedOperation;
-use OpenStatSpec\Sql\CanonicalCatalogProjection;
+use OpenStatSpec\Sql\CanonicalWideTableExporter;
 use OpenStatSpec\Sql\CatalogOwnership;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\MySqlWideTableDefinition;
@@ -210,35 +210,34 @@ final readonly class SpssAdapter
     /** @param list<string> $allowLoss */
     public function export(string $datasetName, string $targetPath, array $allowLoss = []): SpssExportResult
     {
-        $this->connection->assertClaimedSupported();
-        $this->ensureCatalogReady();
-        $targetFormat = $this->spssFormat($targetPath);
-        $journal = new OperationJournal($this->connection->pdo);
-        $operationId = $journal->start('export', $datasetName, $targetPath, $allowLoss, $this->engine->identity(), $targetFormat);
-        $diagnostics = [];
-        try {
-            if (!in_array($targetFormat, ['sav', 'zsav'], true)) {
-                throw new UnsupportedOperation(
-                    DiagnosticCode::UnsupportedSourceFormat,
-                    'This adapter profile exports SAV and ZSAV files only.',
-                );
-            }
-            (new CanonicalCatalogProjection($this->connection->pdo))->synchronize($datasetName);
-            $export = match ($this->connection->profile->driverName()) {
-                'pgsql' => (new PostgreSqlWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat),
-                'mysql' => (new MySqlWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat),
-                default => (new SqliteWideTableExporter($this->connection->pdo))->export($datasetName, $targetFormat),
-            };
-            $diagnostics = $export['diagnostics'];
-            FidelityPolicy::assertExportAllowed($diagnostics, $allowLoss);
-            $this->engine->write($targetPath, $export['dataset']);
-            $journal->succeed($operationId, $datasetName, $diagnostics);
+        CatalogOwnership::assertReadyForUseReadOnly($this->connection->pdo);
+        $export = (new CanonicalWideTableExporter($this->connection->pdo))->export($datasetName, $this->spssFormat($targetPath));
+        $diagnostics = $export['diagnostics'];
+        FidelityPolicy::assertExportAllowed($diagnostics, $allowLoss);
 
-            return new SpssExportResult($operationId, $datasetName, $targetPath, $export['caseCount'], $diagnostics, $allowLoss);
-        } catch (Throwable $exception) {
-            $journal->fail($operationId, $datasetName, $exception, $diagnostics, $targetPath);
-            throw $exception;
+        $directory = realpath(dirname($targetPath));
+        if ($directory === false || !is_dir($directory) || !is_writable($directory)) {
+            throw new \RuntimeException('The export destination directory is not writable.');
         }
+        $temporaryPath = tempnam($directory, '.openstatspec-export-');
+        if ($temporaryPath === false) {
+            throw new \RuntimeException('Could not create a temporary export file.');
+        }
+        try {
+            if (dirname($temporaryPath) !== $directory) {
+                throw new \RuntimeException('The temporary export file must be in the destination directory.');
+            }
+            $this->engine->write($temporaryPath, $export['dataset']);
+            if (!rename($temporaryPath, $directory . DIRECTORY_SEPARATOR . basename($targetPath))) {
+                throw new \RuntimeException('Could not publish the exported file.');
+            }
+        } finally {
+            if (is_file($temporaryPath)) {
+                unlink($temporaryPath);
+            }
+        }
+
+        return new SpssExportResult($datasetName, $targetPath, $export['caseCount'], $diagnostics, $allowLoss);
     }
 
     private function spssFormat(string $path): string

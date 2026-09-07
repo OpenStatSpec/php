@@ -11,6 +11,11 @@ use OpenStatSpec\Spss\PhpSpssEngine;
 use OpenStatSpec\Spss\SpssAdapter;
 use OpenStatSpec\Spss\SpssSourceNormalizer;
 use OpenStatSpec\Sql\CatalogOwnership;
+use OpenStatSpec\Sql\Connection;
+use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
+use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
+use OpenStatSpec\Transformation\Plan\PlanCodec;
+use PHPUnit\Framework\Attributes\DataProvider;
 use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Sql\SqliteWideTableImporter;
 use OpenStatSpec\Tests\Support\FakeSpssEngine;
@@ -124,10 +129,99 @@ final class SpssAdapterTest extends TestCase
         self::assertSame([['schema_version' => 1]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
 
         $adapter->migrateCatalog();
-        $result = $adapter->export('Old catalog export', 'old-catalog.sav');
+        $target = sys_get_temp_dir() . '/oss-' . bin2hex(random_bytes(8)) . '.sav';
+        $result = $adapter->export('Old catalog export', $target);
+        unlink($target);
 
         self::assertSame(2, $result->caseCount);
         self::assertSame([['schema_version' => 4]], self::rows($pdo, 'SELECT schema_version FROM catalog_identity'));
+    }
+
+    public function testExportIsReadOnlyAndPreservesDestinationOnWriterFailure(): void
+    {
+        $pdo = new PDO('sqlite::memory:');
+        $engine = new FakeSpssEngine($this->fixture());
+        $adapter = new SpssAdapter($pdo, $engine);
+        $adapter->import('fixture.sav', 'read only');
+        $pdo->exec("UPDATE variable SET variable_label = 'Authoritative label' WHERE source_ordinal = 1");
+        $before = self::rows($pdo, 'SELECT total_changes() AS changes');
+        $pdo->exec('PRAGMA query_only = ON');
+        $target = sys_get_temp_dir() . '/oss-export-' . bin2hex(random_bytes(8)) . '.zsav';
+        try {
+            $result = $adapter->export('read only', $target, allowLoss: ['caller_accepted_loss']);
+            self::assertSame(['caller_accepted_loss'], $result->allowLoss);
+            self::assertSame($target, $result->targetPath);
+            self::assertArrayNotHasKey('operationId', get_object_vars($result));
+            self::assertSame('Authoritative label', $engine->lastWrite()['dataset']->variables()[0]->label);
+            self::assertSame('zsav', $engine->lastWrite()['dataset']->technicalMetadata->sourceFormat);
+            file_put_contents($target, 'existing destination');
+            $engine->writeFailure = new \RuntimeException('writer failed');
+            try {
+                $adapter->export('read only', $target);
+                self::fail('Writer failure was swallowed.');
+            } catch (\RuntimeException $exception) {
+                self::assertSame('writer failed', $exception->getMessage());
+            }
+            self::assertSame('existing destination', file_get_contents($target));
+            self::assertFileDoesNotExist($engine->lastWrite()['targetPath']);
+            self::assertSame($before, self::rows($pdo, 'SELECT total_changes() AS changes'));
+        } finally {
+            @unlink($target);
+        }
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function invalidExportMetadata(): iterable
+    {
+        yield 'storage' => ["storage_kind = 'invalid'"];
+        yield 'unknown format' => ["print_format_family = 'invalid'"];
+        yield 'empty format' => ["print_format_family = ''"];
+        yield 'partial format' => ['print_format_width = NULL'];
+        yield 'unknown measurement' => ["measurement_level = 'invalid'"];
+    }
+
+    #[DataProvider('invalidExportMetadata')]
+    public function testExportRejectsInvalidNormativeMetadataWithoutTouchingDestinationOrDatabase(string $assignment): void
+    {
+        $pdo = new PDO('sqlite::memory:');
+        $adapter = new SpssAdapter($pdo, new FakeSpssEngine($this->fixture()));
+        $adapter->import('fixture.sav', 'invalid dictionary');
+        $pdo->exec("UPDATE variable SET $assignment WHERE source_ordinal = 1");
+        $before = self::rows($pdo, 'SELECT total_changes() AS changes');
+        $pdo->exec('PRAGMA query_only = ON');
+        $target = sys_get_temp_dir() . '/oss-' . bin2hex(random_bytes(8)) . '.sav';
+        file_put_contents($target, 'keep destination');
+        try {
+            $adapter->export('invalid dictionary', $target, allowLoss: ['invalid_source_dataset']);
+            self::fail('allowLoss bypassed invalid dictionary validation.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::InvalidSourceDataset, $exception->diagnosticCode);
+            self::assertSame('keep destination', file_get_contents($target));
+            self::assertSame($before, self::rows($pdo, 'SELECT total_changes() AS changes'));
+        } finally {
+            unlink($target);
+        }
+    }
+
+    public function testExportDoesNotInitializeFreshOrPendingCatalogs(): void
+    {
+        foreach ([false, true] as $pending) {
+            $pdo = new PDO('sqlite::memory:');
+            if ($pending) {
+                CatalogOwnership::ensure($pdo);
+            }
+            $before = self::rows($pdo, 'SELECT * FROM sqlite_master');
+            $changes = self::rows($pdo, 'SELECT total_changes() AS changes');
+            $pdo->exec('PRAGMA query_only = ON');
+            try {
+                (new SpssAdapter($pdo))->export('absent', 'unused.sav');
+                self::fail('Export initialized a catalog.');
+            } catch (UnsupportedOperation $exception) {
+                self::assertSame(DiagnosticCode::CatalogMigrationRequired, $exception->diagnosticCode);
+            }
+            self::assertSame($before, self::rows($pdo, 'SELECT * FROM sqlite_master'));
+            self::assertSame($changes, self::rows($pdo, 'SELECT total_changes() AS changes'));
+        }
     }
 
     public function testReadOnlyFreshInitializationFailureDoesNotCreateCurrentIdentity(): void
@@ -235,20 +329,32 @@ final class SpssAdapterTest extends TestCase
             ],
             self::rows($pdo, 'SELECT set_table.name, set_table.set_type, set_table.counted_value_kind, set_table.counted_text_value, set_table.category_labels, set_table.label_source, member.member_ordinal, member.variable_ordinal FROM multiple_response_sets set_table JOIN multiple_response_set_members member ON member.dataset_name = set_table.dataset_name AND member.set_ordinal = set_table.set_ordinal WHERE set_table.dataset_name = "Customer survey" ORDER BY set_table.set_ordinal, member.member_ordinal'),
         );
-        $result = $adapter->export('Customer survey', 'roundtrip.sav');
+        // A complete dictionary must come from normative rows, not the legacy read model.
+        foreach ([
+            'multiple_response_set_members', 'multiple_response_sets',
+            'variable_set_members', 'variable_sets', 'variable_attributes',
+            'file_attributes', 'variable_roles', 'variable_display_metadata',
+            'missing_rule_values', 'missing_rules', 'value_labels', 'documents',
+            'dataset_metadata', 'dataset_weight_variables', 'variables',
+        ] as $table) {
+            $pdo->exec('DELETE FROM ' . $table);
+        }
+        $pdo->exec('PRAGMA query_only = ON');
+        $target = sys_get_temp_dir() . '/oss-' . bin2hex(random_bytes(8)) . '.sav';
+        $result = $adapter->export('Customer survey', $target);
+        unlink($target);
         $written = $engine->lastWrite()['dataset'];
 
         self::assertSame([], $result->diagnostics);
         self::assertSame([], $result->allowLoss);
-        self::assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/', $result->operationId);
+        self::assertArrayNotHasKey('operationId', get_object_vars($result));
         self::assertSame(
             [
                 ['direction' => 'import', 'status' => 'succeeded', 'dataset_name' => 'Customer survey', 'target_path' => 'fixture.sav', 'allow_loss' => '[]', 'failure_code' => null],
-                ['direction' => 'export', 'status' => 'succeeded', 'dataset_name' => 'Customer survey', 'target_path' => 'roundtrip.sav', 'allow_loss' => '[]', 'failure_code' => null],
             ],
             self::rows($pdo, 'SELECT direction, status, dataset_name, target_path, allow_loss, failure_code FROM operation_catalog ORDER BY rowid'),
         );
-        self::assertSame(["{\"package\":\"fake-spss-engine\",\"version\":\"test\",\"active_version\":\"test\",\"claimed_version_range\":\"test-only\",\"ci_tested_versions\":[\"test\"],\"claimed_supported\":true}", "{\"package\":\"fake-spss-engine\",\"version\":\"test\",\"active_version\":\"test\",\"claimed_version_range\":\"test-only\",\"ci_tested_versions\":[\"test\"],\"claimed_supported\":true}"], array_column(self::rows($pdo, 'SELECT engine_details FROM operation_catalog ORDER BY rowid'), 'engine_details'));
+        self::assertSame(["{\"package\":\"fake-spss-engine\",\"version\":\"test\",\"active_version\":\"test\",\"claimed_version_range\":\"test-only\",\"ci_tested_versions\":[\"test\"],\"claimed_supported\":true}"], array_column(self::rows($pdo, 'SELECT engine_details FROM operation_catalog ORDER BY rowid'), 'engine_details'));
         self::assertSame('Customer survey source', $written->metadata->label);
         self::assertSame('Respondent ID', $written->metadata->weightVariableName);
         self::assertSame(['First document line', 'Second document line'], $written->metadata->documents());
@@ -645,6 +751,63 @@ final class SpssAdapterTest extends TestCase
         }
     }
 
+    /** @return iterable<string, array{list<array<string, mixed>>, ?Measure}> */
+    public static function exportTransformations(): iterable
+    {
+        yield 'format' => [[['op' => 'set_format', 'variable' => 'Respondent_ID', 'family' => 'F', 'width' => 10, 'decimals' => 2]], null];
+        foreach (['nominal' => Measure::NOMINAL, 'ordinal' => Measure::ORDINAL, 'scale' => Measure::SCALE] as $level => $measure) {
+            yield $level => [[['op' => 'set_measurement_level', 'variable' => 'Respondent_ID', 'level' => $level]], $measure];
+        }
+        yield 'assignment target' => [[['op' => 'assign', 'target' => 'Created', 'target_mode' => 'create', 'value' => ['kind' => 'variable', 'variable' => 'Respondent_ID']]], null];
+        yield 'recode target' => [[['op' => 'recode', 'source' => 'Respondent_ID', 'target' => 'Created', 'target_mode' => 'create', 'rules' => [['match' => ['kind' => 'values', 'values' => [['type' => 'binary64', 'bits' => '401c000000000000']]], 'result' => ['kind' => 'copy']]], 'unmatched' => ['kind' => 'copy']]], null];
+    }
+
+    /** @param list<array<string, mixed>> $operations */
+    #[DataProvider('exportTransformations')]
+    public function testRealExportAfterTransformation(array $operations, ?Measure $measure): void
+    {
+        $source = sys_get_temp_dir() . '/oss-transform-' . bin2hex(random_bytes(8)) . '.sav';
+        $target = $source . '.zsav';
+        $engine = new PhpSpssEngine();
+        $pdo = new PDO('sqlite::memory:');
+        $adapter = new SpssAdapter($pdo, $engine);
+        try {
+            $engine->write($source, $this->engineFixture());
+            $adapter->import($source, 'transformed');
+            // Imported IDs currently have random UUID variant bits; use a valid apply binding.
+            $pdo->exec('PRAGMA foreign_keys = OFF');
+            foreach (['dataset', 'variable', 'value_label_set', 'dataset_weight_variable', 'document', 'fidelity_event'] as $table) {
+                $pdo->exec("UPDATE $table SET dataset_id = '018f47f2-8b6a-4c3d-8e1f-123456789abc' WHERE dataset_id IS NOT NULL");
+            }
+            $pdo->exec('PRAGMA foreign_keys = ON');
+            $dataset = self::rows($pdo, 'SELECT dataset_id, source_hash FROM dataset')[0];
+            $plan = (new PlanCodec())->fromArray(['contract' => 'openstatspec-transformation-plan-v0.2', 'input_alias' => 'parent', 'operations' => $operations]);
+            (new InPlaceTransformationExecutor(new Connection($pdo)))->execute(new InPlaceApplyRequest($plan, 'parent', $dataset['dataset_id'], $dataset['source_hash'], 'export regression'));
+            $before = self::rows($pdo, 'SELECT total_changes() AS changes');
+            $pdo->exec('PRAGMA query_only = ON');
+            foreach (['sav', 'zsav'] as $format) {
+                $target = $source . '.' . $format;
+                $adapter->export('transformed', $target);
+                $read = $engine->read($target);
+                $created = isset($operations[0]['target']);
+                self::assertSame($created ? [[7.0, 'blue', 7.0], [8.0, 'green', 8.0]] : $this->engineFixture()->rows(), $read->rows());
+                self::assertSame($measure ?? Measure::SCALE, $read->variables()[0]->measure);
+                $expected = new VariableFormat(5, $operations[0]['op'] === 'set_format' ? 10 : 8, $operations[0]['op'] === 'set_format' ? 2 : 0);
+                self::assertEquals($expected, $read->variables()[0]->printFormat);
+                self::assertEquals($expected, $read->variables()[0]->writeFormat);
+                if ($created) {
+                    self::assertEquals(new VariableFormat(5, 8, 2), $read->variables()[2]->printFormat);
+                    self::assertEquals(new VariableFormat(5, 8, 2), $read->variables()[2]->writeFormat);
+                }
+                self::assertSame($before, self::rows($pdo, 'SELECT total_changes() AS changes'));
+                unlink($target);
+            }
+        } finally {
+            @unlink($source);
+            @unlink($target);
+        }
+    }
+
     public function testPhpSpssEngineWritesAndReadsTypedDataset(): void
     {
         $target = sys_get_temp_dir() . '/openstatspec-v3-' . uniqid('', true) . '.sav';
@@ -856,12 +1019,14 @@ final class SpssAdapterTest extends TestCase
         $adapter->import('fixture.sav', 'canonical fixture');
         $pdo->exec("UPDATE variable SET variable_label = 'Canonical label' WHERE dataset_id = (SELECT dataset_id FROM dataset WHERE dataset_name = 'canonical fixture') AND source_ordinal = 1");
         $pdo->exec("UPDATE variables SET label = 'Legacy-only label' WHERE dataset_name = 'canonical fixture' AND ordinal = 1");
-        $adapter->export('canonical fixture', 'canonical-roundtrip.sav');
+        $target = sys_get_temp_dir() . '/oss-' . bin2hex(random_bytes(8)) . '.sav';
+        $adapter->export('canonical fixture', $target);
+        unlink($target);
 
         self::assertSame('Canonical label', $engine->lastWrite()['dataset']->variables()[0]->label);
         $legacyLabel = $pdo->query("SELECT label FROM variables WHERE dataset_name = 'canonical fixture' AND ordinal = 1");
         self::assertInstanceOf(\PDOStatement::class, $legacyLabel);
-        self::assertSame('Canonical label', $legacyLabel->fetchColumn());
+        self::assertSame('Legacy-only label', $legacyLabel->fetchColumn());
     }
 
     public function testExportRestoresCataloguedTechnicalMetadataWhileTargetDeterminesContainer(): void
@@ -873,7 +1038,9 @@ final class SpssAdapterTest extends TestCase
         $engine = new FakeSpssEngine($this->fixture());
         $adapter = new SpssAdapter(new PDO('sqlite::memory:'), $engine);
         $adapter->import('fixture.zsav', 'technical fixture');
-        $adapter->export('technical fixture', 'technical-roundtrip.sav');
+        $target = sys_get_temp_dir() . '/oss-' . bin2hex(random_bytes(8)) . '.sav';
+        $adapter->export('technical fixture', $target);
+        unlink($target);
 
         $technical = $engine->lastWrite()['dataset']->technicalMetadata;
         self::assertSame('sav', $technical->sourceFormat);
@@ -948,7 +1115,9 @@ final class SpssAdapterTest extends TestCase
             self::rows($pdo, 'SELECT COUNT(*) AS variable_count FROM variable'),
         );
 
-        $export = $adapter->export('Legacy survey', 'legacy-roundtrip.sav');
+        $target = sys_get_temp_dir() . '/oss-' . bin2hex(random_bytes(8)) . '.sav';
+        $export = $adapter->export('Legacy survey', $target);
+        unlink($target);
         self::assertSame(2, $export->caseCount);
         self::assertSame([[7.0, 'blue'], [8.0, 'green']], $engine->lastWrite()['dataset']->rows());
     }

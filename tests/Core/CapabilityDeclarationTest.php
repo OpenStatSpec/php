@@ -15,10 +15,11 @@ final class CapabilityDeclarationTest extends TestCase
     {
         $pdo = new \PDO('sqlite::memory:');
         $declaration = (new CapabilityDeclaration($pdo, new PhpSpssEngine()))->toArray();
-        self::assertSame('stable', $declaration['specification_status']);
-        self::assertSame('v0.3.0', $declaration['specification_release']);
+        self::assertSame('openstatspec-database-io-v1', $declaration['database_io_policy']);
+        self::assertSame('released', $declaration['specification_status']);
+        self::assertSame('v0.5.0', $declaration['specification_release']);
         self::assertSame(CapabilityDeclaration::SPECIFICATION_RELEASE, $declaration['specification_release']);
-        self::assertSame('cd8f198c68b849eb8ed018a894670a0904c2181d', $declaration['specification_commit']);
+        self::assertSame('864e84479f554b8ee250ffed44c4dfb963750d4a', $declaration['specification_commit']);
         self::assertSame(CapabilityDeclaration::SPECIFICATION_COMMIT, $declaration['specification_commit']);
         self::assertMatchesRegularExpression('/^[0-9a-f]{40}$/', $declaration['specification_commit']);
         self::assertSame(['import', 'export', 'semantic_round_trip'], $declaration['directions']);
@@ -75,7 +76,7 @@ final class CapabilityDeclarationTest extends TestCase
             $profile = $declaration['sql_profiles'][$name];
             self::assertSame($name, $profile['profile']);
             self::assertSame(CapabilityDeclaration::SPECIFICATION_COMMIT, $profile['specification_commit']);
-            self::assertSame('stable', $profile['specification_status']);
+            self::assertSame('released', $profile['specification_status']);
             self::assertSame(CapabilityDeclaration::SPECIFICATION_RELEASE, $profile['specification_release']);
             self::assertGreaterThan(0, $profile['theoretical_limits']['maximum_value_bytes']);
             self::assertNotSame('', $profile['claimed_server_versions']);
@@ -103,8 +104,9 @@ final class CapabilityDeclarationTest extends TestCase
                 self::assertSame(307, $profile['observed_limits']['minimum_observed_physical_columns']);
                 self::assertSame(64, $profile['observed_limits']['identifier_limit']['value']);
                 self::assertSame(65, $profile['observed_limits']['rejected_identifier_bytes']);
-                self::assertSame(['minimum_inclusive' => '2.2.2', 'maximum_exclusive' => '2.3.0'], $profile['claimed_version_range']);
-                self::assertSame('Dolt 2.2.x (>=2.2.2 <2.3.0)', $profile['claimed_server_versions']);
+                self::assertNull($profile['claimed_version_range']);
+                self::assertSame(['2.2.2', '2.2.3'], $profile['exact_supported_versions']);
+                self::assertSame('Dolt 2.2.2 or 2.2.3', $profile['claimed_server_versions']);
                 self::assertSame('observed_exact_version', $profile['limit_bases']['identifier_limit']);
                 self::assertTrue($profile['storage_evidence']['binary64']['maximum_finite_round_trip_exact']);
                 self::assertSame('reject_before_mutation', $profile['storage_evidence']['binary64']['non_finite_policy']);
