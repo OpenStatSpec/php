@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Sql;
 
+use OpenStatSpec\Core\Binary64;
 use PDO;
 
 /** Persists canonically validated V3 SPSS metadata beside a strict wide data table. */
@@ -95,7 +96,7 @@ final readonly class SqliteV3MetadataImporter
                 $set['type'],
                 $set['label'],
                 $countedValue === null ? null : (is_string($countedValue) ? 'text' : 'numeric'),
-                is_int($countedValue) || is_float($countedValue) ? (float) $countedValue : null,
+                is_int($countedValue) || is_float($countedValue) ? Binary64::encode($countedValue) : null,
                 is_string($countedValue) ? $countedValue : null,
                 $set['categoryLabels'],
                 $set['labelSource'],

@@ -24,34 +24,52 @@ final readonly class PostgreSqlWideTableImporter
     /** @param array<string, mixed> $source */
     public function createTables(array $source, string $datasetName): PostgreSqlWideTableDefinition
     {
-        $variables = $source['variables'] ?? null;
-        if (!is_array($variables) || !array_is_list($variables) || $variables === []) {
-            throw new UnsupportedOperation(
-                DiagnosticCode::InvalidSourceDataset,
-                'The source dataset must contain an ordered variable list.',
-            );
+        if ($this->pdo->inTransaction()) {
+            throw new UnsupportedOperation(DiagnosticCode::UnsupportedOperation, 'Import cannot run inside a caller-owned transaction.');
         }
-
-        V3MetadataPlan::fromSourceIfPresent($source);
-
-        $schema = new PostgreSqlSchema($this->pdo);
-        // Validate the complete physical mapping before any DDL starts.
-        $definition = $schema->wideTableDefinition($datasetName, $variables);
-
-        $this->pdo->beginTransaction();
+        $pdo = $this->pdo;
+        $errorMode = $pdo->getAttribute(PDO::ATTR_ERRMODE);
         try {
-            $schema->createCatalog();
-            $this->pdo->exec($definition->createSql);
-            $this->pdo->commit();
-        } catch (Throwable $exception) {
-            if ($this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
+            if (!$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)) {
+                throw new \RuntimeException('Could not enable PDO exception mode.');
+            }
+            $variables = $source['variables'] ?? null;
+            if (!is_array($variables) || !array_is_list($variables) || $variables === []) {
+                throw new UnsupportedOperation(
+                    DiagnosticCode::InvalidSourceDataset,
+                    'The source dataset must contain an ordered variable list.',
+                );
             }
 
-            throw $exception;
-        }
+            V3MetadataPlan::fromSourceIfPresent($source);
 
-        return $definition;
+            $schema = new PostgreSqlSchema($pdo);
+            // Validate the complete physical mapping before any DDL starts.
+            $definition = $schema->wideTableDefinition($datasetName, $variables);
+
+            if (!$pdo->beginTransaction()) {
+                throw new \RuntimeException('Could not begin import transaction.');
+            }
+            try {
+                $schema->createCatalog();
+                $pdo->exec($definition->createSql);
+                if (!$pdo->commit()) {
+                    throw new \RuntimeException('Could not commit import transaction.');
+                }
+            } catch (Throwable $exception) {
+                if ($pdo->inTransaction() && !$pdo->rollBack()) {
+                    throw new \RuntimeException('Could not roll back import transaction.', previous: $exception);
+                }
+
+                throw $exception;
+            }
+
+            return $definition;
+        } finally {
+            if (!$pdo->setAttribute(PDO::ATTR_ERRMODE, $errorMode)) {
+                throw new \RuntimeException('Could not restore PDO error mode.');
+            }
+        }
     }
     /**
      * Store the normalized cases and core dictionary in one strict
@@ -64,55 +82,76 @@ final readonly class PostgreSqlWideTableImporter
         string $datasetName,
         string $sourcePath = "",
         ?string $verifiedSourceSha256 = null,
+        ?callable $beforeCommit = null,
     ): PostgreSqlWideTableDefinition {
-        $verifiedSourceSha256 = NormativeCatalog::validateSourceSha256($verifiedSourceSha256);
-        $variables = $source['variables'] ?? null;
-        $rows = $source['data'] ?? null;
-        if (!is_array($variables) || !array_is_list($variables) || $variables === []) {
-            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The source dataset must contain an ordered variable list.');
+        if ($this->pdo->inTransaction()) {
+            throw new UnsupportedOperation(DiagnosticCode::UnsupportedOperation, 'Import cannot run inside a caller-owned transaction.');
         }
-        if (!is_array($rows) || !array_is_list($rows)) {
-            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The source dataset must contain an ordered case list.');
-        }
-
-        (new PostgreSqlProfile())->assertDataset($variables, $rows, $this->pdo);
-        $v3Metadata = V3MetadataPlan::fromSourceIfPresent($source);
-
-        $schema = new PostgreSqlSchema($this->pdo);
-        // Preflight the entire physical-name mapping before changing the target.
-        $definition = $schema->wideTableDefinition($datasetName, $variables);
-
-        $this->pdo->beginTransaction();
+        $errorMode = $this->pdo->getAttribute(PDO::ATTR_ERRMODE);
         try {
-            $schema->createCatalog();
-            $this->pdo->exec($definition->createSql);
-            $this->storeDatasetMetadata($datasetName, $source);
-            $this->storeTechnicalMetadata($datasetName, $source);
-            $this->storeCatalogue($datasetName, $variables, $definition);
-            $this->storeWeightVariable($datasetName, $source['weightVariableName'] ?? null, $definition);
-            $this->storeDisplayMetadata($datasetName, $source['displayParameters'] ?? []);
-            $this->storeDictionaryMetadata($datasetName, $variables, $source['valueLabels'] ?? []);
-            if ($v3Metadata !== null) {
-                (new SqliteV3MetadataImporter($this->pdo))->storeValidated($datasetName, $v3Metadata);
+            if (!$this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)) {
+                throw new \RuntimeException('Could not enable PDO exception mode.');
             }
-            $this->insertCases($definition, $rows);
-            if ($sourcePath !== "" || $verifiedSourceSha256 !== null) {
-                (new NormativeCatalog($this->pdo))->storeImportedDataset(
-                    $datasetName,
-                    $sourcePath,
-                    $source,
-                    $verifiedSourceSha256,
-                );
+            $verifiedSourceSha256 = NormativeCatalog::validateSourceSha256($verifiedSourceSha256);
+            $variables = $source['variables'] ?? null;
+            $rows = $source['data'] ?? null;
+            if (!is_array($variables) || !array_is_list($variables) || $variables === []) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The source dataset must contain an ordered variable list.');
             }
-            $this->pdo->commit();
-        } catch (Throwable $exception) {
-            if ($this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
+            if (!is_array($rows) || !array_is_list($rows)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The source dataset must contain an ordered case list.');
             }
-            throw $exception;
-        }
 
-        return $definition;
+            (new PostgreSqlProfile())->assertDataset($variables, $rows, $this->pdo);
+            $v3Metadata = V3MetadataPlan::fromSourceIfPresent($source);
+
+            $schema = new PostgreSqlSchema($this->pdo);
+            // Preflight the entire physical-name mapping before changing the target.
+            $definition = $schema->wideTableDefinition($datasetName, $variables);
+
+            if (!$this->pdo->beginTransaction()) {
+                throw new \RuntimeException('Could not begin import transaction.');
+            }
+            try {
+                $schema->createCatalog();
+                $this->pdo->exec($definition->createSql);
+                $this->storeDatasetMetadata($datasetName, $source);
+                $this->storeTechnicalMetadata($datasetName, $source);
+                $this->storeCatalogue($datasetName, $variables, $definition);
+                $this->storeWeightVariable($datasetName, $source['weightVariableName'] ?? null, $definition);
+                $this->storeDisplayMetadata($datasetName, $source['displayParameters'] ?? []);
+                $this->storeDictionaryMetadata($datasetName, $variables, $source['valueLabels'] ?? []);
+                if ($v3Metadata !== null) {
+                    (new SqliteV3MetadataImporter($this->pdo))->storeValidated($datasetName, $v3Metadata);
+                }
+                $this->insertCases($definition, $rows);
+                if ($sourcePath !== "" || $verifiedSourceSha256 !== null) {
+                    (new NormativeCatalog($this->pdo))->storeImportedDataset(
+                        $datasetName,
+                        $sourcePath,
+                        $source,
+                        $verifiedSourceSha256,
+                    );
+                }
+                if ($beforeCommit !== null) {
+                    $beforeCommit();
+                }
+                if (!$this->pdo->commit()) {
+                    throw new \RuntimeException('Could not commit import transaction.');
+                }
+            } catch (Throwable $exception) {
+                if ($this->pdo->inTransaction() && !$this->pdo->rollBack()) {
+                    throw new \RuntimeException('Could not roll back import transaction.', previous: $exception);
+                }
+                throw $exception;
+            }
+
+            return $definition;
+        } finally {
+            if (!$this->pdo->setAttribute(PDO::ATTR_ERRMODE, $errorMode)) {
+                throw new \RuntimeException('Could not restore PDO error mode.');
+            }
+        }
     }
 
     /** @param array<string, mixed> $source */

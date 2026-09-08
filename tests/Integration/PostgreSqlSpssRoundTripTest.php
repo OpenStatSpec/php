@@ -20,8 +20,10 @@ use OpenStatSpec\Transformation\Plan\TargetMode;
 use OpenStatSpec\Transformation\Plan\TransformationPlan;
 use OpenStatSpec\Transformation\Plan\Value\Binary64Value;
 use OpenStatSpec\Spss\SpssAdapter;
+use OpenStatSpec\Tests\Support\FakeSpssEngine;
 use PDO;
 use PDOException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 use SPSS\Sav\Alignment;
@@ -194,6 +196,68 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
             $pdo->prepare('DELETE FROM variable WHERE dataset_id = ?')->execute([$datasetId]);
             $pdo->prepare('DELETE FROM dataset WHERE dataset_id = ?')->execute([$datasetId]);
             $pdo->exec('DROP TABLE IF EXISTS ' . $this->quote($tableName));
+        }
+    }
+
+    /** @return iterable<string, array{bool}> */
+    public static function finalizationFailures(): iterable
+    {
+        yield 'hook throws' => [false];
+        yield 'normative success update fails' => [true];
+    }
+
+    #[DataProvider('finalizationFailures')]
+    public function testImportFinalizationFailureRollsBackOnlyThisAttempt(bool $journalFailure): void
+    {
+        $pdo = $this->postgres();
+        $schema = 'import_atomicity_' . bin2hex(random_bytes(6));
+        $pdo->exec('CREATE SCHEMA ' . $this->quote($schema));
+        try {
+            $pdo->exec('SET search_path TO ' . $this->quote($schema));
+            $engine = new FakeSpssEngine($this->fixture('sav'));
+            $prior = (new SpssAdapter($pdo, $engine))->import('prior.sav', 'prior');
+            $before = [];
+            foreach ($this->rows($pdo, "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' AND table_name NOT IN ('operation_catalog', 'operation', 'fidelity_event_catalog', 'fidelity_event')", []) as $table) {
+                $before[$table['table_name']] = $this->rows($pdo, 'SELECT * FROM ' . $this->quote($table['table_name']), []);
+            }
+            $inTransaction = false;
+            $injected = new RuntimeException('Injected finalization failure.');
+            $adapter = new SpssAdapter($pdo, $engine, beforeImportFinalization: static function () use ($pdo, $prior, $journalFailure, $injected, &$inTransaction): void {
+                $inTransaction = $pdo->inTransaction();
+                if (!$journalFailure) {
+                    throw $injected;
+                }
+                $pdo->exec("ALTER TABLE operation ADD CONSTRAINT reject_success CHECK (status <> 'succeeded' OR operation_id = '{$prior->operationId}')");
+            });
+            try {
+                $adapter->import('attempt.sav', 'attempt');
+                self::fail('Finalization failure was swallowed.');
+            } catch (RuntimeException $exception) {
+                if ($journalFailure) {
+                    self::assertInstanceOf(PDOException::class, $exception);
+                    self::assertStringContainsString('reject_success', $exception->getMessage());
+                } else {
+                    self::assertSame($injected, $exception);
+                }
+            }
+            self::assertFalse($pdo->inTransaction());
+            self::assertNull($this->scalar($pdo, "SELECT to_regclass('dataset_attempt')", []));
+            foreach ($before as $table => $rows) {
+                self::assertEqualsCanonicalizing($rows, $this->rows($pdo, 'SELECT * FROM ' . $this->quote($table), []), $table);
+            }
+            self::assertTrue($inTransaction, 'Finalization must share the dataset transaction.');
+            self::assertSame([
+                ['target_path' => 'attempt.sav', 'status' => 'failed', 'dataset_name' => null, 'normative_status' => 'failed'],
+                ['target_path' => 'prior.sav', 'status' => 'succeeded', 'dataset_name' => 'prior', 'normative_status' => 'succeeded'],
+            ], $this->rows($pdo, 'SELECT target_path, legacy.status, dataset_name, normative.status AS normative_status FROM operation_catalog legacy JOIN operation normative USING (operation_id) ORDER BY target_path', []));
+            self::assertSame([['dataset_name' => null, 'code' => 'operation_failed']], $this->rows($pdo, 'SELECT dataset_name, code FROM fidelity_event_catalog', []));
+            self::assertSame([['dataset_id' => null, 'event_code' => 'operation_failed']], $this->rows($pdo, 'SELECT dataset_id, event_code FROM fidelity_event', []));
+        } finally {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            $pdo->exec('SET search_path TO public');
+            $pdo->exec('DROP SCHEMA ' . $this->quote($schema) . ' CASCADE');
         }
     }
 

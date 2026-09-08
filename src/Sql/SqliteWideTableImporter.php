@@ -26,47 +26,68 @@ final readonly class SqliteWideTableImporter
         string $datasetName,
         string $sourcePath = "",
         ?string $verifiedSourceSha256 = null,
+        ?callable $beforeCommit = null,
     ): void {
-        $verifiedSourceSha256 = NormativeCatalog::validateSourceSha256($verifiedSourceSha256);
-        $variables = $this->variables($source['variables']);
-        $sourceRows = $source['data'] ?? null;
-        if (!is_array($sourceRows) || !array_is_list($sourceRows)) {
-            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The source dataset must contain an ordered case list.');
+        if ($this->pdo->inTransaction()) {
+            throw new UnsupportedOperation(DiagnosticCode::UnsupportedOperation, 'Import cannot run inside a caller-owned transaction.');
         }
-        $this->profile->assertDataset($source['variables'], $sourceRows, $this->pdo);
-        $v3Metadata = V3MetadataPlan::fromSource($source);
-        $tableName = 'dataset_' . $this->identifier($datasetName);
-
-        $this->pdo->beginTransaction();
+        $errorMode = $this->pdo->getAttribute(PDO::ATTR_ERRMODE);
         try {
-            $this->createCatalog();
-            $this->storeDatasetMetadata($datasetName, $source);
-            $this->storeTechnicalMetadata($datasetName, $source);
-            $this->storeDictionaryMetadata($datasetName, $source['variables'], $source['valueLabels'] ?? []);
-            (new SqliteV3MetadataImporter($this->pdo))->storeValidated($datasetName, $v3Metadata);
-            $this->storeDisplayMetadata($datasetName, is_array($source['displayParameters'] ?? null) ? $source['displayParameters'] : []);
-            $this->createDataTable($tableName, $variables);
-            $this->pdo->prepare('INSERT INTO datasets (dataset_name, table_name) VALUES (?, ?)')->execute([$datasetName, $tableName]);
-            $catalog = $this->pdo->prepare('INSERT INTO variables (dataset_name, ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals, write_format_family, write_format_width, write_format_decimals, label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-            foreach ($variables as $variable) {
-                $catalog->execute([$datasetName, $variable['ordinal'], $variable['source'], $variable['column'], $variable['kind'], $variable['width'], $variable['formatFamily'], $variable['formatWidth'], $variable['formatDecimals'], $variable['writeFormatFamily'], $variable['writeFormatWidth'], $variable['writeFormatDecimals'], $variable['label']]);
+            if (!$this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)) {
+                throw new \RuntimeException('Could not enable PDO exception mode.');
             }
-            $this->storeWeightVariable($datasetName, $source['weightVariableName'] ?? null, $variables);
-            $this->insertCases($tableName, $variables, $sourceRows);
-            if ($sourcePath !== "" || $verifiedSourceSha256 !== null) {
-                (new NormativeCatalog($this->pdo))->storeImportedDataset(
-                    $datasetName,
-                    $sourcePath,
-                    $source,
-                    $verifiedSourceSha256,
-                );
+            $verifiedSourceSha256 = NormativeCatalog::validateSourceSha256($verifiedSourceSha256);
+            $variables = $this->variables($source['variables']);
+            $sourceRows = $source['data'] ?? null;
+            if (!is_array($sourceRows) || !array_is_list($sourceRows)) {
+                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The source dataset must contain an ordered case list.');
             }
-            $this->pdo->commit();
-        } catch (Throwable $exception) {
-            if ($this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
+            $this->profile->assertDataset($source['variables'], $sourceRows, $this->pdo);
+            $v3Metadata = V3MetadataPlan::fromSource($source);
+            $tableName = 'dataset_' . $this->identifier($datasetName);
+
+            if (!$this->pdo->beginTransaction()) {
+                throw new \RuntimeException('Could not begin import transaction.');
             }
-            throw $exception;
+            try {
+                $this->createCatalog();
+                $this->storeDatasetMetadata($datasetName, $source);
+                $this->storeTechnicalMetadata($datasetName, $source);
+                $this->storeDictionaryMetadata($datasetName, $source['variables'], $source['valueLabels'] ?? []);
+                (new SqliteV3MetadataImporter($this->pdo))->storeValidated($datasetName, $v3Metadata);
+                $this->storeDisplayMetadata($datasetName, is_array($source['displayParameters'] ?? null) ? $source['displayParameters'] : []);
+                $this->createDataTable($tableName, $variables);
+                $this->pdo->prepare('INSERT INTO datasets (dataset_name, table_name) VALUES (?, ?)')->execute([$datasetName, $tableName]);
+                $catalog = $this->pdo->prepare('INSERT INTO variables (dataset_name, ordinal, source_name, column_name, storage_kind, source_width, format_family, format_width, format_decimals, write_format_family, write_format_width, write_format_decimals, label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+                foreach ($variables as $variable) {
+                    $catalog->execute([$datasetName, $variable['ordinal'], $variable['source'], $variable['column'], $variable['kind'], $variable['width'], $variable['formatFamily'], $variable['formatWidth'], $variable['formatDecimals'], $variable['writeFormatFamily'], $variable['writeFormatWidth'], $variable['writeFormatDecimals'], $variable['label']]);
+                }
+                $this->storeWeightVariable($datasetName, $source['weightVariableName'] ?? null, $variables);
+                $this->insertCases($tableName, $variables, $sourceRows);
+                if ($sourcePath !== "" || $verifiedSourceSha256 !== null) {
+                    (new NormativeCatalog($this->pdo))->storeImportedDataset(
+                        $datasetName,
+                        $sourcePath,
+                        $source,
+                        $verifiedSourceSha256,
+                    );
+                }
+                if ($beforeCommit !== null) {
+                    $beforeCommit();
+                }
+                if (!$this->pdo->commit()) {
+                    throw new \RuntimeException('Could not commit import transaction.');
+                }
+            } catch (Throwable $exception) {
+                if ($this->pdo->inTransaction() && !$this->pdo->rollBack()) {
+                    throw new \RuntimeException('Could not roll back import transaction.', previous: $exception);
+                }
+                throw $exception;
+            }
+        } finally {
+            if (!$this->pdo->setAttribute(PDO::ATTR_ERRMODE, $errorMode)) {
+                throw new \RuntimeException('Could not restore PDO error mode.');
+            }
         }
     }
 
@@ -167,9 +188,9 @@ final readonly class SqliteWideTableImporter
         return is_int($value) ? $value : null;
     }
 
-    private function technicalFloat(mixed $value): ?float
+    private function technicalFloat(mixed $value): ?string
     {
-        return is_float($value) || is_int($value) ? (float) $value : null;
+        return is_float($value) || is_int($value) ? Binary64::encode($value) : null;
     }
 
     /** @param list<array{ordinal: int, source: string}> $variables */
@@ -290,7 +311,7 @@ final readonly class SqliteWideTableImporter
                 if ($value === null && $variable['kind'] === 'string') {
                     throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS string values must not be represented as NULL.');
                 }
-                $values[$variable['column']] = $value;
+                $values[$variable['column']] = is_float($value) ? Binary64::encode($value) : $value;
             }
             $statement->execute($values);
         }
