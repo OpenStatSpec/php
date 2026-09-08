@@ -395,7 +395,7 @@ final readonly class NormativeCatalog
             $counted = $set['countedValue'] ?? null;
             $countedKind = is_string($counted) ? 'string' : (is_int($counted) || is_float($counted) ? 'numeric' : null);
             $this->statement('INSERT INTO multiple_response_set (multiple_response_set_id, dataset_id, source_ordinal, set_name, set_label, set_kind, counted_value_kind, counted_numeric_value, counted_string_value, category_label_behavior, label_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
-                $setId, $datasetId, $setOrdinal + 1, $set['name'], is_string($set['label'] ?? null) ? $set['label'] : null, $set['type'] === 'dichotomy' ? 'MD' : 'MC', $countedKind, is_int($counted) || is_float($counted) ? $counted : null, is_string($counted) ? $counted : null, is_string($set['categoryLabels'] ?? null) ? $set['categoryLabels'] : null, is_string($set['labelSource'] ?? null) ? $set['labelSource'] : null,
+                $setId, $datasetId, $setOrdinal + 1, $set['name'], is_string($set['label'] ?? null) ? $set['label'] : null, $set['type'] === 'dichotomy' ? 'MD' : 'MC', $countedKind, is_float($counted) ? Binary64::encode($counted) : (is_int($counted) ? $counted : null), is_string($counted) ? $counted : null, is_string($set['categoryLabels'] ?? null) ? $set['categoryLabels'] : null, is_string($set['labelSource'] ?? null) ? $set['labelSource'] : null,
             ]);
             foreach ($this->list($set['variableNames'] ?? null, 'Multiple-response members') as $ordinal => $name) {
                 $variableOrdinal = $this->variableOrdinal($variables, $name);

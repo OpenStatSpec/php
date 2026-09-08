@@ -43,6 +43,8 @@ final class MySqlWideTableImporterTest extends TestCase
     public function testImportsCatalogueAndOrderedRowsAfterMysqlDdl(): void
     {
         $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
         $cases = $this->createMock(PDOStatement::class);
@@ -89,6 +91,8 @@ final class MySqlWideTableImporterTest extends TestCase
     public function testImportsCoreSpssMetadataThroughMysqlCatalogue(): void
     {
         $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $fileLabel = $this->createMock(PDOStatement::class);
         $documents = $this->createMock(PDOStatement::class);
         $technical = $this->createMock(PDOStatement::class);
@@ -190,6 +194,8 @@ final class MySqlWideTableImporterTest extends TestCase
     public function testImportsV3ExtensionMetadataAndPreservesOrderedMembers(): void
     {
         $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
         $roles = $this->createMock(PDOStatement::class);
@@ -283,7 +289,7 @@ final class MySqlWideTableImporterTest extends TestCase
             ['customer survey', 1, 2, 1],
         ], $variableSetMemberRows);
         self::assertSame([
-            ['customer survey', 1, '$Profile', 'dichotomy', 'Profile', 'numeric', 1.0, null, 'counted_values', 'variable_label'],
+            ['customer survey', 1, '$Profile', 'dichotomy', 'Profile', 'numeric', '1.0', null, 'counted_values', 'variable_label'],
         ], $multipleResponseSetRows);
         self::assertSame([
             ['customer survey', 1, 1, 2],
@@ -294,6 +300,8 @@ final class MySqlWideTableImporterTest extends TestCase
     public function testInjectedDoltProfileRejects306VariablesBeforeDdl(): void
     {
         $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $pdo->expects(self::never())->method('exec');
         $pdo->expects(self::never())->method('prepare');
         $variables = [];
@@ -315,6 +323,8 @@ final class MySqlWideTableImporterTest extends TestCase
     public function testRolledBackCaseInsertFailureDropsOnlyAttemptPhysicalTable(): void
     {
         $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
         $cases = $this->createMock(PDOStatement::class);
@@ -326,7 +336,7 @@ final class MySqlWideTableImporterTest extends TestCase
             return 0;
         });
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
-        $pdo->expects(self::once())->method('inTransaction')->willReturn(true);
+        $pdo->expects(self::exactly(2))->method('inTransaction')->willReturnOnConsecutiveCalls(false, true);
         $pdo->expects(self::once())->method('rollBack')->willReturn(true);
         $pdo->expects(self::never())->method('commit');
         $pdo->expects(self::exactly(3))->method('prepare')->willReturnOnConsecutiveCalls(
@@ -477,6 +487,8 @@ final class MySqlWideTableImporterTest extends TestCase
     private function doltPreflightPdo(): PDO
     {
         $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $statement = $this->createMock(PDOStatement::class);
         $pdo->method('query')->with('SELECT @@max_allowed_packet')->willReturn($statement);
         $statement->method('fetchColumn')->willReturn('1073741824');

@@ -34,71 +34,88 @@ final readonly class MySqlWideTableImporter
         string $sourcePath = "",
         ?string $verifiedSourceSha256 = null,
     ): MySqlWideTableDefinition {
-        $verifiedSourceSha256 = NormativeCatalog::validateSourceSha256($verifiedSourceSha256);
-        $variables = $source['variables'] ?? null;
-        $rows = $source['data'] ?? null;
-        if (!is_array($variables) || !array_is_list($variables) || $variables === []) {
-            throw new UnsupportedOperation(
-                DiagnosticCode::InvalidSourceDataset,
-                'The source dataset must contain an ordered variable list.',
-            );
+        if ($this->pdo->inTransaction()) {
+            throw new UnsupportedOperation(DiagnosticCode::UnsupportedOperation, 'Import cannot run inside a caller-owned transaction.');
         }
-        if (!is_array($rows) || !array_is_list($rows)) {
-            throw new UnsupportedOperation(
-                DiagnosticCode::InvalidSourceDataset,
-                'The source dataset must contain an ordered case list.',
-            );
-        }
-
-        $this->profile->assertDataset($variables, $rows, $this->pdo);
-
-        $schema = new MySqlSchema($this->pdo, $this->profile);
-        // Complete source, physical-name, and width preflight happens before any DDL.
-        $definition = $schema->wideTableDefinition($datasetName, $variables);
-        $v3Metadata = $this->assertSourceMetadata($source, $variables, $definition);
-
-        $schema->createCatalog();
-        $this->pdo->exec($definition->createSql);
-
-        $ownedDefinition = $definition;
+        $errorMode = $this->pdo->getAttribute(PDO::ATTR_ERRMODE);
         try {
-            $this->pdo->beginTransaction();
-            $this->storeDatasetMetadata($datasetName, $source);
-            $this->storeTechnicalMetadata($datasetName, $source);
-            $this->storeCatalogue($datasetName, $variables, $definition);
-            $this->storeWeightVariable($datasetName, $source['weightVariableName'] ?? null, $definition);
-            $this->storeDisplayMetadata($datasetName, $source['displayParameters'] ?? []);
-            $this->storeDictionaryMetadata($datasetName, $variables, $source['valueLabels'] ?? []);
-            if ($v3Metadata !== null) {
-                (new SqliteV3MetadataImporter($this->pdo))->storeValidated($datasetName, $v3Metadata);
+            if (!$this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)) {
+                throw new \RuntimeException('Could not enable PDO exception mode.');
             }
-            $this->insertCases($definition, $rows);
-            if ($sourcePath !== "" || $verifiedSourceSha256 !== null) {
-                $datasetId = (new NormativeCatalog($this->pdo))->storeImportedDataset(
-                    $datasetName,
-                    $sourcePath,
-                    $source,
-                    $verifiedSourceSha256,
-                );
-                $ownedDefinition = new MySqlWideTableDefinition(
-                    $definition->tableName,
-                    $definition->createSql,
-                    $definition->columns,
-                    $datasetId,
+            $verifiedSourceSha256 = NormativeCatalog::validateSourceSha256($verifiedSourceSha256);
+            $variables = $source['variables'] ?? null;
+            $rows = $source['data'] ?? null;
+            if (!is_array($variables) || !array_is_list($variables) || $variables === []) {
+                throw new UnsupportedOperation(
+                    DiagnosticCode::InvalidSourceDataset,
+                    'The source dataset must contain an ordered variable list.',
                 );
             }
-            $this->pdo->commit();
-        } catch (Throwable $exception) {
-            if ($this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
+            if (!is_array($rows) || !array_is_list($rows)) {
+                throw new UnsupportedOperation(
+                    DiagnosticCode::InvalidSourceDataset,
+                    'The source dataset must contain an ordered case list.',
+                );
             }
 
-            // Catalogue DML was rolled back. Only the physical DDL survives.
-            $this->dropPhysicalTable($definition);
-            throw $exception;
+            $this->profile->assertDataset($variables, $rows, $this->pdo);
+
+            $schema = new MySqlSchema($this->pdo, $this->profile);
+            // Complete source, physical-name, and width preflight happens before any DDL.
+            $definition = $schema->wideTableDefinition($datasetName, $variables);
+            $v3Metadata = $this->assertSourceMetadata($source, $variables, $definition);
+
+            $schema->createCatalog();
+            $this->pdo->exec($definition->createSql);
+
+            $ownedDefinition = $definition;
+            try {
+                if (!$this->pdo->beginTransaction()) {
+                    throw new \RuntimeException('Could not begin import transaction.');
+                }
+                $this->storeDatasetMetadata($datasetName, $source);
+                $this->storeTechnicalMetadata($datasetName, $source);
+                $this->storeCatalogue($datasetName, $variables, $definition);
+                $this->storeWeightVariable($datasetName, $source['weightVariableName'] ?? null, $definition);
+                $this->storeDisplayMetadata($datasetName, $source['displayParameters'] ?? []);
+                $this->storeDictionaryMetadata($datasetName, $variables, $source['valueLabels'] ?? []);
+                if ($v3Metadata !== null) {
+                    (new SqliteV3MetadataImporter($this->pdo))->storeValidated($datasetName, $v3Metadata);
+                }
+                $this->insertCases($definition, $rows);
+                if ($sourcePath !== "" || $verifiedSourceSha256 !== null) {
+                    $datasetId = (new NormativeCatalog($this->pdo))->storeImportedDataset(
+                        $datasetName,
+                        $sourcePath,
+                        $source,
+                        $verifiedSourceSha256,
+                    );
+                    $ownedDefinition = new MySqlWideTableDefinition(
+                        $definition->tableName,
+                        $definition->createSql,
+                        $definition->columns,
+                        $datasetId,
+                    );
+                }
+                if (!$this->pdo->commit()) {
+                    throw new \RuntimeException('Could not commit import transaction.');
+                }
+            } catch (Throwable $exception) {
+                if ($this->pdo->inTransaction() && !$this->pdo->rollBack()) {
+                    throw new \RuntimeException('Could not roll back import transaction.', previous: $exception);
+                }
+
+                // Catalogue DML was rolled back. Only the physical DDL survives.
+                $this->dropPhysicalTable($definition);
+                throw $exception;
+            }
+
+            return $ownedDefinition;
+        } finally {
+            if (!$this->pdo->setAttribute(PDO::ATTR_ERRMODE, $errorMode)) {
+                throw new \RuntimeException('Could not restore PDO error mode.');
+            }
         }
-
-        return $ownedDefinition;
     }
 
     /**

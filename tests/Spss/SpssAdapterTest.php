@@ -1171,11 +1171,20 @@ final class SpssAdapterTest extends TestCase
         yield 'direct normalized source' => [true];
     }
 
-    #[DataProvider('importEntryPoints')]
-    public function testImportPreservesBinary64CasesAndNumericMetadata(bool $direct): void
+    /** @return iterable<string, array{bool, string, float}> */
+    public static function binary64ImportCases(): iterable
+    {
+        foreach (self::importEntryPoints() as $entry => [$direct]) {
+            yield $entry . ' default precision' => [$direct, '-1', 1.2345678901234567];
+            yield $entry . ' tiny float' => [$direct, '-1', -7.425696547609993e-37];
+            yield $entry . ' serialize_precision=3' => [$direct, '3', 1.234];
+        }
+    }
+
+    #[DataProvider('binary64ImportCases')]
+    public function testImportPreservesBinary64CasesAndNumericMetadata(bool $direct, string $precision, float $value): void
     {
         $pdo = new PDO('sqlite::memory:');
-        $value = 1.2345678901234567;
         $counted = 9007199254740991;
         $source = new Dataset(
             $this->fixture()->dictionary,
@@ -1186,13 +1195,19 @@ final class SpssAdapterTest extends TestCase
             new FileTechnicalMetadata(sourceFormat: 'sav', compressionBias: $value),
         );
         $adapter = new SpssAdapter($pdo, new FakeSpssEngine($source));
-        if ($direct) {
-            $adapter->migrateCatalog();
-            $normalized = SpssSourceNormalizer::normalize($source);
-            $normalized['multipleResponseSets'][0]['countedValue'] = (float) $counted;
-            (new SqliteWideTableImporter($pdo))->import($normalized, 'precision', 'fixture.sav');
-        } else {
-            $adapter->import('fixture.sav', 'precision');
+        $originalPrecision = ini_get('serialize_precision');
+        try {
+            ini_set('serialize_precision', $precision);
+            if ($direct) {
+                $adapter->migrateCatalog();
+                $normalized = SpssSourceNormalizer::normalize($source);
+                $normalized['multipleResponseSets'][0]['countedValue'] = (float) $counted;
+                (new SqliteWideTableImporter($pdo))->import($normalized, 'precision', 'fixture.sav');
+            } else {
+                $adapter->import('fixture.sav', 'precision');
+            }
+        } finally {
+            ini_set('serialize_precision', $originalPrecision);
         }
 
         $rows = self::rows($pdo, 'SELECT * FROM dataset_precision ORDER BY __case_ordinal');

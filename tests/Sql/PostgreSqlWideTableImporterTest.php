@@ -48,6 +48,8 @@ final class PostgreSqlWideTableImporterTest extends TestCase
     public function testCreatesCatalogAndStrictWideTableInOneTransaction(): void
     {
         $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
@@ -71,6 +73,8 @@ final class PostgreSqlWideTableImporterTest extends TestCase
     public function testImportsCatalogueAndOrderedRowsThroughPdoTransaction(): void
     {
         $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
         $cases = $this->createMock(PDOStatement::class);
@@ -115,6 +119,8 @@ final class PostgreSqlWideTableImporterTest extends TestCase
     public function testImportsFileLabelDocumentsAndTechnicalMetadata(): void
     {
         $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $fileLabel = $this->createMock(PDOStatement::class);
         $documents = $this->createMock(PDOStatement::class);
         $technical = $this->createMock(PDOStatement::class);
@@ -171,6 +177,8 @@ final class PostgreSqlWideTableImporterTest extends TestCase
     public function testImportsValueLabelsAndOrderedUserMissingRulesThroughPdoTransaction(): void
     {
         $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
         $missing = $this->createMock(PDOStatement::class);
@@ -229,6 +237,8 @@ final class PostgreSqlWideTableImporterTest extends TestCase
     public function testImportsVariableDisplayMetadataThroughPdoTransaction(): void
     {
         $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
         $display = $this->createMock(PDOStatement::class);
@@ -270,9 +280,11 @@ final class PostgreSqlWideTableImporterTest extends TestCase
     public function testRejectsNullStringBeforeCommitAndRollsBack(): void
     {
         $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $pdo->expects(self::never())->method('beginTransaction');
         $pdo->expects(self::never())->method('commit');
-        $pdo->expects(self::never())->method('inTransaction');
+        $pdo->expects(self::once())->method('inTransaction')->willReturn(false);
         $pdo->expects(self::never())->method('rollBack');
         $pdo->expects(self::never())->method('exec');
         $pdo->expects(self::never())->method('prepare');
@@ -287,6 +299,8 @@ final class PostgreSqlWideTableImporterTest extends TestCase
     public function testImportsV3AttributesAndOrderedSetMembers(): void
     {
         $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
         $roles = $this->createMock(PDOStatement::class);
@@ -374,7 +388,7 @@ final class PostgreSqlWideTableImporterTest extends TestCase
             ['customer survey', 1, 2, 2],
         ], $setMemberRows);
         self::assertSame([
-            ['customer survey', 1, '$Profile', 'dichotomy', 'Profile', 'numeric', 1.0, null, 'counted_values', 'variable_label'],
+            ['customer survey', 1, '$Profile', 'dichotomy', 'Profile', 'numeric', '1.0', null, 'counted_values', 'variable_label'],
         ], $multipleResponseSetRows);
     }
 

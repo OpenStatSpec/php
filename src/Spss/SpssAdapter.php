@@ -134,63 +134,80 @@ final readonly class SpssAdapter
         string $datasetName,
         ?string $verifiedSourceSha256 = null,
     ): SpssImportResult {
-        $this->assertLogicalSourcePath($sourcePath);
-        $verifiedSourceSha256 = NormativeCatalog::validateSourceSha256($verifiedSourceSha256);
-        $this->connection->assertClaimedSupported();
-        $this->ensureCatalogReady();
-        $sourceFormat = $this->spssFormat($sourcePath);
-        $journal = new OperationJournal($this->connection->pdo);
-        $operationId = $journal->start('import', null, $sourcePath, engineDetails: $this->engine->identity(), sourceFormat: $sourceFormat);
-        $mySqlDefinition = null;
+        if ($this->connection->pdo->inTransaction()) {
+            throw new UnsupportedOperation(DiagnosticCode::UnsupportedOperation, 'Import cannot run inside a caller-owned transaction.');
+        }
+        $errorMode = $this->connection->pdo->getAttribute(PDO::ATTR_ERRMODE);
         try {
-            if (!in_array($sourceFormat, ['sav', 'zsav'], true)) {
-                throw new UnsupportedOperation(
-                    DiagnosticCode::UnsupportedSourceFormat,
-                    'This adapter profile supports SAV and ZSAV files only.',
-                );
+            if (!$this->connection->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)) {
+                throw new \RuntimeException('Could not enable PDO exception mode.');
             }
-            $source = SpssSourceNormalizer::normalize($this->engine->read($sourcePath));
-            if ($this->connection->profile->driverName() === 'pgsql') {
-                (new PostgreSqlWideTableImporter($this->connection->pdo))->import(
-                    $source,
-                    $datasetName,
-                    $sourcePath,
-                    $verifiedSourceSha256,
-                );
-            } elseif ($this->connection->profile->driverName() === 'mysql') {
-                $mySqlDefinition = (new MySqlWideTableImporter(
-                    $this->connection->pdo,
-                    $this->mySqlProfile(),
-                ))->import($source, $datasetName, $sourcePath, $verifiedSourceSha256);
-            } else {
-                (new SqliteWideTableImporter($this->connection->pdo))->import(
-                    $source,
-                    $datasetName,
-                    $sourcePath,
-                    $verifiedSourceSha256,
-                );
-            }
-            if ($this->beforeImportFinalization !== null) {
-                ($this->beforeImportFinalization)();
-            }
-            $diagnostics = [];
-            $journal->succeed($operationId, $datasetName, $diagnostics);
-
-            return new SpssImportResult($operationId, $datasetName, count($source['data']), $diagnostics);
-        } catch (Throwable $exception) {
-            $failure = $exception;
-            if ($mySqlDefinition instanceof MySqlWideTableDefinition) {
-                try {
-                    (new MySqlWideTableImporter(
+            $this->assertLogicalSourcePath($sourcePath);
+            $verifiedSourceSha256 = NormativeCatalog::validateSourceSha256($verifiedSourceSha256);
+            $this->connection->assertClaimedSupported();
+            $this->ensureCatalogReady();
+            $sourceFormat = $this->spssFormat($sourcePath);
+            $journal = new OperationJournal($this->connection->pdo);
+            $operationId = $journal->start('import', null, $sourcePath, engineDetails: $this->engine->identity(), sourceFormat: $sourceFormat);
+            $finalize = function () use ($journal, $operationId, $datasetName): void {
+                if ($this->beforeImportFinalization !== null) {
+                    ($this->beforeImportFinalization)();
+                }
+                $journal->succeed($operationId, $datasetName, []);
+            };
+            $mySqlDefinition = null;
+            try {
+                if (!in_array($sourceFormat, ['sav', 'zsav'], true)) {
+                    throw new UnsupportedOperation(
+                        DiagnosticCode::UnsupportedSourceFormat,
+                        'This adapter profile supports SAV and ZSAV files only.',
+                    );
+                }
+                $source = SpssSourceNormalizer::normalize($this->engine->read($sourcePath));
+                if ($this->connection->profile->driverName() === 'pgsql') {
+                    (new PostgreSqlWideTableImporter($this->connection->pdo))->import(
+                        $source,
+                        $datasetName,
+                        $sourcePath,
+                        $verifiedSourceSha256,
+                        $finalize,
+                    );
+                } elseif ($this->connection->profile->driverName() === 'mysql') {
+                    $mySqlDefinition = (new MySqlWideTableImporter(
                         $this->connection->pdo,
                         $this->mySqlProfile(),
-                    ))->compensateFailure($datasetName, $mySqlDefinition);
-                } catch (Throwable $cleanupFailure) {
-                    $failure = $cleanupFailure;
+                    ))->import($source, $datasetName, $sourcePath, $verifiedSourceSha256);
+                    $finalize();
+                } else {
+                    (new SqliteWideTableImporter($this->connection->pdo))->import(
+                        $source,
+                        $datasetName,
+                        $sourcePath,
+                        $verifiedSourceSha256,
+                        $finalize,
+                    );
                 }
+
+                return new SpssImportResult($operationId, $datasetName, count($source['data']), []);
+            } catch (Throwable $exception) {
+                $failure = $exception;
+                if ($mySqlDefinition instanceof MySqlWideTableDefinition) {
+                    try {
+                        (new MySqlWideTableImporter(
+                            $this->connection->pdo,
+                            $this->mySqlProfile(),
+                        ))->compensateFailure($datasetName, $mySqlDefinition);
+                    } catch (Throwable $cleanupFailure) {
+                        $failure = $cleanupFailure;
+                    }
+                }
+                $journal->fail($operationId, null, $failure, sourceItem: $sourcePath);
+                throw $failure;
             }
-            $journal->fail($operationId, null, $failure, sourceItem: $sourcePath);
-            throw $failure;
+        } finally {
+            if (!$this->connection->pdo->setAttribute(PDO::ATTR_ERRMODE, $errorMode)) {
+                throw new \RuntimeException('Could not restore PDO error mode.');
+            }
         }
     }
 
