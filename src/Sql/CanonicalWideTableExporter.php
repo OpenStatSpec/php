@@ -50,6 +50,9 @@ final readonly class CanonicalWideTableExporter
         if ($variables === []) {
             throw $this->invalid('The canonical dataset has no variables.');
         }
+        $labelsByVariable = $this->all('SELECT link.variable_id, label.* FROM variable_value_label_set link JOIN variable ON variable.variable_id = link.variable_id JOIN value_label label ON label.value_label_set_id = link.value_label_set_id WHERE variable.dataset_id = ? ORDER BY link.variable_id, label.ordinal', [$id], 'variable_id');
+        $attributesByVariable = $this->all('SELECT attribute.* FROM variable_attribute attribute JOIN variable ON variable.variable_id = attribute.variable_id WHERE variable.dataset_id = ? ORDER BY attribute.variable_id, attribute.attribute_name, attribute.array_ordinal', [$id], 'variable_id');
+        $missingByVariable = $this->all('SELECT rule.* FROM missing_rule rule JOIN variable ON variable.variable_id = rule.variable_id WHERE variable.dataset_id = ? ORDER BY rule.variable_id, rule.ordinal', [$id], 'variable_id');
         $typedVariables = [];
         $columns = [];
         foreach ($variables as $variable) {
@@ -62,11 +65,11 @@ final readonly class CanonicalWideTableExporter
                 default => throw $this->invalid('Invalid variable storage kind.'),
             };
             $labels = [];
-            foreach ($this->all('SELECT label.* FROM variable_value_label_set link JOIN value_label label ON label.value_label_set_id = link.value_label_set_id WHERE link.variable_id = ? ORDER BY label.ordinal', [$variableId]) as $label) {
+            foreach ($labelsByVariable[$variableId] ?? [] as $label) {
                 $labels[] = new ValueLabel($this->value($label['code_kind'], $label['numeric_code'], $label['string_code']), $this->text($label['label']));
             }
             $attributes = [];
-            foreach ($this->attributes('SELECT attribute_name, attribute_value FROM variable_attribute WHERE variable_id = ? ORDER BY attribute_name, array_ordinal', $variableId) as $attributeName => $values) {
+            foreach ($this->attributes($attributesByVariable[$variableId] ?? []) as $attributeName => $values) {
                 $attributes[] = new VariableAttribute($name, $attributeName, $values);
             }
             $typedVariables[] = new VariableMetadata(
@@ -77,7 +80,7 @@ final readonly class CanonicalWideTableExporter
                 writeFormat: $this->format($variable, 'write', $type),
                 label: $variable['variable_label'] === null ? null : $this->text($variable['variable_label']),
                 valueLabels: new ValueLabelSet($labels, [$name]),
-                missingValues: $this->missingValues($variableId),
+                missingValues: $this->missingValues($missingByVariable[$variableId] ?? []),
                 measure: match ($variable['measurement_level']) {
                     'nominal' => Measure::NOMINAL,
                     'ordinal' => Measure::ORDINAL,
@@ -111,7 +114,7 @@ final readonly class CanonicalWideTableExporter
             $rows[] = $values;
         }
         $attributes = [];
-        foreach ($this->attributes('SELECT attribute_name, attribute_value FROM dataset_attribute WHERE dataset_id = ? ORDER BY attribute_name, array_ordinal', $id) as $name => $values) {
+        foreach ($this->attributes($this->all('SELECT attribute_name, attribute_value FROM dataset_attribute WHERE dataset_id = ? ORDER BY attribute_name, array_ordinal', [$id])) as $name => $values) {
             $attributes[] = new FileAttribute($name, $values);
         }
         $weight = $this->all('SELECT variable.source_name FROM dataset_weight_variable weight LEFT JOIN variable ON variable.variable_id = weight.variable_id AND variable.dataset_id = weight.dataset_id WHERE weight.dataset_id = ?', [$id]);
@@ -167,9 +170,9 @@ final readonly class CanonicalWideTableExporter
         );
     }
 
-    private function missingValues(string $variableId): MissingValues
+    /** @param list<array<string, mixed>> $rules */
+    private function missingValues(array $rules): MissingValues
     {
-        $rules = $this->all('SELECT * FROM missing_rule WHERE variable_id = ? ORDER BY ordinal', [$variableId]);
         if ($rules === []) {
             return MissingValues::none();
         }
@@ -197,8 +200,9 @@ final readonly class CanonicalWideTableExporter
     private function variableSets(string $datasetId): array
     {
         $sets = [];
+        $membersBySet = $this->all('SELECT member.variable_set_id, variable.source_name FROM variable_set_member member JOIN variable_set owner ON owner.variable_set_id = member.variable_set_id LEFT JOIN variable ON variable.variable_id = member.variable_id AND variable.dataset_id = owner.dataset_id WHERE owner.dataset_id = ? ORDER BY member.variable_set_id, member.source_ordinal', [$datasetId], 'variable_set_id');
         foreach ($this->all('SELECT variable_set_id, set_name FROM variable_set WHERE dataset_id = ? ORDER BY source_ordinal', [$datasetId]) as $set) {
-            $members = $this->all('SELECT variable.source_name FROM variable_set_member member LEFT JOIN variable ON variable.variable_id = member.variable_id AND variable.dataset_id = ? WHERE member.variable_set_id = ? ORDER BY member.source_ordinal', [$datasetId, $set['variable_set_id']]);
+            $members = $membersBySet[$set['variable_set_id']] ?? [];
             $sets[] = new VariableSet($this->string($set['set_name']), array_map(fn(array $member): string => $this->string($member['source_name']), $members));
         }
         return $sets;
@@ -208,8 +212,9 @@ final readonly class CanonicalWideTableExporter
     private function multipleResponseSets(string $datasetId): array
     {
         $sets = [];
+        $membersBySet = $this->all('SELECT member.multiple_response_set_id, variable.source_name FROM multiple_response_member member JOIN multiple_response_set owner ON owner.multiple_response_set_id = member.multiple_response_set_id LEFT JOIN variable ON variable.variable_id = member.variable_id AND variable.dataset_id = owner.dataset_id WHERE owner.dataset_id = ? ORDER BY member.multiple_response_set_id, member.source_ordinal', [$datasetId], 'multiple_response_set_id');
         foreach ($this->all('SELECT * FROM multiple_response_set WHERE dataset_id = ? ORDER BY source_ordinal', [$datasetId]) as $set) {
-            $members = $this->all('SELECT variable.source_name FROM multiple_response_member member LEFT JOIN variable ON variable.variable_id = member.variable_id AND variable.dataset_id = ? WHERE member.multiple_response_set_id = ? ORDER BY member.source_ordinal', [$datasetId, $set['multiple_response_set_id']]);
+            $members = $membersBySet[$set['multiple_response_set_id']] ?? [];
             $counted = $set['counted_value_kind'] === null ? null : $this->value($set['counted_value_kind'], $set['counted_numeric_value'], $set['counted_string_value']);
             if (is_float($counted)) {
                 if (floor($counted) !== $counted || $counted >= (float) PHP_INT_MAX || $counted < PHP_INT_MIN) {
@@ -238,11 +243,14 @@ final readonly class CanonicalWideTableExporter
         return $sets;
     }
 
-    /** @return array<string, list<string>> */
-    private function attributes(string $sql, string $id): array
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @return array<string, list<string>>
+     */
+    private function attributes(array $rows): array
     {
         $attributes = [];
-        foreach ($this->all($sql, [$id]) as $row) {
+        foreach ($rows as $row) {
             $attributes[$this->string($row['attribute_name'])][] = $this->text($row['attribute_value']);
         }
         return $attributes;
@@ -297,15 +305,23 @@ final readonly class CanonicalWideTableExporter
 
     /**
      * @param list<mixed> $parameters
-     * @return list<array<string, mixed>>
+     * @return ($groupBy is null ? list<array<string, mixed>> : array<array-key, list<array<string, mixed>>>)
      */
-    private function all(string $sql, array $parameters): array
+    private function all(string $sql, array $parameters, ?string $groupBy = null): array
     {
         $statement = $this->pdo->prepare($sql);
         if ($statement === false || !$statement->execute($parameters)) {
             throw $this->invalid('Could not read the canonical dataset.');
         }
-        return array_values($statement->fetchAll(PDO::FETCH_ASSOC));
+        $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        if ($groupBy === null) {
+            return array_values($rows);
+        }
+        $grouped = [];
+        foreach ($rows as $row) {
+            $grouped[$row[$groupBy]][] = $row;
+        }
+        return $grouped;
     }
 
     private function quote(string $identifier): string
