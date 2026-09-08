@@ -65,6 +65,8 @@ final readonly class MySqlWideTableImporter
             $definition = $schema->wideTableDefinition($datasetName, $variables);
             $v3Metadata = $this->assertSourceMetadata($source, $variables, $definition);
 
+            $payloadBudget = count($rows) > 1 ? $this->profile->effectiveMaximumStatementBytes($this->pdo) : null;
+
             $schema->createCatalog();
             $this->pdo->exec($definition->createSql);
 
@@ -82,7 +84,7 @@ final readonly class MySqlWideTableImporter
                 if ($v3Metadata !== null) {
                     (new SqliteV3MetadataImporter($this->pdo))->storeValidated($datasetName, $v3Metadata);
                 }
-                $this->insertCases($definition, $rows);
+                $this->insertCases($definition, $rows, $payloadBudget);
                 if ($sourcePath !== "" || $verifiedSourceSha256 !== null) {
                     $datasetId = (new NormativeCatalog($this->pdo))->storeImportedDataset(
                         $datasetName,
@@ -264,7 +266,7 @@ final readonly class MySqlWideTableImporter
     /**
      * @param list<mixed> $rows
      */
-    private function insertCases(MySqlWideTableDefinition $definition, array $rows): void
+    private function insertCases(MySqlWideTableDefinition $definition, array $rows, ?int $payloadBudget): void
     {
         $quote = chr(96);
         $columns = array_merge(['__case_ordinal'], array_column($definition->columns, 'columnName'));
@@ -272,13 +274,21 @@ final readonly class MySqlWideTableImporter
             static fn(string $column): string => chr(96) . str_replace(chr(96), chr(96) . chr(96), $column) . chr(96),
             $columns,
         );
-        $parameters = array_map(static fn(int $index): string => ':value_' . $index, array_keys($columns));
-        $statement = $this->requiredStatement(
+        PreparedCaseBatch::send(
+            $this->pdo,
             'INSERT INTO ' . $quote . str_replace($quote, $quote . $quote, $definition->tableName) . $quote . ' ('
-            . implode(', ', $quotedColumns) . ') VALUES (' . implode(', ', $parameters) . ')',
-            'wide-table data',
+            . implode(', ', $quotedColumns) . ') VALUES ',
+            $this->caseRows($definition, $rows),
+            $payloadBudget,
         );
+    }
 
+    /**
+     * @param list<mixed> $rows
+     * @return \Generator<int, list<int|string|null>>
+     */
+    private function caseRows(MySqlWideTableDefinition $definition, array $rows): \Generator
+    {
         foreach ($rows as $caseOrdinal => $row) {
             if (!is_array($row)) {
                 throw new UnsupportedOperation(
@@ -286,14 +296,14 @@ final readonly class MySqlWideTableImporter
                     'Every SPSS case must be an ordered value list or source-name map.',
                 );
             }
-            $values = ['value_0' => $caseOrdinal + 1];
+            $values = [$caseOrdinal + 1];
             foreach ($definition->columns as $index => $column) {
                 $value = array_key_exists($column['sourceName'], $row)
                     ? $row[$column['sourceName']]
                     : ($row[$index] ?? null);
-                $values['value_' . ($index + 1)] = $this->caseValue($value, $column['storageKind']);
+                $values[] = $this->caseValue($value, $column['storageKind']);
             }
-            $statement->execute($values);
+            yield $values;
         }
     }
 

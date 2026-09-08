@@ -408,24 +408,29 @@ final readonly class PostgreSqlWideTableImporter
     {
         $columns = array_merge(['__case_ordinal'], array_column($definition->columns, 'columnName'));
         $quoted = array_map(fn(string $column): string => '"' . str_replace('"', '""', $column) . '"', $columns);
-        $parameters = array_map(static fn(int $index): string => ':value_' . $index, array_keys($columns));
-        $statement = $this->pdo->prepare(
-            'INSERT INTO "' . str_replace('"', '""', $definition->tableName) . '" (' . implode(', ', $quoted) . ') VALUES (' . implode(', ', $parameters) . ')',
+        PreparedCaseBatch::send(
+            $this->pdo,
+            'INSERT INTO "' . str_replace('"', '""', $definition->tableName) . '" (' . implode(', ', $quoted) . ') VALUES ',
+            $this->caseRows($definition, $rows),
         );
-        if ($statement === false) {
-            throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL profile could not prepare a required data statement.');
-        }
+    }
 
+    /**
+     * @param list<mixed> $rows
+     * @return \Generator<int, list<int|string|null>>
+     */
+    private function caseRows(PostgreSqlWideTableDefinition $definition, array $rows): \Generator
+    {
         foreach ($rows as $caseOrdinal => $row) {
             if (!is_array($row)) {
                 throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Every SPSS case must be an ordered value list or source-name map.');
             }
-            $values = ['value_0' => $caseOrdinal + 1];
+            $values = [$caseOrdinal + 1];
             foreach ($definition->columns as $index => $column) {
                 $value = array_key_exists($column['sourceName'], $row) ? $row[$column['sourceName']] : ($row[$index] ?? null);
-                $values['value_' . ($index + 1)] = $this->caseValue($value, $column['storageKind']);
+                $values[] = $this->caseValue($value, $column['storageKind']);
             }
-            $statement->execute($values);
+            yield $values;
         }
     }
 
