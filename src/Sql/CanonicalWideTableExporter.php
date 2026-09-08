@@ -51,7 +51,7 @@ final readonly class CanonicalWideTableExporter
             throw $this->invalid('The canonical dataset has no variables.');
         }
         $labelsByVariable = $this->all('SELECT link.variable_id, label.* FROM variable_value_label_set link JOIN variable ON variable.variable_id = link.variable_id JOIN value_label label ON label.value_label_set_id = link.value_label_set_id WHERE variable.dataset_id = ? ORDER BY link.variable_id, label.ordinal', [$id], 'variable_id');
-        $attributesByVariable = $this->all('SELECT attribute.* FROM variable_attribute attribute JOIN variable ON variable.variable_id = attribute.variable_id WHERE variable.dataset_id = ? ORDER BY attribute.variable_id, attribute.attribute_name, attribute.array_ordinal', [$id], 'variable_id');
+        $attributesByVariable = $this->all('SELECT attr.* FROM variable_attribute attr JOIN variable ON variable.variable_id = attr.variable_id WHERE variable.dataset_id = ? ORDER BY attr.variable_id, attr.attribute_name, attr.array_ordinal', [$id], 'variable_id');
         $missingByVariable = $this->all('SELECT rule.* FROM missing_rule rule JOIN variable ON variable.variable_id = rule.variable_id WHERE variable.dataset_id = ? ORDER BY rule.variable_id, rule.ordinal', [$id], 'variable_id');
         $typedVariables = [];
         $columns = [];
