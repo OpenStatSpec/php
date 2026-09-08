@@ -70,50 +70,163 @@ final class PostgreSqlWideTableImporterTest extends TestCase
         self::assertStringContainsString('DOUBLE PRECISION NULL', $definition->createSql);
         self::assertStringContainsString('TEXT NOT NULL', $definition->createSql);
     }
-    public function testImportsCatalogueAndOrderedRowsThroughPdoTransaction(): void
+    /** @return iterable<string, array{int, int, int, list<int>}> */
+    public static function caseBatches(): iterable
+    {
+        yield 'empty' => [0, 2, 0, []];
+        yield 'singleton' => [1, 2, 0, [1]];
+        yield 'two fitting rows' => [2, 2, 0, [2]];
+        yield 'row limit and tail' => [513, 2, 0, [256, 256, 1]];
+        yield 'parameter limit includes ordinal' => [81, 1599, 0, [40, 40, 1]];
+        yield 'byte target and tail' => [5, 2, 400000, [2, 2, 1]];
+        yield 'oversized valid row and following tail' => [3, 2, 1048577, [1, 2]];
+    }
+
+    /** @param positive-int $width
+     * @param list<int> $batchSizes
+     */
+    #[DataProvider('caseBatches')]
+    public function testImportsCatalogueAndOrderedRowsThroughPdoTransaction(int $count, int $width, int $textBytes, array $batchSizes): void
     {
         $pdo = $this->createMock(PDO::class);
         $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
         $pdo->method('setAttribute')->with(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION)->willReturn(true);
         $dataset = $this->createMock(PDOStatement::class);
         $variables = $this->createMock(PDOStatement::class);
-        $cases = $this->createMock(PDOStatement::class);
         $variableRows = [];
         $caseRows = [];
+        $caseSql = [];
+        $sourceVariables = $width === 2 ? [
+            ['name' => 'Score', 'type' => 'numeric', 'width' => 0],
+            ['name' => 'Comment', 'type' => 'string', 'width' => 12],
+        ] : array_map(static fn(int $i): array => ['name' => 'v' . $i, 'type' => 'numeric', 'width' => 0], range(1, $width));
+        $rows = [];
+        $expected = [];
+        for ($i = 0; $i < $count; ++$i) {
+            $row = $width === 2 ? [[0.1, null, 42, 1.0000000000000002, PHP_FLOAT_MAX, 5.0e-324][$i % 6], $i % 2 === 0 ? "õ'\\\\" : ''] : array_fill(0, $width, null);
+            if ($textBytes > 0 && ($textBytes <= 1048576 || $i === 0)) {
+                $row[1] = str_repeat('x', $textBytes);
+            }
+            $rows[] = $row;
+            $expected[] = array_merge([$i + 1], array_map(static fn($value) => is_float($value) ? sprintf('%.17g', $value) : $value, $row));
+        }
 
         $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
         $pdo->expects(self::once())->method('commit')->willReturn(true);
         $pdo->expects(self::never())->method('rollBack');
         $pdo->expects(self::atLeast(18))->method('exec')->willReturn(0);
-        $pdo->expects(self::exactly(3))->method('prepare')->willReturnOnConsecutiveCalls($dataset, $variables, $cases);
+        $pdo->method('prepare')->willReturnCallback(function (string $sql) use ($dataset, $variables, &$caseSql, &$caseRows): PDOStatement {
+            if (str_starts_with($sql, 'INSERT INTO datasets ')) {
+                return $dataset;
+            }
+            if (str_starts_with($sql, 'INSERT INTO variables ')) {
+                return $variables;
+            }
+            self::assertStringStartsWith('INSERT INTO "dataset_customer_survey" ', $sql);
+            $caseSql[] = $sql;
+            $statement = $this->createMock(PDOStatement::class);
+            $statement->method('execute')->willReturnCallback(static function (array $params) use ($sql, &$caseRows): bool {
+                $caseRows[] = [$sql, array_values($params)];
+                return true;
+            });
+            return $statement;
+        });
         $dataset->expects(self::once())->method('execute')->with(['customer survey', 'dataset_customer_survey'])->willReturn(true);
-        $variables->expects(self::exactly(2))->method('execute')->willReturnCallback(function ($row) use (&$variableRows): bool {
+        $variables->expects(self::exactly($width))->method('execute')->willReturnCallback(function ($row) use (&$variableRows): bool {
             $variableRows[] = $row;
             return true;
         });
-        $cases->expects(self::exactly(2))->method('execute')->willReturnCallback(function ($row) use (&$caseRows): bool {
-            $caseRows[] = $row;
-            return true;
-        });
-
         $definition = (new PostgreSqlWideTableImporter($pdo))->import([
-            'variables' => [
-                ['name' => 'Score', 'type' => 'numeric', 'width' => 0],
-                ['name' => 'Comment', 'type' => 'string', 'width' => 12],
-            ],
-            'data' => [[0.1, 'blue'], [null, 'green']],
+            'variables' => $sourceVariables,
+            'data' => $rows,
         ], 'customer survey');
 
-        self::assertSame('score', $definition->columns[0]['columnName']);
-        self::assertSame('comment', $definition->columns[1]['columnName']);
-        self::assertSame([
-            ['customer survey', 1, 'Score', 'score', 'numeric', 0, 5, 8, 0, 5, 8, 0, null],
-            ['customer survey', 2, 'Comment', 'comment', 'string', 12, 5, 8, 0, 5, 8, 0, null],
-        ], $variableRows);
-        self::assertSame([
-            ['value_0' => 1, 'value_1' => '0.10000000000000001', 'value_2' => 'blue'],
-            ['value_0' => 2, 'value_1' => null, 'value_2' => 'green'],
-        ], $caseRows);
+        foreach ($sourceVariables as $i => $variable) {
+            $column = strtolower($variable['name']);
+            self::assertSame($column, $definition->columns[$i]['columnName']);
+            self::assertSame(['customer survey', $i + 1, $variable['name'], $column, $variable['type'], $variable['width'], 5, 8, 0, 5, 8, 0, null], $variableRows[$i]);
+        }
+        self::assertSame($batchSizes, array_map(static fn(array $batch): int => intdiv(count($batch[1]), $width + 1), $caseRows), 'Case execution sizes, including the final tail.');
+        self::assertSame($count === 0, $caseSql === [], 'Empty imports must not prepare case SQL.');
+        $actual = [];
+        foreach ($caseRows as [$sql, $params]) {
+            self::assertNotEmpty($params);
+            self::assertLessThanOrEqual(65535, count($params));
+            self::assertSame(count($params), preg_match_all('/\?|:value_\d+/', $sql));
+            self::assertSame(intdiv(count($params), $width + 1), preg_match_all('/\\([^()]*\\)/', explode(' VALUES ', $sql, 2)[1]));
+            array_push($actual, ...array_chunk($params, $width + 1));
+        }
+        self::assertSame($expected, $actual);
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function lateBatchFailures(): iterable
+    {
+        yield 'prepare tail' => ['prepare'];
+        yield 'execute tail' => ['execute'];
+    }
+
+    #[DataProvider('lateBatchFailures')]
+    public function testSecondBatchFailureRollsBackWithoutFinalization(string $stage): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $mode = PDO::ERRMODE_SILENT;
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn($mode);
+        $pdo->method('setAttribute')->willReturnCallback(static function (int $attribute, mixed $value) use (&$mode): bool {
+            self::assertSame(PDO::ATTR_ERRMODE, $attribute);
+            $mode = $value;
+            return true;
+        });
+        $pdo->method('inTransaction')->willReturnOnConsecutiveCalls(false, true);
+        $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
+        $commits = $rollbacks = $prepares = $executes = $written = 0;
+        $pdo->method('commit')->willReturnCallback(static function () use (&$commits): bool {
+            ++$commits;
+            return true;
+        });
+        $pdo->method('rollBack')->willReturnCallback(static function () use (&$rollbacks): bool {
+            ++$rollbacks;
+            return true;
+        });
+        $pdo->method('exec')->willReturn(0);
+        $metadata = $this->createMock(PDOStatement::class);
+        $metadata->method('execute')->willReturn(true);
+        $injected = new \RuntimeException('second batch ' . $stage);
+        $pdo->method('prepare')->willReturnCallback(function (string $sql) use ($metadata, $stage, $injected, &$prepares, &$executes, &$written): PDOStatement {
+            if (!str_starts_with($sql, 'INSERT INTO "dataset_attempt" ')) {
+                return $metadata;
+            }
+            if (++$prepares === 2 && $stage === 'prepare') {
+                throw $injected;
+            }
+            $statement = $this->createMock(PDOStatement::class);
+            $statement->method('execute')->willReturnCallback(static function (array $params) use ($stage, $injected, &$executes, &$written): bool {
+                if (++$executes === 2 && $stage === 'execute') {
+                    throw $injected;
+                }
+                $written += intdiv(count($params), 2);
+                return true;
+            });
+            return $statement;
+        });
+        $finalized = false;
+        $caught = null;
+        try {
+            (new PostgreSqlWideTableImporter($pdo))->import([
+                'variables' => [['name' => 'Score', 'type' => 'numeric']],
+                'data' => array_fill(0, 257, [0.1]),
+            ], 'attempt', beforeCommit: static function () use (&$finalized): void {
+                $finalized = true;
+            });
+        } catch (\RuntimeException $exception) {
+            $caught = $exception;
+        }
+        self::assertSame($injected, $caught, 'The second case batch must reach the injected failure.');
+        self::assertSame(256, $written, 'One full batch must succeed before the tail fails.');
+        self::assertSame(0, $commits);
+        self::assertSame(1, $rollbacks);
+        self::assertFalse($finalized);
+        self::assertSame(PDO::ERRMODE_SILENT, $mode);
     }
 
     public function testImportsFileLabelDocumentsAndTechnicalMetadata(): void

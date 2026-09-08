@@ -9,6 +9,7 @@ use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\CatalogOwnership;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
+use OpenStatSpec\Sql\PostgreSqlWideTableImporter;
 use OpenStatSpec\Spss\PhpSpssEngine;
 use OpenStatSpec\Transformation\Audit\TransformationAuditMigrator;
 use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
@@ -214,7 +215,13 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
         $pdo->exec('CREATE SCHEMA ' . $this->quote($schema));
         try {
             $pdo->exec('SET search_path TO ' . $this->quote($schema));
-            $engine = new FakeSpssEngine($this->fixture('sav'));
+            $fixture = $this->fixture('sav');
+            $engine = new FakeSpssEngine(new Dataset(
+                new VariableDictionary($fixture->variables()),
+                array_merge(...array_fill(0, 257, $fixture->rows())),
+                $fixture->metadata,
+                $fixture->technicalMetadata,
+            ));
             $prior = (new SpssAdapter($pdo, $engine))->import('prior.sav', 'prior');
             $before = [];
             foreach ($this->rows($pdo, "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' AND table_name NOT IN ('operation_catalog', 'operation', 'fidelity_event_catalog', 'fidelity_event')", []) as $table) {
@@ -257,6 +264,90 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
                 $pdo->rollBack();
             }
             $pdo->exec('SET search_path TO public');
+            $pdo->exec('DROP SCHEMA ' . $this->quote($schema) . ' CASCADE');
+        }
+    }
+
+    /** @return iterable<string, array{bool, string}> */
+    public static function batchImports(): iterable
+    {
+        foreach (['native' => false, 'emulated' => true] as $mode => $emulated) {
+            foreach (['mixed', 'wide NULL', 'late failure'] as $shape) {
+                yield "$mode $shape" => [$emulated, $shape];
+            }
+        }
+    }
+
+    #[DataProvider('batchImports')]
+    public function testBoundedCaseImportOnServer(bool $emulated, string $shape): void
+    {
+        $pdo = $this->postgres();
+        $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, $emulated);
+        $schema = 'case_batches_' . bin2hex(random_bytes(6));
+        $searchPath = (string) $this->scalar($pdo, 'SHOW search_path', []);
+        $pdo->exec('CREATE SCHEMA ' . $this->quote($schema));
+        try {
+            $pdo->exec('SET search_path TO ' . $this->quote($schema));
+            $variables = $shape === 'wide NULL'
+                ? array_map(static fn(int $i): array => ['name' => 'v' . $i, 'type' => 'numeric'], range(1, 1599))
+                : [['name' => 'Score', 'type' => 'numeric'], ['name' => 'Comment', 'type' => 'string']];
+            $rows = [];
+            for ($i = 0; $i < ($shape === 'wide NULL' ? 81 : 513); ++$i) {
+                $rows[] = $shape === 'wide NULL' ? array_fill(0, 1599, null)
+                    : [[0.1, null, 42, 1.0000000000000002, PHP_FLOAT_MAX, 5.0e-324][$i % 6], $i % 2 === 0 ? "õ'\\\\ $i" : ''];
+            }
+            $importer = new PostgreSqlWideTableImporter($pdo);
+            $importer->import(['variables' => $variables, 'data' => [$rows[0]]], 'prior');
+            $prior = $this->rows($pdo, 'SELECT * FROM dataset_prior', []);
+            if ($shape === 'late failure') {
+                // Delegate to the live connection; only the owned attempt DDL gets a fault constraint.
+                $faultPdo = $this->createMock(PDO::class);
+                foreach (['getAttribute', 'setAttribute', 'inTransaction', 'beginTransaction', 'commit', 'rollBack', 'query', 'prepare'] as $method) {
+                    $faultPdo->method($method)->willReturnCallback($pdo->$method(...));
+                }
+                $faultPdo->method('exec')->willReturnCallback(static function (string $sql) use ($pdo): int|false {
+                    if (str_starts_with($sql, 'CREATE TABLE "dataset_attempt" ')) {
+                        $sql = substr($sql, 0, -1) . ', CONSTRAINT reject_batch_tail CHECK (__case_ordinal < 257))';
+                    }
+                    return $pdo->exec($sql);
+                });
+                $finalized = false;
+                try {
+                    (new PostgreSqlWideTableImporter($faultPdo))->import(['variables' => $variables, 'data' => $rows], 'attempt', beforeCommit: static function () use (&$finalized): void {
+                        $finalized = true;
+                    });
+                    self::fail('The server accepted the forbidden tail row.');
+                } catch (PDOException $exception) {
+                    self::assertStringContainsString('reject_batch_tail', $exception->getMessage());
+                }
+                self::assertFalse($finalized);
+                self::assertNull($this->scalar($pdo, "SELECT to_regclass('dataset_attempt')", []));
+                self::assertSame(0, (int) $this->scalar($pdo, "SELECT COUNT(*) FROM datasets WHERE dataset_name = 'attempt'", []));
+                self::assertSame(0, (int) $this->scalar($pdo, "SELECT COUNT(*) FROM variables WHERE dataset_name = 'attempt'", []));
+            } else {
+                $definition = $importer->import(['variables' => $variables, 'data' => $rows], 'attempt');
+                $actual = $this->rows($pdo, 'SELECT * FROM ' . $this->quote($definition->tableName) . ' ORDER BY __case_ordinal', []);
+                self::assertCount(count($rows), $actual);
+                foreach ($actual as $i => $row) {
+                    self::assertSame($i + 1, (int) array_shift($row));
+                    foreach (array_values($row) as $j => $value) {
+                        $expected = $rows[$i][$j];
+                        if (is_int($expected) || is_float($expected)) {
+                            self::assertSame(pack('E', (float) $expected), pack('E', (float) $value));
+                        } else {
+                            self::assertSame($expected, $value);
+                        }
+                    }
+                }
+            }
+            self::assertSame($prior, $this->rows($pdo, 'SELECT * FROM dataset_prior', []));
+            self::assertFalse($pdo->inTransaction());
+            self::assertSame($emulated, $pdo->getAttribute(PDO::ATTR_EMULATE_PREPARES));
+        } finally {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            $pdo->prepare("SELECT set_config('search_path', ?, false)")->execute([$searchPath]);
             $pdo->exec('DROP SCHEMA ' . $this->quote($schema) . ' CASCADE');
         }
     }
