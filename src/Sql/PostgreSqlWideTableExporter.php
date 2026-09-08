@@ -56,11 +56,17 @@ final readonly class PostgreSqlWideTableExporter
             $rows[] = $values;
         }
 
+        $labels = $this->grouped('SELECT variable_ordinal, value_kind, numeric_value, text_value, label FROM value_labels WHERE dataset_name = ? ORDER BY variable_ordinal, ordinal', $datasetName);
+        $rules = $this->grouped('SELECT variable_ordinal, missing_format FROM missing_rules WHERE dataset_name = ? ORDER BY variable_ordinal', $datasetName);
+        $missingValues = $rules === [] ? [] : $this->grouped('SELECT variable_ordinal, value_kind, numeric_value, text_value FROM missing_rule_values WHERE dataset_name = ? ORDER BY variable_ordinal, ordinal', $datasetName);
+        $displays = $this->grouped('SELECT variable_ordinal, measurement_level, display_width, alignment FROM variable_display_metadata WHERE dataset_name = ? ORDER BY variable_ordinal', $datasetName);
+        $roles = $this->grouped('SELECT variable_ordinal, role FROM variable_roles WHERE dataset_name = ? ORDER BY variable_ordinal', $datasetName);
+        $attributes = $this->grouped('SELECT variable_ordinal, attribute_name, ordinal, value FROM variable_attributes WHERE dataset_name = ? ORDER BY variable_ordinal, attribute_name, ordinal', $datasetName);
         $typedVariables = [];
         foreach ($variables as $variable) {
             $isString = $variable['storage_kind'] === 'string';
-            $dictionary = $this->dictionary($datasetName, $variable['ordinal']);
-            $display = $this->display($datasetName, $variable['ordinal']);
+            $dictionary = $this->dictionary($labels[$variable['ordinal']] ?? [], $rules[$variable['ordinal']][0]['missing_format'] ?? null, $missingValues[$variable['ordinal']] ?? []);
+            $display = $this->display($displays[$variable['ordinal']][0] ?? null);
             $typedVariables[] = new VariableMetadata(
                 name: $variable['source_name'],
                 type: $isString ? VariableType::STRING : VariableType::NUMERIC,
@@ -73,8 +79,8 @@ final readonly class PostgreSqlWideTableExporter
                 measure: $display['measure'],
                 alignment: $display['alignment'],
                 columns: $display['columns'],
-                role: $this->role($datasetName, $variable['ordinal']),
-                attributes: $this->variableAttributes($datasetName, $variable['ordinal'], $variable['source_name']),
+                role: $this->role($roles[$variable['ordinal']][0]['role'] ?? null),
+                attributes: $this->variableAttributes($attributes[$variable['ordinal']] ?? [], $variable['source_name']),
                 dictionaryIndex: $variable['ordinal'],
             );
         }
@@ -162,12 +168,12 @@ final readonly class PostgreSqlWideTableExporter
         return $variables;
     }
 
-    /** @return array{measure: Measure, columns: int, alignment: Alignment} */
-    private function display(string $datasetName, int $ordinal): array
+    /**
+     * @param array<string, mixed>|null $row
+     * @return array{measure: Measure, columns: int, alignment: Alignment}
+     */
+    private function display(?array $row): array
     {
-        $statement = $this->statement('SELECT measurement_level, display_width, alignment FROM variable_display_metadata WHERE dataset_name = ? AND variable_ordinal = ?');
-        $statement->execute([$datasetName, $ordinal]);
-        $row = $statement->fetch(PDO::FETCH_ASSOC);
         if (!is_array($row)) {
             return ['measure' => Measure::UNKNOWN, 'columns' => 8, 'alignment' => Alignment::LEFT];
         }
@@ -183,22 +189,22 @@ final readonly class PostgreSqlWideTableExporter
         ];
     }
 
-    /** @return array{labels: list<ValueLabel>, missing: MissingValues} */
-    private function dictionary(string $datasetName, int $ordinal): array
+    /**
+     * @param list<array<string, mixed>> $labels
+     * @param list<array<string, mixed>> $missingValues
+     * @return array{labels: list<ValueLabel>, missing: MissingValues}
+     */
+    private function dictionary(array $labels, mixed $format, array $missingValues): array
     {
-        $labels = $this->statement('SELECT value_kind, numeric_value, text_value, label FROM value_labels WHERE dataset_name = ? AND variable_ordinal = ? ORDER BY ordinal');
-        $labels->execute([$datasetName, $ordinal]);
         $typedLabels = [];
-        while (($row = $labels->fetch(PDO::FETCH_ASSOC)) !== false) {
-            if (!is_array($row) || !is_string($row['label'] ?? null)) {
+        foreach ($labels as $row) {
+            if (!is_string($row['label'] ?? null)) {
                 throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL value-label catalogue is malformed.');
             }
             $typedLabels[] = new ValueLabel($this->dictionaryValue($row), $row['label']);
         }
 
-        $rule = $this->statement('SELECT missing_format FROM missing_rules WHERE dataset_name = ? AND variable_ordinal = ?');
-        $rule->execute([$datasetName, $ordinal]);
-        $format = $this->integer($rule->fetchColumn());
+        $format = $this->integer($format);
         if ($format === null || $format === 0) {
             return ['labels' => $typedLabels, 'missing' => MissingValues::none()];
         }
@@ -206,13 +212,8 @@ final readonly class PostgreSqlWideTableExporter
             throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL user-missing rule has an unsupported SPSS missing format.');
         }
 
-        $valuesStatement = $this->statement('SELECT value_kind, numeric_value, text_value FROM missing_rule_values WHERE dataset_name = ? AND variable_ordinal = ? ORDER BY ordinal');
-        $valuesStatement->execute([$datasetName, $ordinal]);
         $values = [];
-        while (($row = $valuesStatement->fetch(PDO::FETCH_ASSOC)) !== false) {
-            if (!is_array($row)) {
-                throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL user-missing value catalogue is malformed.');
-            }
+        foreach ($missingValues as $row) {
             $values[] = $this->dictionaryValue($row);
         }
 
@@ -277,11 +278,9 @@ final readonly class PostgreSqlWideTableExporter
         throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS missing-value ranges require numeric endpoints.');
     }
 
-    private function role(string $datasetName, int $ordinal): VariableRole
+    private function role(mixed $role): VariableRole
     {
-        $statement = $this->statement('SELECT role FROM variable_roles WHERE dataset_name = ? AND variable_ordinal = ?');
-        $statement->execute([$datasetName, $ordinal]);
-        $role = $this->integer($statement->fetchColumn());
+        $role = $this->integer($role);
         if ($role === null || ($typed = VariableRole::tryFrom($role)) === null) {
             throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL variable role catalogue is malformed.');
         }
@@ -289,14 +288,14 @@ final readonly class PostgreSqlWideTableExporter
         return $typed;
     }
 
-    /** @return list<VariableAttribute> */
-    private function variableAttributes(string $datasetName, int $ordinal, string $variableName): array
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @return list<VariableAttribute>
+     */
+    private function variableAttributes(array $rows, string $variableName): array
     {
-        $statement = $this->statement('SELECT attribute_name, ordinal, value FROM variable_attributes WHERE dataset_name = ? AND variable_ordinal = ? ORDER BY attribute_name, ordinal');
-        $statement->execute([$datasetName, $ordinal]);
-
         $attributes = [];
-        foreach ($this->attributeValues($statement) as $name => $values) {
+        foreach ($this->attributeValues($rows) as $name => $values) {
             $attributes[] = new VariableAttribute($variableName, $name, $values);
         }
 
@@ -310,19 +309,22 @@ final readonly class PostgreSqlWideTableExporter
         $statement->execute([$datasetName]);
 
         $attributes = [];
-        foreach ($this->attributeValues($statement) as $name => $values) {
+        foreach ($this->attributeValues(array_values($statement->fetchAll(PDO::FETCH_ASSOC))) as $name => $values) {
             $attributes[] = new FileAttribute($name, $values);
         }
 
         return $attributes;
     }
 
-    /** @return array<string, list<string>> */
-    private function attributeValues(PDOStatement $statement): array
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @return array<string, list<string>>
+     */
+    private function attributeValues(array $rows): array
     {
         /** @var array<string, list<string>> $grouped */
         $grouped = [];
-        while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+        foreach ($rows as $row) {
             $name = $row['attribute_name'] ?? null;
             $value = $row['value'] ?? null;
             if (!is_string($name) || $name === '' || !is_string($value)) {
@@ -339,7 +341,7 @@ final readonly class PostgreSqlWideTableExporter
     {
         $sets = $this->statement('SELECT set_ordinal, name FROM variable_sets WHERE dataset_name = ? ORDER BY set_ordinal');
         $sets->execute([$datasetName]);
-        $members = $this->statement('SELECT member.member_ordinal, variable.source_name FROM variable_set_members member LEFT JOIN variables variable ON variable.dataset_name = member.dataset_name AND variable.ordinal = member.variable_ordinal WHERE member.dataset_name = ? AND member.set_ordinal = ? ORDER BY member.member_ordinal');
+        $members = $this->grouped('SELECT member.set_ordinal, member.member_ordinal, variable.source_name FROM variable_set_members member LEFT JOIN variables variable ON variable.dataset_name = member.dataset_name AND variable.ordinal = member.variable_ordinal WHERE member.dataset_name = ? ORDER BY member.set_ordinal, member.member_ordinal', $datasetName, 'set_ordinal');
         $result = [];
         while (($set = $sets->fetch(PDO::FETCH_ASSOC)) !== false) {
             $ordinal = $this->integer($set['set_ordinal'] ?? null);
@@ -347,9 +349,8 @@ final readonly class PostgreSqlWideTableExporter
             if ($ordinal === null || !is_string($name) || $name === '') {
                 throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL variable-set catalogue is malformed.');
             }
-            $members->execute([$datasetName, $ordinal]);
             $names = [];
-            while (($member = $members->fetch(PDO::FETCH_ASSOC)) !== false) {
+            foreach ($members[$ordinal] ?? [] as $member) {
                 $sourceName = $member['source_name'] ?? null;
                 if (!is_string($sourceName) || $sourceName === '') {
                     throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A PostgreSQL variable set references an unknown variable.');
@@ -367,7 +368,7 @@ final readonly class PostgreSqlWideTableExporter
     {
         $sets = $this->statement('SELECT set_ordinal, name, set_type, label, counted_value_kind, counted_numeric_value, counted_text_value, category_labels, label_source FROM multiple_response_sets WHERE dataset_name = ? ORDER BY set_ordinal');
         $sets->execute([$datasetName]);
-        $members = $this->statement('SELECT member.member_ordinal, variable.source_name FROM multiple_response_set_members member LEFT JOIN variables variable ON variable.dataset_name = member.dataset_name AND variable.ordinal = member.variable_ordinal WHERE member.dataset_name = ? AND member.set_ordinal = ? ORDER BY member.member_ordinal');
+        $members = $this->grouped('SELECT member.set_ordinal, member.member_ordinal, variable.source_name FROM multiple_response_set_members member LEFT JOIN variables variable ON variable.dataset_name = member.dataset_name AND variable.ordinal = member.variable_ordinal WHERE member.dataset_name = ? ORDER BY member.set_ordinal, member.member_ordinal', $datasetName, 'set_ordinal');
         $result = [];
         while (($set = $sets->fetch(PDO::FETCH_ASSOC)) !== false) {
             $ordinal = $this->integer($set['set_ordinal'] ?? null);
@@ -380,9 +381,8 @@ final readonly class PostgreSqlWideTableExporter
                 throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'The PostgreSQL multiple-response-set catalogue is malformed.');
             }
             $countedValue = $this->countedValue($set);
-            $members->execute([$datasetName, $ordinal]);
             $names = [];
-            while (($member = $members->fetch(PDO::FETCH_ASSOC)) !== false) {
+            foreach ($members[$ordinal] ?? [] as $member) {
                 $sourceName = $member['source_name'] ?? null;
                 if (!is_string($sourceName) || $sourceName === '') {
                     throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'A PostgreSQL multiple-response set references an unknown variable.');
@@ -497,6 +497,18 @@ final readonly class PostgreSqlWideTableExporter
     private function integer(mixed $value): ?int
     {
         return is_int($value) ? $value : (is_string($value) && preg_match('/^-?[0-9]+$/D', $value) === 1 ? (int) $value : null);
+    }
+
+    /** @return array<array-key, list<array<string, mixed>>> */
+    private function grouped(string $sql, string $datasetName, string $key = 'variable_ordinal'): array
+    {
+        $statement = $this->statement($sql);
+        $statement->execute([$datasetName]);
+        $grouped = [];
+        while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $grouped[$row[$key]][] = $row;
+        }
+        return $grouped;
     }
 
     private function statement(string $sql): PDOStatement

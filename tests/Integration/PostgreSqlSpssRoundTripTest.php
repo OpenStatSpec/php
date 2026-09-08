@@ -7,6 +7,9 @@ namespace OpenStatSpec\Tests\Integration;
 use OpenStatSpec\Core\DiagnosticCode;
 use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\CatalogOwnership;
+use OpenStatSpec\Sql\CanonicalWideTableExporter;
+use OpenStatSpec\Sql\PostgreSqlWideTableExporter;
+use OpenStatSpec\Tests\Support\ExportCountingPdo;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Sql\NormativeCatalog;
 use OpenStatSpec\Sql\PostgreSqlWideTableImporter;
@@ -60,6 +63,7 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
     public function testRealEngineRoundTripsSavAndZsavThroughPostgreSql(): void
     {
         $pdo = $this->postgres();
+        self::assertInstanceOf(ExportCountingPdo::class, $pdo);
         $engine = new PhpSpssEngine();
 
         foreach (['sav' => ['$FL2', 1], 'zsav' => ['$FL3', 2]] as $format => [$header, $compression]) {
@@ -96,6 +100,16 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
                 self::assertSame(1, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM multiple_response_sets WHERE dataset_name = ?', [$datasetName]));
                 self::assertSame(1, (int) $this->scalar($pdo, 'SELECT variable_ordinal FROM dataset_weight_variables WHERE dataset_name = ?', [$datasetName]));
 
+                $executionCounts = [];
+                foreach ([CanonicalWideTableExporter::class, PostgreSqlWideTableExporter::class] as $exporterClass) {
+                    $pdo->executions = [];
+                    $direct = (new $exporterClass($pdo))->export($datasetName, $format);
+                    $executionCounts[] = count($pdo->captured());
+                    $pdo->executions = null;
+                    self::assertSame([], $direct['diagnostics']);
+                    self::assertSame($fixture->rows(), $direct['dataset']->rows());
+                    self::assertEquals($fixture->metadata, $direct['dataset']->metadata);
+                }
                 $result = $adapter->export($datasetName, $targetPath);
                 self::assertSame([], $result->diagnostics);
                 self::assertSame(2, $result->caseCount);
@@ -126,6 +140,8 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
                 self::assertCount(1, $roundTrip->metadata->multipleResponseSets());
                 self::assertSame(MultipleResponseSetType::DICHOTOMY, $roundTrip->metadata->multipleResponseSets()[0]->type);
                 self::assertSame(['Reason'], $roundTrip->metadata->multipleResponseSets()[0]->variableNames());
+                self::assertLessThanOrEqual(14, $executionCounts[0], 'Canonical export SQL executions');
+                self::assertLessThanOrEqual(18, $executionCounts[1], 'Legacy export SQL executions');
             } finally {
                 $this->cleanup($pdo, $datasetName, $tableName);
                 @unlink($sourcePath);
@@ -365,7 +381,7 @@ final class PostgreSqlSpssRoundTripTest extends TestCase
         $user = getenv('OPENSTATSPEC_PG_USER');
         $password = getenv('OPENSTATSPEC_PG_PASSWORD');
 
-        return new PDO(
+        return new ExportCountingPdo(
             $dsn,
             is_string($user) ? $user : null,
             is_string($password) ? $password : null,

@@ -120,7 +120,7 @@ final class PostgreSqlWideTableExporterTest extends TestCase
             'labels' => $this->statement(),
             'missing' => $this->statement([], [], false),
             'display' => $this->statement(),
-            'roles' => $this->statement([], [], $catalog['roles']),
+            'roles' => $this->statement(array_map(static fn(array $variable): array => ['variable_ordinal' => $variable['ordinal'], 'role' => $catalog['roles']], array_values($catalog['variables'])), [], $catalog['roles']),
             'variable_attributes' => $this->statement($catalog['variable_attributes']),
             'dataset_metadata' => $this->statement([], [], false),
             'documents' => $this->statement([], []),
@@ -163,9 +163,11 @@ final class PostgreSqlWideTableExporterTest extends TestCase
      */
     private function statement(array $rows = [], array $all = [], mixed $column = false): PDOStatement
     {
+        // Include owner keys for either per-owner or grouped public-export reads.
+        $rows = array_map(static fn(array $row): array => $row + ['dataset_name' => 'fixture', 'variable_ordinal' => 1, 'set_ordinal' => 1], $rows);
         $statement = $this->createStub(PDOStatement::class);
         $statement->method('execute')->willReturn(true);
-        $statement->method('fetchAll')->willReturn($all);
+        $statement->method('fetchAll')->willReturn($all !== [] ? $all : $rows);
         $statement->method('fetchColumn')->willReturn($column);
         $index = 0;
         $statement->method('fetch')->willReturnCallback(static function () use ($rows, &$index): array|false {
