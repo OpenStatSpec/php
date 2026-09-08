@@ -1164,6 +1164,196 @@ final class SpssAdapterTest extends TestCase
         $pdo->exec("INSERT INTO variable_set (variable_set_id, dataset_id, source_ordinal, set_name) VALUES ('vs-duplicate', 'dataset-v3', 1, 'Duplicate')");
     }
 
+    /** @return iterable<string, array{bool}> */
+    public static function importEntryPoints(): iterable
+    {
+        yield 'adapter' => [false];
+        yield 'direct normalized source' => [true];
+    }
+
+    #[DataProvider('importEntryPoints')]
+    public function testImportPreservesBinary64CasesAndNumericMetadata(bool $direct): void
+    {
+        $pdo = new PDO('sqlite::memory:');
+        $value = 1.2345678901234567;
+        $counted = 9007199254740991;
+        $source = new Dataset(
+            $this->fixture()->dictionary,
+            [[$value, 'blue'], [null, ''], [7, 'green']],
+            new FileMetadata(multipleResponseSets: [
+                new MultipleResponseSet('$Selected', MultipleResponseSetType::DICHOTOMY, ['Respondent ID'], countedValue: $counted),
+            ]),
+            new FileTechnicalMetadata(sourceFormat: 'sav', compressionBias: $value),
+        );
+        $adapter = new SpssAdapter($pdo, new FakeSpssEngine($source));
+        if ($direct) {
+            $adapter->migrateCatalog();
+            $normalized = SpssSourceNormalizer::normalize($source);
+            $normalized['multipleResponseSets'][0]['countedValue'] = (float) $counted;
+            (new SqliteWideTableImporter($pdo))->import($normalized, 'precision', 'fixture.sav');
+        } else {
+            $adapter->import('fixture.sav', 'precision');
+        }
+
+        $rows = self::rows($pdo, 'SELECT * FROM dataset_precision ORDER BY __case_ordinal');
+        self::assertSame([1, 2, 3], array_column($rows, '__case_ordinal'));
+        self::assertSame(['blue', '', 'green'], array_column($rows, 'favourite_colour'));
+        self::assertNull($rows[1]['respondent_id']);
+        self::assertSame(7.0, $rows[2]['respondent_id']);
+        $actual = ['case' => $rows[0]['respondent_id']];
+        foreach ([
+            'compression bias' => 'SELECT compression_bias FROM file_technical_metadata',
+            'legacy counted value' => 'SELECT counted_numeric_value FROM multiple_response_sets',
+            'normative counted value' => 'SELECT counted_numeric_value FROM multiple_response_set',
+        ] as $field => $sql) {
+            $actual[$field] = array_values(self::rows($pdo, $sql)[0])[0];
+        }
+        self::assertSame(
+            array_map(static fn($number): string => bin2hex(pack('E', $number)), [
+                'case' => $value, 'compression bias' => $value,
+                'legacy counted value' => $counted, 'normative counted value' => $counted,
+            ]),
+            array_map(static fn($number): string => bin2hex(pack('E', $number)), $actual),
+        );
+        self::assertFalse($pdo->inTransaction());
+    }
+
+    /** @return iterable<string, array{int, bool}> */
+    public static function nonExceptionImportModes(): iterable
+    {
+        foreach (['silent' => PDO::ERRMODE_SILENT, 'warning' => PDO::ERRMODE_WARNING] as $name => $mode) {
+            foreach (self::importEntryPoints() as $entry => [$direct]) {
+                yield $name . ' ' . $entry => [$mode, $direct];
+            }
+        }
+    }
+
+    #[DataProvider('nonExceptionImportModes')]
+    public function testImportCannotPublishPartialSuccessAndPreservesCallerErrorMode(int $mode, bool $direct): void
+    {
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => $mode]);
+        $source = $this->fixture();
+        $adapter = new SpssAdapter($pdo, new FakeSpssEngine($source));
+        $adapter->migrateCatalog();
+        $import = static function (string $name) use ($pdo, $source, $adapter, $direct): void {
+            if ($direct) {
+                (new SqliteWideTableImporter($pdo))->import(SpssSourceNormalizer::normalize($source), $name, 'fixture.sav');
+            } else {
+                $adapter->import('fixture.sav', $name);
+            }
+        };
+        $import('prior');
+        self::assertSame($mode, $pdo->getAttribute(PDO::ATTR_ERRMODE));
+        self::assertFalse($pdo->inTransaction());
+        self::assertCount(2, self::rows($pdo, 'SELECT * FROM dataset_prior'));
+        $pdo->exec("ALTER TABLE documents ADD COLUMN import_check INTEGER CONSTRAINT reject_document CHECK (dataset_name <> 'attempt' OR ordinal <> 2)");
+        $before = [];
+        foreach (self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('operation_catalog', 'operation', 'fidelity_event_catalog', 'fidelity_event')") as $table) {
+            $before[$table['name']] = self::rows($pdo, 'SELECT * FROM "' . $table['name'] . '"');
+        }
+
+        $failure = null;
+        try {
+            $import('attempt');
+        } catch (\PDOException $exception) {
+            $failure = $exception;
+        }
+        self::assertSame($mode, $pdo->getAttribute(PDO::ATTR_ERRMODE));
+        self::assertFalse($pdo->inTransaction());
+        self::assertNotNull($failure, 'A rejected document was silently committed as a successful import.');
+        self::assertStringContainsString('reject_document', $failure->getMessage());
+        self::assertSame([], self::rows($pdo, "SELECT name FROM sqlite_master WHERE name = 'dataset_attempt'"));
+        foreach ($before as $table => $rows) {
+            self::assertSame($rows, self::rows($pdo, 'SELECT * FROM "' . $table . '"'), $table);
+        }
+        if (!$direct) {
+            self::assertSame([['status' => 'failed', 'dataset_name' => null]], self::rows($pdo, "SELECT status, dataset_name FROM operation_catalog WHERE status <> 'succeeded'"));
+        }
+    }
+
+    /** @return iterable<string, array{bool}> */
+    public static function finalizationFailures(): iterable
+    {
+        yield 'hook throws' => [false];
+        yield 'normative success update fails' => [true];
+    }
+
+    #[DataProvider('finalizationFailures')]
+    public function testImportFinalizationFailureRollsBackOnlyThisAttempt(bool $journalFailure): void
+    {
+        $pdo = new PDO('sqlite::memory:');
+        $engine = new FakeSpssEngine($this->fixture());
+        $prior = (new SpssAdapter($pdo, $engine))->import('prior.sav', 'prior');
+        $before = [];
+        foreach (self::rows($pdo, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('operation_catalog', 'operation', 'fidelity_event_catalog', 'fidelity_event')") as $table) {
+            $before[$table['name']] = self::rows($pdo, 'SELECT * FROM "' . $table['name'] . '"');
+        }
+        $inTransaction = false;
+        $injected = new RuntimeException('Injected finalization failure.');
+        $adapter = new SpssAdapter($pdo, $engine, beforeImportFinalization: static function () use ($pdo, $prior, $journalFailure, $injected, &$inTransaction): void {
+            $inTransaction = $pdo->inTransaction();
+            if (!$journalFailure) {
+                throw $injected;
+            }
+            $pdo->exec("ALTER TABLE operation ADD COLUMN import_check INTEGER CONSTRAINT reject_success CHECK (status <> 'succeeded' OR operation_id = '{$prior->operationId}')");
+        });
+        try {
+            $adapter->import('attempt.sav', 'attempt');
+            self::fail('Finalization failure was swallowed.');
+        } catch (RuntimeException $exception) {
+            if ($journalFailure) {
+                self::assertInstanceOf(\PDOException::class, $exception);
+                self::assertStringContainsString('reject_success', $exception->getMessage());
+            } else {
+                self::assertSame($injected, $exception);
+            }
+        }
+        self::assertFalse($pdo->inTransaction());
+        self::assertSame([], self::rows($pdo, "SELECT name FROM sqlite_master WHERE name = 'dataset_attempt'"));
+        foreach ($before as $table => $rows) {
+            self::assertSame($rows, self::rows($pdo, 'SELECT * FROM "' . $table . '"'), $table);
+        }
+        self::assertTrue($inTransaction, 'Finalization must share the dataset transaction.');
+        self::assertSame([
+            ['target_path' => 'attempt.sav', 'status' => 'failed', 'dataset_name' => null, 'normative_status' => 'failed'],
+            ['target_path' => 'prior.sav', 'status' => 'succeeded', 'dataset_name' => 'prior', 'normative_status' => 'succeeded'],
+        ], self::rows($pdo, 'SELECT target_path, legacy.status, dataset_name, normative.status AS normative_status FROM operation_catalog legacy JOIN operation normative USING (operation_id) ORDER BY target_path'));
+        self::assertSame([['dataset_name' => null, 'code' => 'operation_failed']], self::rows($pdo, 'SELECT dataset_name, code FROM fidelity_event_catalog'));
+        self::assertSame([['dataset_id' => null, 'event_code' => 'operation_failed']], self::rows($pdo, 'SELECT dataset_id, event_code FROM fidelity_event'));
+    }
+
+    #[DataProvider('importEntryPoints')]
+    public function testImportRejectsCallerOwnedTransactionWithoutMutation(bool $direct): void
+    {
+        $pdo = new PDO('sqlite::memory:', options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_SILENT]);
+        $source = $this->fixture();
+        $adapter = new SpssAdapter($pdo, new FakeSpssEngine($source));
+        $adapter->import('prior.sav', 'prior');
+        $pdo->beginTransaction();
+        $pdo->exec("UPDATE dataset_prior SET favourite_colour = 'pending' WHERE __case_ordinal = 1");
+        $before = self::rows($pdo, 'SELECT * FROM sqlite_master');
+        $changes = self::rows($pdo, 'SELECT total_changes() AS changes');
+        $failure = null;
+        try {
+            if ($direct) {
+                (new SqliteWideTableImporter($pdo))->import(SpssSourceNormalizer::normalize($source), 'attempt', 'fixture.sav');
+            } else {
+                $adapter->import('fixture.sav', 'attempt');
+            }
+        } catch (\Throwable $exception) {
+            $failure = $exception;
+        }
+        self::assertTrue($pdo->inTransaction());
+        self::assertSame(PDO::ERRMODE_SILENT, $pdo->getAttribute(PDO::ATTR_ERRMODE));
+        self::assertSame([['favourite_colour' => 'pending']], self::rows($pdo, 'SELECT favourite_colour FROM dataset_prior WHERE __case_ordinal = 1'));
+        self::assertSame($before, self::rows($pdo, 'SELECT * FROM sqlite_master'));
+        self::assertSame($changes, self::rows($pdo, 'SELECT total_changes() AS changes'));
+        $pdo->rollBack();
+        self::assertSame([['favourite_colour' => 'blue']], self::rows($pdo, 'SELECT favourite_colour FROM dataset_prior WHERE __case_ordinal = 1'));
+        self::assertInstanceOf(UnsupportedOperation::class, $failure);
+        self::assertSame(DiagnosticCode::UnsupportedOperation, $failure->diagnosticCode);
+    }
+
     private function fixture(string $sourceFormat = 'zsav'): Dataset
     {
         return new Dataset(

@@ -17,6 +17,29 @@ use RuntimeException;
 
 final class MySqlWideTableImporterTest extends TestCase
 {
+    public function testRejectsCallerOwnedTransactionBeforeMutation(): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->willReturn(true);
+        $pdo->method('inTransaction')->willReturn(true);
+        $pdo->expects(self::never())->method('beginTransaction');
+        $pdo->expects(self::never())->method('commit');
+        $pdo->expects(self::never())->method('rollBack');
+        $pdo->expects(self::never())->method('exec');
+        $pdo->expects(self::never())->method('prepare');
+
+        try {
+            (new MySqlWideTableImporter($pdo))->import([
+                'variables' => [['name' => 'Score', 'type' => 'numeric']],
+                'data' => [[1.0]],
+            ], 'attempt');
+            self::fail('Caller-owned transaction was accepted.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::UnsupportedOperation, $exception->diagnosticCode);
+        }
+    }
+
     public function testImportsCatalogueAndOrderedRowsAfterMysqlDdl(): void
     {
         $pdo = $this->createMock(PDO::class);

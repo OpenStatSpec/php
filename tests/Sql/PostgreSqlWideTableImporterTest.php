@@ -4,13 +4,47 @@ declare(strict_types=1);
 
 namespace OpenStatSpec\Tests\Sql;
 
+use OpenStatSpec\Core\DiagnosticCode;
+use OpenStatSpec\Core\UnsupportedOperation;
 use OpenStatSpec\Sql\PostgreSqlWideTableImporter;
 use PDO;
 use PDOStatement;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class PostgreSqlWideTableImporterTest extends TestCase
 {
+    /** @return iterable<string, array{string}> */
+    public static function transactionEntryPoints(): iterable
+    {
+        yield 'import' => ['import'];
+        yield 'create tables' => ['createTables'];
+    }
+
+    #[DataProvider('transactionEntryPoints')]
+    public function testRejectsCallerOwnedTransactionBeforeMutation(string $entryPoint): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $pdo->method('getAttribute')->with(PDO::ATTR_ERRMODE)->willReturn(PDO::ERRMODE_EXCEPTION);
+        $pdo->method('setAttribute')->willReturn(true);
+        $pdo->method('inTransaction')->willReturn(true);
+        $pdo->expects(self::never())->method('beginTransaction');
+        $pdo->expects(self::never())->method('commit');
+        $pdo->expects(self::never())->method('rollBack');
+        $pdo->expects(self::never())->method('exec');
+        $pdo->expects(self::never())->method('prepare');
+
+        try {
+            (new PostgreSqlWideTableImporter($pdo))->$entryPoint([
+                'variables' => [['name' => 'Score', 'type' => 'numeric']],
+                'data' => [[1.0]],
+            ], 'attempt');
+            self::fail('Caller-owned transaction was accepted.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame(DiagnosticCode::UnsupportedOperation, $exception->diagnosticCode);
+        }
+    }
+
     public function testCreatesCatalogAndStrictWideTableInOneTransaction(): void
     {
         $pdo = $this->createMock(PDO::class);
