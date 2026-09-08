@@ -11,6 +11,11 @@ use OpenStatSpec\Spss\PhpSpssEngine;
 use OpenStatSpec\Spss\SpssAdapter;
 use OpenStatSpec\Spss\SpssSourceNormalizer;
 use OpenStatSpec\Sql\CatalogOwnership;
+use OpenStatSpec\Sql\CanonicalWideTableExporter;
+use OpenStatSpec\Sql\SqliteWideTableExporter;
+use OpenStatSpec\Sql\MySqlWideTableExporter;
+use OpenStatSpec\Sql\PostgreSqlWideTableExporter;
+use OpenStatSpec\Tests\Support\ExportCountingPdo;
 use OpenStatSpec\Sql\Connection;
 use OpenStatSpec\Transformation\Execution\InPlaceApplyRequest;
 use OpenStatSpec\Transformation\Execution\InPlaceTransformationExecutor;
@@ -1367,6 +1372,216 @@ final class SpssAdapterTest extends TestCase
         self::assertSame([['favourite_colour' => 'blue']], self::rows($pdo, 'SELECT favourite_colour FROM dataset_prior WHERE __case_ordinal = 1'));
         self::assertInstanceOf(UnsupportedOperation::class, $failure);
         self::assertSame(DiagnosticCode::UnsupportedOperation, $failure->diagnosticCode);
+    }
+
+    /** @return iterable<string, array{class-string}> */
+    public static function groupedExporters(): iterable
+    {
+        foreach ([CanonicalWideTableExporter::class, SqliteWideTableExporter::class, MySqlWideTableExporter::class, PostgreSqlWideTableExporter::class, SpssAdapter::class] as $class) {
+            yield substr($class, strrpos($class, '\\') + 1) => [$class];
+        }
+    }
+
+    /** @param class-string<CanonicalWideTableExporter|SqliteWideTableExporter|MySqlWideTableExporter|PostgreSqlWideTableExporter|SpssAdapter> $class */
+    #[DataProvider('groupedExporters')]
+    public function testGroupedExportExecutionCountDoesNotGrow(string $class): void
+    {
+        $counts = [];
+        $overhead = 0;
+        foreach ([[2, 0, false], [20, 0, false], [20, 10, false], [2, 0, true]] as [$variables, $sets, $empty]) {
+            $pdo = new ExportCountingPdo('sqlite::memory:');
+            $source = $this->groupedExportFixture($variables, $sets, $empty);
+            $engine = new FakeSpssEngine($source);
+            $adapter = new SpssAdapter($pdo, $engine);
+            $adapter->import('fixture.sav', 'A');
+            $exporter = $class === SpssAdapter::class ? $adapter : new $class($pdo);
+            $pdo->exec('PRAGMA query_only = ON');
+            if ($class === SpssAdapter::class) {
+                $pdo->executions = [];
+                CatalogOwnership::assertReadyForUseReadOnly($pdo);
+                $overhead = count($pdo->captured());
+            }
+            $pdo->executions = [];
+            $pdo->prepares = 0;
+            $export = $this->publicExport($exporter, $engine, 'A');
+            $counts[] = count($pdo->captured()) - $overhead;
+            self::assertSame($source->rowCount(), $export['caseCount']);
+            self::assertSame([], $export['diagnostics']);
+            self::assertSame($source->rows(), $export['dataset']->rows());
+            foreach ($pdo->captured() as $execution) {
+                self::assertMatchesRegularExpression('/^SELECT\b/i', $execution['sql']);
+            }
+        }
+        $limit = in_array($class, [CanonicalWideTableExporter::class, SpssAdapter::class], true) ? 14 : 18;
+        self::assertLessThanOrEqual($limit, max($counts), 'Executed SQL for (V,S,R)=(2,0,0),(20,0,0),(20,10,10),empty: ' . json_encode($counts));
+        self::assertSame($counts[0], $counts[1], 'Adding variables must not add executions.');
+    }
+
+    /** @param class-string<CanonicalWideTableExporter|SqliteWideTableExporter|MySqlWideTableExporter|PostgreSqlWideTableExporter|SpssAdapter> $class */
+    #[DataProvider('groupedExporters')]
+    public function testGroupedExportPreservesOrderedMetadataIsolationAndFreshness(string $class): void
+    {
+        $pdo = new ExportCountingPdo('sqlite::memory:');
+        $source = $this->groupedExportFixture(4, 3);
+        $engine = new FakeSpssEngine($source);
+        $adapter = new SpssAdapter($pdo, $engine);
+        $adapter->import('fixture.sav', 'A');
+        (new SpssAdapter($pdo, new FakeSpssEngine($this->groupedExportFixture(4, 3, changed: true))))->import('fixture.sav', 'B');
+        (new SpssAdapter($pdo, new FakeSpssEngine($this->groupedExportFixture(2, 0, true))))->import('fixture.sav', 'C');
+        // Legacy format-zero/absent rules deliberately ignore their value rows.
+        $pdo->exec("DELETE FROM missing_rules WHERE dataset_name = 'C' AND variable_ordinal = 2");
+        $pdo->exec("INSERT INTO missing_rule_values (dataset_name, variable_ordinal, ordinal, value_kind) VALUES ('C', 1, 1, 'text'), ('C', 2, 1, 'text')");
+        // Valid shared label set: both owners are in A, never a foreign-label policy test.
+        $pdo->exec("UPDATE variable_value_label_set SET value_label_set_id = (SELECT link.value_label_set_id FROM variable_value_label_set link JOIN variable v ON v.variable_id = link.variable_id JOIN dataset d ON d.dataset_id = v.dataset_id WHERE d.dataset_name = 'A' AND v.source_ordinal = 1) WHERE variable_id = (SELECT v.variable_id FROM variable v JOIN dataset d ON d.dataset_id = v.dataset_id WHERE d.dataset_name = 'A' AND v.source_ordinal = 3)");
+        $exporter = $class === SpssAdapter::class ? $adapter : new $class($pdo);
+        foreach (['A', 'B', 'A', 'C'] as $name) {
+            $expected = match ($name) {
+                'A' => $source,
+                'B' => $this->groupedExportFixture(4, 3, changed: true),
+                default => $this->groupedExportFixture(2, 0, true),
+            };
+            $before = self::rows($pdo, 'SELECT total_changes() AS changes');
+            $pdo->exec('PRAGMA query_only = ON');
+            $export = $this->publicExport($exporter, $engine, $name, 'zsav');
+            $this->assertGroupedExport($expected, $export, 'zsav');
+            self::assertSame($before, self::rows($pdo, 'SELECT total_changes() AS changes'));
+            $pdo->exec('PRAGMA query_only = OFF');
+        }
+        $pdo->beginTransaction();
+        // Mutate each grouped child family, scoped to A; same object must re-read them.
+        $pdo->exec("UPDATE value_label SET label = 'Updated' WHERE ordinal = 1 AND value_label_set_id IN (SELECT link.value_label_set_id FROM variable_value_label_set link JOIN variable v ON v.variable_id = link.variable_id JOIN dataset d ON d.dataset_id = v.dataset_id WHERE d.dataset_name = 'A' AND v.source_ordinal = 1)");
+        $pdo->exec("UPDATE missing_rule SET numeric_upper = 4 WHERE variable_id IN (SELECT v.variable_id FROM variable v JOIN dataset d ON d.dataset_id = v.dataset_id WHERE d.dataset_name = 'A' AND v.source_ordinal = 1)");
+        $pdo->exec("INSERT INTO missing_rule (missing_rule_id, variable_id, ordinal, rule_kind, code_kind, numeric_value) SELECT 'new-missing', v.variable_id, 2, 'discrete', 'numeric', 99 FROM variable v JOIN dataset d ON d.dataset_id = v.dataset_id WHERE d.dataset_name = 'A' AND v.source_ordinal = 1");
+        $pdo->exec("UPDATE missing_rules SET missing_format = -3 WHERE dataset_name = 'A' AND variable_ordinal = 1");
+        $pdo->exec("INSERT INTO missing_rule_values (dataset_name, variable_ordinal, ordinal, value_kind, numeric_value) VALUES ('A', 1, 3, 'numeric', 99)");
+        $pdo->exec("UPDATE variable_attribute SET attribute_value = 'updated' WHERE attribute_name = 'Origin' AND array_ordinal = 2 AND variable_id IN (SELECT v.variable_id FROM variable v JOIN dataset d ON d.dataset_id = v.dataset_id WHERE d.dataset_name = 'A' AND v.source_ordinal = 1)");
+        $pdo->exec("UPDATE variable SET variable_role = 0, display_width = 13 WHERE dataset_id = (SELECT dataset_id FROM dataset WHERE dataset_name = 'A') AND source_ordinal = 1");
+        $pdo->exec("UPDATE value_labels SET label = 'Updated' WHERE dataset_name = 'A' AND variable_ordinal IN (1, 3) AND ordinal = 1");
+        $pdo->exec("UPDATE missing_rule_values SET numeric_value = 4 WHERE dataset_name = 'A' AND variable_ordinal = 1 AND ordinal = 2");
+        $pdo->exec("UPDATE variable_attributes SET value = 'updated' WHERE dataset_name = 'A' AND variable_ordinal = 1 AND attribute_name = 'Origin' AND ordinal = 2");
+        $pdo->exec("UPDATE variable_roles SET role = 0 WHERE dataset_name = 'A' AND variable_ordinal = 1");
+        $pdo->exec("UPDATE variable_display_metadata SET display_width = 13 WHERE dataset_name = 'A' AND variable_ordinal = 1");
+        $pdo->exec("DELETE FROM variable_set_member WHERE source_ordinal = 2 AND variable_set_id IN (SELECT s.variable_set_id FROM variable_set s JOIN dataset d ON d.dataset_id = s.dataset_id WHERE d.dataset_name = 'A')");
+        $pdo->exec("DELETE FROM multiple_response_member WHERE source_ordinal = 2 AND multiple_response_set_id IN (SELECT s.multiple_response_set_id FROM multiple_response_set s JOIN dataset d ON d.dataset_id = s.dataset_id WHERE d.dataset_name = 'A')");
+        $pdo->exec("DELETE FROM variable_set_members WHERE dataset_name = 'A' AND member_ordinal = 2");
+        $pdo->exec("DELETE FROM multiple_response_set_members WHERE dataset_name = 'A' AND member_ordinal = 2");
+        $pdo->commit();
+        $pdo->exec('PRAGMA query_only = ON');
+        $this->assertGroupedExport($this->groupedExportFixture(4, 3, changed: true), $this->publicExport($exporter, $engine, 'A'), 'sav');
+    }
+
+    /** @param class-string<CanonicalWideTableExporter|SqliteWideTableExporter|MySqlWideTableExporter|PostgreSqlWideTableExporter|SpssAdapter> $class */
+    #[DataProvider('groupedExporters')]
+    public function testGroupedExportRetainsMalformedMissingAndMemberDiagnostics(string $class): void
+    {
+        $pdo = new PDO('sqlite::memory:');
+        $engine = new FakeSpssEngine($this->fixture());
+        $adapter = new SpssAdapter($pdo, $engine);
+        $adapter->import('fixture.sav', 'A');
+        $exporter = $class === SpssAdapter::class ? $adapter : new $class($pdo);
+        $canonical = in_array($class, [CanonicalWideTableExporter::class, SpssAdapter::class], true);
+        $profile = match ($class) {
+            MySqlWideTableExporter::class => 'MySQL-family',
+            PostgreSqlWideTableExporter::class => 'PostgreSQL',
+            default => 'SQLite',
+        };
+        $corruptions = $canonical ? [
+            ["INSERT INTO missing_rule (missing_rule_id, variable_id, ordinal, rule_kind) SELECT 'bad', variable_id, 2, 'numeric_range' FROM missing_rule", 'Invalid discrete missing rule.'],
+            ["UPDATE variable_set_member SET variable_id = 'unknown' WHERE source_ordinal = 1", 'Invalid string value.'],
+            ["UPDATE multiple_response_member SET variable_id = 'unknown' WHERE source_ordinal = 1", 'Invalid string value.'],
+        ] : [
+            ['DELETE FROM missing_rule_values WHERE ordinal = 2', $profile === 'SQLite' ? 'A numeric user-missing rule contains a non-numeric catalogue value.' : "The $profile user-missing rule has an incomplete ordered value list."],
+            ['UPDATE variable_set_members SET variable_ordinal = 999 WHERE member_ordinal = 1', "A $profile variable set references an unknown variable."],
+            ['UPDATE multiple_response_set_members SET variable_ordinal = 999 WHERE member_ordinal = 1', "A $profile multiple-response set references an unknown variable."],
+        ];
+        $pdo->exec('PRAGMA foreign_keys = OFF');
+        foreach ($corruptions as [$sql, $message]) {
+            $pdo->beginTransaction();
+            try {
+                $pdo->exec($sql);
+                $this->publicExport($exporter, $engine, 'A');
+                self::fail('Malformed grouped metadata was silently discarded.');
+            } catch (UnsupportedOperation $exception) {
+                self::assertSame(DiagnosticCode::InvalidSourceDataset, $exception->diagnosticCode);
+                self::assertSame($message, $exception->getMessage());
+            } finally {
+                $pdo->rollBack();
+            }
+        }
+    }
+
+    /** @return array{dataset: Dataset, caseCount: int, diagnostics: list<\OpenStatSpec\Core\FidelityDiagnostic>} */
+    private function publicExport(CanonicalWideTableExporter|SqliteWideTableExporter|MySqlWideTableExporter|PostgreSqlWideTableExporter|SpssAdapter $exporter, FakeSpssEngine $engine, string $name, string $format = 'sav'): array
+    {
+        if (!$exporter instanceof SpssAdapter) {
+            return $exporter->export($name, $format);
+        }
+        $target = sys_get_temp_dir() . '/oss-grouped-' . bin2hex(random_bytes(8)) . '.' . $format;
+        try {
+            $result = $exporter->export($name, $target);
+            return ['dataset' => $engine->lastWrite()['dataset'], 'caseCount' => $result->caseCount, 'diagnostics' => $result->diagnostics];
+        } finally {
+            @unlink($target);
+        }
+    }
+
+    /** @param array{dataset: Dataset, caseCount: int, diagnostics: list<\OpenStatSpec\Core\FidelityDiagnostic>} $export */
+    private function assertGroupedExport(Dataset $expected, array $export, string $format): void
+    {
+        self::assertSame([], $export['diagnostics']);
+        self::assertSame($expected->rowCount(), $export['caseCount']);
+        self::assertSame($expected->rows(), $export['dataset']->rows());
+        // Compare values and ordering, not object sharing between dictionary entries.
+        self::assertSame(array_map('serialize', $expected->variables()), array_map('serialize', $export['dataset']->variables()));
+        self::assertSame(serialize($expected->metadata), serialize($export['dataset']->metadata));
+        self::assertEquals(new FileTechnicalMetadata(
+            sourceFormat: $format,
+            recordType: $format === 'zsav' ? '$FL3' : '$FL2',
+            sourceVersion: 'OpenStatSpec 0.1',
+            provenance: 'Päritolu: küsitlus',
+            encoding: 'UTF-8',
+            productName: 'OpenStatSpec tööriist',
+            compression: $format === 'zsav' ? 2 : 1,
+        ), $export['dataset']->technicalMetadata);
+    }
+
+    private function groupedExportFixture(int $count, int $setCount, bool $empty = false, bool $changed = false): Dataset
+    {
+        $base = $this->fixture();
+        $variables = [];
+        for ($i = 1; $i <= $count; ++$i) {
+            $template = $base->variables()[$i === 2 ? 1 : 0];
+            $name = $i <= 2 ? $template->name : 'Extra' . $i;
+            $variables[] = new VariableMetadata(...array_replace(get_object_vars($template), [
+                'name' => $name,
+                'dictionaryIndex' => $i,
+                'writeFormat' => $i === 2 ? $template->writeFormat : new VariableFormat(5, 12, 2),
+                'valueLabels' => new ValueLabelSet($empty || $i === 2 ? [] : [new ValueLabel(7.0, $changed && in_array($i, [1, 3], true) ? 'Updated' : 'Seven'), new ValueLabel(5.0, 'Viis')], [$name]),
+                'missingValues' => $empty ? MissingValues::none() : ($changed && $i === 1 ? MissingValues::rangeAndValue(1.0, 4.0, 99.0) : $template->missingValues),
+                'role' => $changed && $i === 1 ? VariableRole::INPUT : $template->role,
+                'columns' => $changed && $i === 1 ? 13 : $template->columns,
+                'attributes' => $empty ? [] : ($i === 2 ? $template->attributes() : [new VariableAttribute($name, 'Origin', ['customer', $changed && $i === 1 ? 'updated' : 'identifier']), new VariableAttribute($name, 'Source', ['õ', ''])]),
+            ]));
+        }
+        $sets = $multiple = [];
+        for ($i = 1; $i <= $setCount; ++$i) {
+            $members = $i === 1 ? [] : ($changed ? ['Favourite colour'] : ['Favourite colour', 'Respondent ID']);
+            $sets[] = new VariableSet('Set' . $i, $members);
+            $multiple[] = new MultipleResponseSet('$Set' . $i, MultipleResponseSetType::CATEGORY, $members, 'Set ' . $i);
+        }
+        return new Dataset(
+            new VariableDictionary($variables),
+            $empty ? [] : [array_merge([7.0, 'õ'], array_fill(0, $count - 2, 7.0)), array_merge([null, ''], array_fill(0, $count - 2, null))],
+            new FileMetadata(
+                $empty ? null : $base->metadata->label,
+                weightVariableName: $empty ? null : $base->metadata->weightVariableName,
+                documents: $empty ? [] : $base->metadata->documents(),
+                attributes: $empty ? [] : $base->metadata->attributes(),
+                variableSets: $sets,
+                multipleResponseSets: $multiple,
+            ),
+            $base->technicalMetadata,
+        );
     }
 
     private function fixture(string $sourceFormat = 'zsav'): Dataset

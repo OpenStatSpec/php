@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace OpenStatSpec\Tests\Integration;
 
 use OpenStatSpec\Sql\Connection;
+use OpenStatSpec\Sql\CanonicalWideTableExporter;
+use OpenStatSpec\Sql\MySqlWideTableExporter;
+use OpenStatSpec\Tests\Support\ExportCountingPdo;
 use OpenStatSpec\Sql\MySqlProfile;
 use OpenStatSpec\Sql\MySqlWideTableImporter;
 use OpenStatSpec\Spss\PhpSpssEngine;
@@ -47,6 +50,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
     public function testRealEngineRoundTripsSavAndZsavThroughMySqlFamily(): void
     {
         $pdo = $this->mysql();
+        self::assertInstanceOf(ExportCountingPdo::class, $pdo);
         $engine = new PhpSpssEngine();
 
         foreach (['sav' => ['$FL2', 1], 'zsav' => ['$FL3', 2]] as $format => [$header, $compression]) {
@@ -112,6 +116,16 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
                 self::assertSame($format, $technical[0]['source_format']);
                 self::assertSame($compression, (int) $technical[0]['compression']);
 
+                $executionCounts = [];
+                foreach ([CanonicalWideTableExporter::class, MySqlWideTableExporter::class] as $exporterClass) {
+                    $pdo->executions = [];
+                    $direct = (new $exporterClass($pdo))->export($datasetName, $format);
+                    $executionCounts[] = count($pdo->captured());
+                    $pdo->executions = null;
+                    self::assertSame([], $direct['diagnostics']);
+                    self::assertSame($fixture->rows(), $direct['dataset']->rows());
+                    self::assertEquals($fixture->metadata, $direct['dataset']->metadata);
+                }
                 $result = $adapter->export($datasetName, $targetPath);
                 self::assertSame([], $result->diagnostics);
                 self::assertSame(2, $result->caseCount);
@@ -142,6 +156,8 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
                 self::assertCount(1, $roundTrip->metadata->multipleResponseSets());
                 self::assertSame(MultipleResponseSetType::DICHOTOMY, $roundTrip->metadata->multipleResponseSets()[0]->type);
                 self::assertSame(['Reason'], $roundTrip->metadata->multipleResponseSets()[0]->variableNames());
+                self::assertLessThanOrEqual(14, $executionCounts[0], 'Canonical export SQL executions');
+                self::assertLessThanOrEqual(18, $executionCounts[1], 'Legacy export SQL executions');
             } finally {
                 $this->cleanup($pdo, $datasetName, $tableName);
                 @unlink($sourcePath);
@@ -262,7 +278,7 @@ abstract class MySqlFamilySpssRoundTripTestCase extends TestCase
         $user = getenv($prefix . '_USER');
         $password = getenv($prefix . '_PASSWORD');
 
-        return new PDO(
+        return new ExportCountingPdo(
             $dsn,
             is_string($user) ? $user : null,
             is_string($password) ? $password : null,
