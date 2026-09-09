@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.7.2] - Unreleased
+
+### Fixed
+
+- Preserve finite binary64 precision in SQLite case values and compression bias,
+  and in affected multiple-response counted-value metadata writes.
+- Fail imports on SQL errors even when the supplied PDO uses silent or warning
+  mode, restoring the caller's error mode afterward. Reject caller-owned active
+  transactions before import mutation.
+- Finalize SQLite/PostgreSQL import audit success inside the native import
+  transaction, so finalization failure rolls back the attempt. Retain the
+  MySQL/MariaDB/Dolt ownership-scoped cleanup and finalization compensation.
+
+### Performance
+
+- Send PostgreSQL and MySQL/MariaDB/Dolt case INSERTs in bounded prepared batches,
+  respecting parameter/packet budgets and preserving preflight-valid oversized
+  singleton rows, case order, NULLs, strings and numeric precision.
+- Load canonical and legacy export dictionary children and set members with
+  dataset-scoped grouped queries instead of per-variable/per-set queries.
+  Export remains database-read-only and observes fresh metadata on every call.
+
+Existing import/export call forms, dependencies, specification pin, database
+support claims and catalog schema remain unchanged. Catalog preparation and
+ownership checks are retained; this patch requires no new migration.
+
 ## [0.7.1] - 2026-09-07
 
 ### Changed
@@ -129,7 +155,9 @@
 - Pinned active conformance fixtures and capabilities to released OpenStatSpec
   specification v0.1.0 at commit `d287c2cde9ade71f04e27dd012caec876901aed5`.
 
-[Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.7.1...HEAD
+[0.7.2]: https://github.com/OpenStatSpec/php/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/OpenStatSpec/php/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/OpenStatSpec/php/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/OpenStatSpec/php/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/OpenStatSpec/php/compare/v0.4.0...v0.5.0
