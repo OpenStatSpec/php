@@ -8,9 +8,11 @@ package version from the Git tag; `composer.json` has no `version` key.
 
 Version 0.7.2 includes the merged import precision/error/transaction fixes,
 bounded server INSERT batching and grouped export metadata reads described in
-[the release notes](../CHANGELOG.md). Dependencies, specification
-pin, SQL support and catalog schema are unchanged. Existing catalog preparation
-and ownership checks are retained; no new migration or caller setup is required.
+[the release notes](../CHANGELOG.md). Dependencies, specification pin, SQL support
+and catalog schema are unchanged. Export still requires a ready, owned catalog;
+initialize or upgrade it with `SpssAdapter::migrateCatalog()` on a write-capable
+deployment connection before export when needed. This patch adds no migration
+or setup for an already prepared current catalog.
 Run the gates below on the exact selected patch release commit, not an earlier
 0.7.1 commit.
 
@@ -57,9 +59,7 @@ without configured database services:
 This is local candidate evidence, not final release-commit service CI or
 publication evidence. No v0.7.2 tag or registry publication was made.
 
-## Required gates
-
-Before tagging v0.7.2:
+## Before tagging v0.7.2
 
 1. Verify `git rev-parse HEAD` in the specification checkout equals
    `864e84479f554b8ee250ffed44c4dfb963750d4a`, and the published `v0.5.0` tag
@@ -98,10 +98,14 @@ Before tagging v0.7.2:
    final release commit. Run `composer install --dry-run --no-dev` and
    `composer archive --format=zip --dir="$(mktemp -d /tmp/openstatspec-php-v072-package.XXXXXX)"`;
    inspect the archive without publishing it. No separate build is required.
-8. Publication is a separate maintainer action: confirm the selected commit's
-   full CI matrix, protected-tag controls and Packagist update access, then
-   create and verify annotated tag `v0.7.2` on that reviewed `main` commit.
-   Wait for tag-context CI before publishing the GitHub release. Do not move
-   an existing tag. Confirm Packagist lists the new version and a clean
+8. Confirm the selected commit's full CI matrix, protected-tag controls and
+   Packagist update access.
+
+## Publication (separate maintainer action)
+
+1. Create and verify annotated tag `v0.7.2` on the reviewed `main` commit that
+   passed the gates above. Do not move an existing tag.
+2. Wait for tag-context CI before publishing the GitHub release.
+3. Confirm Packagist lists the new version and a clean
    `composer require openstatspec/php:0.7.2` resolves it to the intended commit.
    Do not infer publication from this checklist.

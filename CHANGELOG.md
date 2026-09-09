@@ -155,7 +155,6 @@ ownership checks are retained; this patch requires no new migration.
 - Pinned active conformance fixtures and capabilities to released OpenStatSpec
   specification v0.1.0 at commit `d287c2cde9ade71f04e27dd012caec876901aed5`.
 
-[Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.7.1...HEAD
 [0.7.2]: https://github.com/OpenStatSpec/php/compare/v0.7.1...HEAD
 [0.7.1]: https://github.com/OpenStatSpec/php/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/OpenStatSpec/php/compare/v0.6.0...v0.7.0
