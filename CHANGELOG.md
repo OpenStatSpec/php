@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## [Unreleased]
+
+## [0.8.0] - 2026-09-10
+
+This release consolidates the never-tagged, never-published 0.7.2 preparation
+with official opt-in SPSS Frontend 0.3 support. The previous public release is
+0.7.1; there was no 0.7.2 release.
 
 ### Added
 
@@ -11,11 +17,10 @@
 - Check all 90 effective official cases against the unchanged specification pin,
   inherited Plan 0.1/0.2 objects and hashes, and native SQLite in-place provenance
   and identity. Service CI is pending; no new network runtime claim is made.
-- Document the parent precedence decision: comparisons, NOT, AND, OR;
-  parentheses override. No STRING/DELETE or schema extension, version, codec,
-  dependency, publication or prepared 0.7.2 scope change.
-
-## [0.7.2] - Unreleased
+- Use precedence comparisons, NOT, AND, OR; parentheses override. Compilation
+  is pure over request metadata: callers supply the current ordered dictionary
+  and typed value labels; the compiler does not read the database. No
+  STRING/DELETE, schema extension, Plan 0.3 or In-Place 0.3 support is added.
 
 ### Fixed
 
@@ -39,7 +44,7 @@
 
 Existing import/export call forms, dependencies, specification pin, database
 support claims and catalog schema remain unchanged. Catalog preparation and
-ownership checks are retained; this patch requires no new migration.
+ownership checks are retained; this release requires no new migration.
 
 ## [0.7.1] - 2026-09-07
 
@@ -170,7 +175,8 @@ ownership checks are retained; this patch requires no new migration.
 - Pinned active conformance fixtures and capabilities to released OpenStatSpec
   specification v0.1.0 at commit `d287c2cde9ade71f04e27dd012caec876901aed5`.
 
-[0.7.2]: https://github.com/OpenStatSpec/php/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/OpenStatSpec/php/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/OpenStatSpec/php/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/OpenStatSpec/php/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/OpenStatSpec/php/compare/v0.5.0...v0.6.0

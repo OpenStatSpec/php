@@ -10,7 +10,7 @@ The PHP adapter conforms to these pinned OpenStatSpec contracts:
 - `openstatspec-in-place-transformation-v0.1` and
   `openstatspec-in-place-transformation-v0.2`.
 
-Unreleased opt-in `openstatspec-spss-syntax-frontend-v0.3` is also implemented,
+PHP v0.8.0 includes official opt-in `openstatspec-spss-syntax-frontend-v0.3`,
 with local fixture/SQLite evidence and service CI pending. It is separately
 listed as `implemented_service_ci_pending` in the capability declaration, not
 added to its existing conformant contract lists. Plan 0.3 and In-Place 0.3 are
@@ -104,7 +104,8 @@ comment-only programs fail. Hashing retains original comments and normalizes
 only CRLF/CR to LF. ADD updates existing typed codes in place and appends new
 codes, including after preceding VALUE LABELS replacements. Its initial label
 state comes from the supplied input schema; callers must supply the current
-dictionary when compiling.
+ordered dictionary and typed value labels when compiling. Compilation is pure
+over request metadata: the compiler does not query or mutate the database.
 
 **Parent decision:** use conventional SPSS precedence: comparisons, then NOT,
 then AND, then OR. Thus `NOT a = 1 AND b = 2 OR c = 3` means
