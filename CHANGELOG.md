@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Explicitly selected official SPSS Frontend 0.3 using the existing strict
+  request/parser/binder/compiler pipeline; Frontend 0.2 remains the default.
+  Support comments, dictionary-order TO and grouped commands, NOT and comparison
+  aliases, finite open RECODE ranges, and ordered typed ADD VALUE LABELS.
+- Check all 90 effective official cases against the unchanged specification pin,
+  inherited Plan 0.1/0.2 objects and hashes, and native SQLite in-place provenance
+  and identity. Service CI is pending; no new network runtime claim is made.
+- Document the parent precedence decision: comparisons, NOT, AND, OR;
+  parentheses override. No STRING/DELETE or schema extension, version, codec,
+  dependency, publication or prepared 0.7.2 scope change.
+
 ## [0.7.2] - Unreleased
 
 ### Fixed

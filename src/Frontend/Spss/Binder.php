@@ -14,6 +14,7 @@ use OpenStatSpec\Frontend\Spss\Ast\FormatsStatement;
 use OpenStatSpec\Frontend\Spss\Ast\IfStatement;
 use OpenStatSpec\Frontend\Spss\Ast\LiteralOperand as AstLiteralOperand;
 use OpenStatSpec\Frontend\Spss\Ast\MissingInput;
+use OpenStatSpec\Frontend\Spss\Ast\NotPredicate;
 use OpenStatSpec\Frontend\Spss\Ast\Predicate as AstPredicate;
 use OpenStatSpec\Frontend\Spss\Ast\Program;
 use OpenStatSpec\Frontend\Spss\Ast\RangeInput;
@@ -69,7 +70,7 @@ final class Binder
 {
     public function bind(string $inputAlias, InputSchema $inputSchema, Program $program): BoundProgram
     {
-        $schema = new SchemaState($inputSchema);
+        $schema = new SchemaState($inputSchema, $program->officialV03);
         $bound = [];
         foreach ($program->statements as $statement) {
             if ($statement instanceof RecodeStatement) {
@@ -86,22 +87,23 @@ final class Binder
             }
             if ($statement instanceof FormatsStatement) {
                 foreach ($statement->targets as $target) {
-                    $variable = $schema->resolve($target->variable, $target->variableSpan);
-                    if ($variable->storageKind !== 'numeric') {
-                        $this->fail(
-                            'expression_type_unsupported',
-                            'Numeric F formats cannot target string variables.',
-                            $target->variableSpan,
+                    foreach ($schema->expand($target->variable, $target->variableSpan) as $variable) {
+                        if ($variable->storageKind !== 'numeric') {
+                            $this->fail(
+                                'expression_type_unsupported',
+                                'Numeric F formats cannot target string variables.',
+                                $target->variableSpan,
+                            );
+                        }
+                        $this->validateFormat($target->width, $target->decimals, $target->span);
+                        $bound[] = new BoundFormat(
+                            $variable->name,
+                            $target->family,
+                            $target->width,
+                            $target->decimals,
+                            $target->span,
                         );
                     }
-                    $this->validateFormat($target->width, $target->decimals, $target->span);
-                    $bound[] = new BoundFormat(
-                        $variable->name,
-                        $target->family,
-                        $target->width,
-                        $target->decimals,
-                        $target->span,
-                    );
                 }
                 continue;
             }
@@ -109,8 +111,9 @@ final class Binder
                 foreach ($statement->groups as $group) {
                     foreach ($group->variables as $index => $name) {
                         $span = $group->variableSpans[$index];
-                        $variable = $schema->resolve($name, $span);
-                        $bound[] = new BoundMeasurementLevel($variable->name, $group->level, $span);
+                        foreach ($schema->expand($name, $span) as $variable) {
+                            $bound[] = new BoundMeasurementLevel($variable->name, $group->level, $span);
+                        }
                     }
                 }
                 continue;
@@ -121,8 +124,9 @@ final class Binder
             }
             if ($statement instanceof VariableLabelsStatement) {
                 foreach ($statement->assignments as $assignment) {
-                    $variable = $schema->resolve($assignment->variable, $assignment->variableSpan);
-                    $bound[] = new BoundVariableLabel($variable->name, $assignment->label, $assignment->span);
+                    foreach ($schema->expand($assignment->variable, $assignment->variableSpan) as $variable) {
+                        $bound[] = new BoundVariableLabel($variable->name, $assignment->label, $assignment->span);
+                    }
                 }
                 continue;
             }
@@ -226,8 +230,14 @@ final class Binder
         throw new \LogicException(sprintf('Unsupported operand %s.', $operand::class));
     }
 
-    private function predicate(AstPredicate $predicate, SchemaState $schema): Predicate
+    private function predicate(AstPredicate $predicate, SchemaState $schema, bool $negated = false): Predicate
     {
+        if ($predicate instanceof NotPredicate) {
+            if (!$schema->officialV03) {
+                $this->fail('expression_type_unsupported', 'NOT requires Frontend 0.3.', $predicate->span);
+            }
+            return $this->predicate($predicate->operand, $schema, !$negated);
+        }
         if ($predicate instanceof AstComparison) {
             [$left, $leftType] = $this->operand($predicate->left, $schema);
             [$right, $rightType] = $this->operand($predicate->right, $schema);
@@ -239,13 +249,30 @@ final class Binder
                 );
             }
 
-            return new Comparison($left, $predicate->operator, $right);
+            $operator = strtoupper($predicate->operator);
+            if (in_array($operator, ['NE', '<>', '~='], true)) {
+                if (!$schema->officialV03) {
+                    $this->fail('spss_syntax_error', 'Comparison aliases require Frontend 0.3.', $predicate->span);
+                }
+                return new BooleanPredicate(
+                    $negated ? 'and' : 'or',
+                    new Comparison($left, $negated ? '>=' : '<', $right),
+                    new Comparison($left, $negated ? '<=' : '>', $right),
+                );
+            }
+            if ($negated && $operator === '=') {
+                return new BooleanPredicate('or', new Comparison($left, '<', $right), new Comparison($left, '>', $right));
+            }
+            return new Comparison($left, $negated ? ['<' => '>=', '<=' => '>', '>' => '<=', '>=' => '<'][$operator] : $operator, $right);
         }
         if ($predicate instanceof AstBooleanPredicate) {
-            return new BooleanPredicate(
-                $predicate->operator,
-                ...array_map(fn(AstPredicate $operand): Predicate => $this->predicate($operand, $schema), $predicate->operands),
-            );
+            $operator = $negated ? ($predicate->operator === 'and' ? 'or' : 'and') : $predicate->operator;
+            $operands = [];
+            foreach ($predicate->operands as $operand) {
+                $lowered = $this->predicate($operand, $schema, $negated);
+                array_push($operands, ...($lowered instanceof BooleanPredicate && $lowered->operator === $operator ? $lowered->operands : [$lowered]));
+            }
+            return new BooleanPredicate($operator, ...$operands);
         }
 
         throw new \LogicException(sprintf('Unsupported predicate %s.', $predicate::class));
@@ -255,8 +282,12 @@ final class Binder
     private function recode(RecodeStatement $statement, SchemaState $schema): array
     {
         $sources = [];
+        $sourceSpans = [];
         foreach ($statement->sources as $index => $sourceName) {
-            $sources[] = $schema->resolve($sourceName, $statement->sourceSpans[$index]);
+            foreach ($schema->expand($sourceName, $statement->sourceSpans[$index]) as $source) {
+                $sources[] = $source;
+                $sourceSpans[] = $statement->sourceSpans[$index];
+            }
         }
 
         $targetMode = $statement->targets === [] ? TargetMode::Replace : TargetMode::Create;
@@ -274,7 +305,7 @@ final class Binder
         foreach ($targetNames as $index => $targetName) {
             $targetSpan = $targetMode === TargetMode::Create
                 ? $statement->targetSpans[$index]
-                : $statement->sourceSpans[$index];
+                : $sourceSpans[$index];
             $this->validateTargetName($targetName, $targetSpan);
             if ($targetMode === TargetMode::Create) {
                 $key = mb_strtolower($targetName, 'UTF-8');
@@ -320,7 +351,7 @@ final class Binder
                     $unmatched = $result;
                     continue;
                 }
-                $rules[] = new RecodeRule($this->recodeMatch($rule->input, $source), $result);
+                $rules[] = new RecodeRule($this->recodeMatch($rule->input, $source, $schema->officialV03), $result);
             }
             $unmatched ??= $targetMode === TargetMode::Create ? new SystemMissingResult() : new CopyResult();
             $resultTypes = array_values(array_unique(array_map(
@@ -329,7 +360,7 @@ final class Binder
             )));
             $targetSpan = $targetMode === TargetMode::Create
                 ? $statement->targetSpans[$index]
-                : $statement->sourceSpans[$index];
+                : $sourceSpans[$index];
             if ($targetMode === TargetMode::Create && in_array('string', $resultTypes, true)) {
                 $this->fail(
                     'string_target_requires_declaration',
@@ -370,7 +401,7 @@ final class Binder
         return $bound;
     }
 
-    private function recodeMatch(RecodeInput $input, InputVariable $source): RecodeMatch
+    private function recodeMatch(RecodeInput $input, InputVariable $source, bool $officialV03): RecodeMatch
     {
         if ($input instanceof MissingInput) {
             $this->fail(
@@ -391,16 +422,16 @@ final class Binder
             return new SystemMissingMatch();
         }
         if ($input instanceof RangeInput) {
-            if ($input->lower === null || $input->upper === null) {
+            if (!$officialV03 && ($input->lower === null || $input->upper === null)) {
                 $this->fail('spss_syntax_error', 'RECODE ranges require two finite endpoints.', $input->span);
             }
-            $lower = $this->typedValue($input->lower);
-            $upper = $this->typedValue($input->upper);
+            $lower = $input->lower === null ? Binary64Value::fromBits('ffefffffffffffff') : $this->typedValue($input->lower);
+            $upper = $input->upper === null ? Binary64Value::fromBits('7fefffffffffffff') : $this->typedValue($input->upper);
             if (!$lower instanceof Binary64Value || !$upper instanceof Binary64Value || $source->storageKind !== 'numeric') {
                 $this->fail('type_mismatch', 'RECODE ranges require numeric sources and endpoints.', $input->span);
             }
             if ($lower->number() > $upper->number()) {
-                $this->fail('invalid_numeric_range', 'RECODE range lower bound exceeds its upper bound.', $input->span);
+                $this->fail($officialV03 ? 'invalid_variable_range' : 'invalid_numeric_range', 'RECODE range lower bound exceeds its upper bound.', $input->span);
             }
 
             return new RangeMatch($lower, $upper);
@@ -460,6 +491,9 @@ final class Binder
     /** @return list<BoundValueLabels> */
     private function valueLabels(ValueLabelsStatement $statement, SchemaState $schema): array
     {
+        if ($statement->add && !$schema->officialV03) {
+            $this->fail('unsupported_spss_command', 'ADD VALUE LABELS requires Frontend 0.3.', $statement->span);
+        }
         $bound = [];
         foreach ($statement->groups as $group) {
             $labels = array_map(
@@ -470,28 +504,48 @@ final class Binder
                 $group->labels,
             );
             foreach ($group->variables as $index => $name) {
-                $variable = $schema->resolve($name, $group->variableSpans[$index]);
-                $expectedType = $this->storageType($variable);
-                $seen = [];
-                foreach ($labels as $label) {
-                    if ($this->typedValueType($label->value) !== $expectedType) {
-                        $this->fail(
-                            'type_mismatch',
-                            'VALUE LABELS codes must match the variable storage kind.',
-                            $group->span,
-                        );
+                foreach ($schema->expand($name, $group->variableSpans[$index]) as $variable) {
+                    $expectedType = $this->storageType($variable);
+                    $seen = [];
+                    foreach ($labels as $label) {
+                        if ($this->typedValueType($label->value) !== $expectedType) {
+                            $this->fail(
+                                'type_mismatch',
+                                'VALUE LABELS codes must match the variable storage kind.',
+                                $group->span,
+                            );
+                        }
+                        $key = $label->value->canonicalKey();
+                        if (isset($seen[$key])) {
+                            $this->fail(
+                                'duplicate_value_label',
+                                'VALUE LABELS contains duplicate canonical codes.',
+                                $group->span,
+                            );
+                        }
+                        $seen[$key] = true;
                     }
-                    $key = $label->value->canonicalKey();
-                    if (isset($seen[$key])) {
-                        $this->fail(
-                            'duplicate_value_label',
-                            'VALUE LABELS contains duplicate canonical codes.',
-                            $group->span,
-                        );
+                    $replacement = $labels;
+                    if ($statement->add) {
+                        $ordered = [];
+                        foreach ($schema->valueLabels($variable) as $label) {
+                            if ($this->typedValueType($label->value) !== $expectedType) {
+                                $this->fail('type_mismatch', 'Existing value labels must match the variable type.', $group->span);
+                            }
+                            $key = $label->value->canonicalKey();
+                            if (isset($ordered[$key])) {
+                                $this->fail('duplicate_value_label', 'Existing value labels have duplicate codes.', $group->span);
+                            }
+                            $ordered[$key] = $label;
+                        }
+                        foreach ($labels as $label) {
+                            $ordered[$label->value->canonicalKey()] = $label;
+                        }
+                        $replacement = array_values($ordered);
                     }
-                    $seen[$key] = true;
+                    $schema->setValueLabels($variable, $replacement);
+                    $bound[] = new BoundValueLabels($variable->name, $replacement, $group->span);
                 }
-                $bound[] = new BoundValueLabels($variable->name, $labels, $group->span);
             }
         }
 

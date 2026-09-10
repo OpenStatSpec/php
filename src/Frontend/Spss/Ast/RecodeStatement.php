@@ -9,7 +9,7 @@ use OpenStatSpec\Transformation\Diagnostic\SourceSpan;
 final readonly class RecodeStatement implements Statement
 {
     /**
-     * @param non-empty-list<string> $sources
+     * @param non-empty-list<string|VariableRange> $sources
      * @param non-empty-list<RecodeRule> $rules
      * @param list<string> $targets
      */

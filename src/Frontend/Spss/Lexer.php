@@ -10,7 +10,7 @@ use OpenStatSpec\Transformation\Diagnostic\TransformationDiagnostic;
 final class Lexer
 {
     /** @return list<Token> */
-    public function tokenize(string $source): array
+    public function tokenize(string $source, bool $officialV03 = false): array
     {
         $tokens = [];
         $offset = str_starts_with($source, "\xEF\xBB\xBF") ? 3 : 0;
@@ -30,7 +30,15 @@ final class Lexer
                 continue;
             }
 
+            if ($officialV03 && substr($source, $offset, 2) === '/*') {
+                $this->comment($source, $offset, $line, $column, true);
+                continue;
+            }
             if ($atStatementStart && $character === '*') {
+                if ($officialV03) {
+                    $this->comment($source, $offset, $line, $column, false);
+                    continue;
+                }
                 $this->fail(
                     new SourceSpan($offset, $offset + 1, $line, $column, $line, $column + 1),
                     'Leading-star comments are not supported.',
@@ -41,6 +49,7 @@ final class Lexer
             $tokenOffset = $offset;
             $tokenLine = $line;
             $tokenColumn = $column;
+            $wasStatementStart = $atStatementStart;
             $atStatementStart = false;
 
             if ($this->startsNumber($source, $offset)) {
@@ -56,6 +65,7 @@ final class Lexer
                 );
             }
             $punctuation = match (true) {
+                $officialV03 && (($character === '<' && $next === '>') || ($character === '~' && $next === '=')) => TokenType::NotEqual,
                 $character === '<' && $next === '=' => TokenType::LessThanOrEqual,
                 $character === '>' && $next === '=' => TokenType::GreaterThanOrEqual,
                 $character === '<' => TokenType::LessThan,
@@ -70,7 +80,7 @@ final class Lexer
                 default => null,
             };
             if ($punctuation !== null) {
-                $lexeme = ($punctuation === TokenType::LessThanOrEqual || $punctuation === TokenType::GreaterThanOrEqual)
+                $lexeme = in_array($punctuation, [TokenType::LessThanOrEqual, TokenType::GreaterThanOrEqual, TokenType::NotEqual], true)
                     ? $character . $next
                     : $character;
                 $this->advance($character, $offset, $line, $column);
@@ -108,6 +118,11 @@ final class Lexer
                     $this->advance($identifierCharacter, $offset, $line, $column);
                 }
                 $lexeme = substr($source, $start, $offset - $start);
+                if ($officialV03 && $wasStatementStart && strtoupper($lexeme) === 'COMMENT') {
+                    $this->comment($source, $offset, $line, $column, false);
+                    $atStatementStart = true;
+                    continue;
+                }
                 $type = match (strtoupper($lexeme)) {
                     'COMPUTE' => TokenType::Compute,
                     'IF' => TokenType::If,
@@ -144,6 +159,36 @@ final class Lexer
         $tokens[] = new Token(TokenType::EndOfFile, '', $line, $column, $offset, $offset, $line, $column);
 
         return $tokens;
+    }
+
+    private function comment(string $source, int &$offset, int &$line, int &$column, bool $block): void
+    {
+        $start = new SourceSpan($offset, $offset, $line, $column, $line, $column);
+        if ($block) {
+            $this->advance('/', $offset, $line, $column);
+            $this->advance('*', $offset, $line, $column);
+        }
+        while ($offset < strlen($source)) {
+            $pair = substr($source, $offset, 2);
+            if ($block && $pair === '/*') {
+                $this->fail($start, 'Nested block comments are not supported.');
+            }
+            if ($block && $pair === '*/') {
+                $this->advance('*', $offset, $line, $column);
+                $this->advance('/', $offset, $line, $column);
+                return;
+            }
+            $character = $this->characterAt($source, $offset, $line, $column);
+            if ($character === "\r") {
+                $this->advanceCarriageReturn($source, $offset, $line, $column);
+            } else {
+                $this->advance($character, $offset, $line, $column);
+            }
+            if (!$block && $character === '.') {
+                return;
+            }
+        }
+        $this->fail($start, 'Unterminated comment.');
     }
 
     private function string(string $source, int &$offset, int &$line, int &$column): Token

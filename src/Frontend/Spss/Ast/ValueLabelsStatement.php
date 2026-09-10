@@ -13,6 +13,7 @@ final readonly class ValueLabelsStatement implements Statement
         public int $sourceLine,
         public array $groups,
         public SourceSpan $span,
+        public bool $add = false,
     ) {}
 
     public function line(): int

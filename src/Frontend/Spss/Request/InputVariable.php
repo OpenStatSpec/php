@@ -79,7 +79,7 @@ final readonly class InputVariable
             $name,
             $storageKind,
             $variableLabel,
-            self::valueLabels($raw['value_labels'] ?? [], $path . '.value_labels'),
+            self::valueLabels(array_key_exists('value_labels', $raw) ? $raw['value_labels'] : [], $path . '.value_labels'),
             $formatFamily,
             $width,
             $decimals,

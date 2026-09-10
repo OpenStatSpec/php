@@ -6,14 +6,11 @@ namespace OpenStatSpec\Frontend\Spss\Ast;
 
 use OpenStatSpec\Transformation\Diagnostic\SourceSpan;
 
-final readonly class FormatTarget
+final readonly class VariableRange
 {
     public function __construct(
-        public string|VariableRange $variable,
-        public string $family,
-        public int $width,
-        public int $decimals,
-        public SourceSpan $variableSpan,
+        public string|self $first,
+        public string $last,
         public SourceSpan $span,
     ) {}
 }

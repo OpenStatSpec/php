@@ -90,7 +90,9 @@ Encrypted files, Portable (`.por`) files and arbitrary external-engine formats a
 
 `src/Transformation/Plan` owns the official Transformation Plan 0.1/0.2 model,
 strict codec, validation, and deterministic plan identity.
-`src/Frontend/Spss` is the separate official SPSS Frontend 0.2 boundary.
+`src/Frontend/Spss` is the separate SPSS Frontend 0.2 boundary, with opt-in
+Frontend 0.3 using the same strict request validator, parser, binder and compiler.
+Frontend 0.3 emits only Plan 0.1/0.2; its service CI claim is pending.
 `src/Transformation/Execution` binds an alias-based plan to one existing
 dataset and applies it through the active PDO profile; it never invokes the
 frontend. The Stata and SAS directories are placeholders only.
