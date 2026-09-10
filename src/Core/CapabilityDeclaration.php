@@ -65,6 +65,9 @@ final readonly class CapabilityDeclaration implements JsonSerializable
                 'official_frontend_contracts' => [
                     'openstatspec-spss-syntax-frontend-v0.2',
                 ],
+                'opt_in_frontend_contracts' => [
+                    'openstatspec-spss-syntax-frontend-v0.3' => 'implemented_service_ci_pending',
+                ],
                 'official_binding_contracts' => [
                     'openstatspec-in-place-transformation-v0.1',
                     'openstatspec-in-place-transformation-v0.2',

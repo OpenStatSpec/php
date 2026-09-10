@@ -31,7 +31,7 @@ final class SpssCompiler
     public function compile(SpssFrontendRequest $request): SpssCompilationResult
     {
         $sourceHash = $request->sourceHash();
-        $program = $this->parser->parse($request->sourceText);
+        $program = $this->parser->parse($request->sourceText, $request->contract === SpssFrontendRequest::CONTRACT_V03);
         $bound = $this->binder->bind($request->inputAlias, $request->inputSchema, $program);
 
         return new SpssCompilationResult($this->compiler->compile($bound), $sourceHash);

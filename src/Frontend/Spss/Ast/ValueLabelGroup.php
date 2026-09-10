@@ -9,7 +9,7 @@ use OpenStatSpec\Transformation\Diagnostic\SourceSpan;
 final readonly class ValueLabelGroup
 {
     /**
-     * @param non-empty-list<string> $variables
+     * @param non-empty-list<string|VariableRange> $variables
      * @param non-empty-list<ValueLabel> $labels
      */
     public function __construct(

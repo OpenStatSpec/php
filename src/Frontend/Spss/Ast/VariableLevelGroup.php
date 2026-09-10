@@ -8,7 +8,7 @@ use OpenStatSpec\Transformation\Diagnostic\SourceSpan;
 
 final readonly class VariableLevelGroup
 {
-    /** @param non-empty-list<string> $variables */
+    /** @param non-empty-list<string|VariableRange> $variables */
     public function __construct(
         public array $variables,
         /** @var non-empty-list<SourceSpan> */

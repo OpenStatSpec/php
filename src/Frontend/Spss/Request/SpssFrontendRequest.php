@@ -9,6 +9,7 @@ use OpenStatSpec\Transformation\Diagnostic\TransformationFailure;
 final readonly class SpssFrontendRequest
 {
     public const CONTRACT = 'openstatspec-spss-syntax-frontend-v0.2';
+    public const CONTRACT_V03 = 'openstatspec-spss-syntax-frontend-v0.3';
 
     public function __construct(
         public string $contract,
@@ -16,7 +17,7 @@ final readonly class SpssFrontendRequest
         public InputSchema $inputSchema,
         public string $sourceText,
     ) {
-        if ($contract !== self::CONTRACT) {
+        if (!in_array($contract, [self::CONTRACT, self::CONTRACT_V03], true)) {
             self::schema('$.contract', 'Unsupported SPSS frontend contract.');
         }
         self::nonEmptyString($inputAlias, '$.input_alias');

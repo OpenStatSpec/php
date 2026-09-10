@@ -22,6 +22,7 @@ enum TokenType
     case LeftParenthesis;
     case RightParenthesis;
     case Equals;
+    case NotEqual;
     case LessThan;
     case LessThanOrEqual;
     case GreaterThan;

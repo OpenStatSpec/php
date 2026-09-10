@@ -10,6 +10,12 @@ The PHP adapter conforms to these pinned OpenStatSpec contracts:
 - `openstatspec-in-place-transformation-v0.1` and
   `openstatspec-in-place-transformation-v0.2`.
 
+Unreleased opt-in `openstatspec-spss-syntax-frontend-v0.3` is also implemented,
+with local fixture/SQLite evidence and service CI pending. It is separately
+listed as `implemented_service_ci_pending` in the capability declaration, not
+added to its existing conformant contract lists. Plan 0.3 and In-Place 0.3 are
+not implemented.
+
 Plans are source-neutral, alias-based, and deterministic. The canonical plan
 contains only its contract, input alias, and ordered operations. Dataset UUIDs,
 SQL identifiers, actor identity, and Dolt context are supplied only when the
@@ -81,6 +87,37 @@ Names bind ASCII case-insensitively while plans retain exact catalog spelling.
 Multi-variable `RECODE` reads all sources from the pre-command schema. Commands,
 expressions, comments, and syntax outside the official subset fail closed.
 
+## Opt-in Frontend 0.3
+
+Select the exact `openstatspec-spss-syntax-frontend-v0.3` request contract, also
+available as `SpssFrontendRequest::CONTRACT_V03`. `CONTRACT` and the public
+parse/bind defaults remain 0.2. The existing `fromArray()` production boundary
+rejects unknown/missing fields and wrong types, including nested schema and
+typed-label fields. No physical identifiers or schema extensions are accepted.
+
+The shared parser/binder adds command-boundary `*` and `COMMENT` comments,
+non-nested block comments wherever whitespace is legal, dictionary-order `TO`,
+grouped RECODE/labels/formats/levels, numeric `NOT` and `NE`/`<>`/`~=`, finite
+LOWEST/HIGHEST bounds, and ordered typed `ADD VALUE LABELS`. Comments end at
+the next command period (or `*/` for blocks); nested/unterminated blocks and
+comment-only programs fail. Hashing retains original comments and normalizes
+only CRLF/CR to LF. ADD updates existing typed codes in place and appends new
+codes, including after preceding VALUE LABELS replacements. Its initial label
+state comes from the supplied input schema; callers must supply the current
+dictionary when compiling.
+
+**Parent decision:** use conventional SPSS precedence: comparisons, then NOT,
+then AND, then OR. Thus `NOT a = 1 AND b = 2 OR c = 3` means
+`((NOT (a = 1)) AND (b = 2)) OR (c = 3)`. Parentheses override that order.
+Negation complements comparisons and applies De Morgan's laws without changing
+UNKNOWN; canonical lowering flattens maximal same-operator nodes in source
+order, including across parentheses. Double NOT retains the original predicate.
+
+These additions emit exact Plan 0.1 when possible and Plan 0.2 for existing
+0.2-only operations. `STRING`, `DELETE VARIABLES`, arbitrary expressions and
+implicit type coercions remain rejected. No codec, catalog or executor schema
+change is involved.
+
 ## In-place and atomicity contract
 
 Every successful apply preserves the existing logical dataset UUID, registered
@@ -143,6 +180,15 @@ composer check
 ```
 
 They cover all 4 Plan 0.1, 26 Plan 0.2, 44 Frontend 0.2, 6 In-Place 0.1,
-and 11 In-Place 0.2 manifest cases. SQLite runs locally. PostgreSQL, MySQL,
+and 11 In-Place 0.2 manifest cases, plus all 90 effective Frontend 0.3 cases
+(35 declared plus inherited cases minus the two comment supersessions).
+Frontend checks compare source/plan hashes, exact inherited plans, diagnostics
+and declared metadata preservation. Use
+`OPENSTATSPEC_SPECIFICATION_DIR=/tmp/openstatspec-alignment-spec` for the
+alignment checkout at unchanged commit `864e84479f554b8ee250ffed44c4dfb963750d4a`.
+The public Frontend 0.3 → native SQLite apply regression checks UNKNOWN,
+metadata, provenance and unchanged dataset/table identity without extra data
+artifacts or history. This change has no local network-service evidence; its
+service CI gate remains pending. SQLite runs locally. PostgreSQL, MySQL,
 MariaDB, and Dolt cases run when their `OPENSTATSPEC_*` service configuration
 is supplied; CI configures every service family.

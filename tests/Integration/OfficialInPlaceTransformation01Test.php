@@ -152,6 +152,69 @@ final class OfficialInPlaceTransformation01Test extends TestCase
         );
     }
 
+    public function testOptInFrontend03AppliesNativelyWithProvenanceAndNoExtraDataArtifacts(): void
+    {
+        $pdo = $this->fixture();
+        $tablesBefore = $this->tables($pdo);
+        $datasetBefore = $this->rows($pdo, 'SELECT * FROM dataset');
+        $source = "* Frontend03 native SQLite.\r\n"
+            . "COMPUTE Flag = 9.\n"
+            . "IF (NOT q1 = 1 AND q1 < 3 OR q1 = 6) Flag = 1.\n"
+            . "IF (q1 NE q1 OR q1 <> q1 OR q1 ~= q1) Flag = 2.\n"
+            . "IF (q1 = 3) q1 = -1.7976931348623157e308. IF (q1 = 4) q1 = 1.7976931348623157e308.\n"
+            . "RECODE q1 (LOWEST THRU HIGHEST = 0).\n"
+            . "VARIABLE LABELS q1 TO Flag 'Grouped'.\n"
+            . "VALUE LABELS Flag 9 'Retained'. ADD VALUE LABELS Flag 1 'Selected' 9 'Unchanged'.\n"
+            . "FORMATS q1 TO Flag (F8.2). VARIABLE LEVEL q1 TO Flag (NOMINAL). EXECUTE.";
+        $request = SpssFrontendRequest::fromArray([
+            'contract' => SpssFrontendRequest::CONTRACT_V03,
+            'input_alias' => 'parent',
+            'input_schema' => ['variables' => [['name' => 'q1', 'storage_kind' => 'numeric']]],
+            'source_text' => $source,
+        ]);
+        $compiled = (new SpssCompiler())->compile($request);
+        $result = (new InPlaceTransformationExecutor(new Connection($pdo)))->execute(new InPlaceApplyRequest(
+            $compiled->plan,
+            'parent',
+            self::DATASET_ID,
+            $compiled->sourceHash,
+            'frontend03-test',
+        ));
+
+        self::assertSame(self::DATASET_ID, $result->datasetId());
+        self::assertSame($datasetBefore, $this->rows($pdo, 'SELECT * FROM dataset'));
+        self::assertSame($tablesBefore, $this->tables($pdo));
+        self::assertSame([], $this->rows($pdo, "SELECT name FROM sqlite_temp_master WHERE type = 'table'"));
+        self::assertSame([1, 2, 3, 4, 5, 6, 7], array_map('intval', $this->column($pdo, 'SELECT __case_ordinal FROM data_plan01 ORDER BY __case_ordinal')));
+        self::assertSame([9.0, 1.0, 9.0, 9.0, 9.0, 1.0, 9.0], array_map('floatval', $this->column($pdo, 'SELECT Flag FROM data_plan01 ORDER BY __case_ordinal')));
+        self::assertSame([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, null], array_map(
+            static fn(mixed $value): ?float => $value === null ? null : (float) $value,
+            $this->column($pdo, 'SELECT q1 FROM data_plan01 ORDER BY __case_ordinal'),
+        ));
+        self::assertSame(['q1', 'Flag'], $this->column($pdo, 'SELECT source_name FROM variable ORDER BY source_ordinal'));
+        foreach ($this->rows($pdo, 'SELECT variable_label, print_format_family, print_format_width, print_format_decimals, measurement_level FROM variable') as $variable) {
+            self::assertSame(['Grouped', 'F', 8, 2, 'nominal'], array_values($variable));
+        }
+        self::assertSame(['Unchanged', 'Selected'], $this->column($pdo, 'SELECT label FROM value_label ORDER BY ordinal'));
+        $audit = $this->rows($pdo, 'SELECT * FROM transformation_apply');
+        self::assertCount(1, $audit);
+        self::assertSame('openstatspec-in-place-transformation-v0.2', $audit[0]['contract_id']);
+        self::assertSame('sqlite', $audit[0]['database_profile']);
+        self::assertSame(self::DATASET_ID, $audit[0]['dataset_id']);
+        self::assertSame('data_plan01', $audit[0]['physical_table_name']);
+        self::assertSame(hash('sha256', str_replace("\r\n", "\n", $source)), $audit[0]['source_hash']);
+        self::assertSame((new PlanCodec())->hash($compiled->plan), $audit[0]['plan_hash']);
+        self::assertSame((new PlanCodec())->canonicalJson($compiled->plan), $audit[0]['canonical_plan_json']);
+        self::assertSame(0, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM operation'));
+        self::assertSame(0, (int) $this->scalar($pdo, 'SELECT COUNT(*) FROM fidelity_event'));
+        self::assertSame('frontend03-test', $audit[0]['actor']);
+        self::assertSame('succeeded', $audit[0]['status']);
+        self::assertSame(count($compiled->plan->operations), (int) $audit[0]['operation_count']);
+        self::assertNull($audit[0]['dolt_head_before']);
+        self::assertNull($audit[0]['dolt_head_after']);
+        self::assertFalse($pdo->inTransaction());
+    }
+
     private function fixture(): PDO
     {
         if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {

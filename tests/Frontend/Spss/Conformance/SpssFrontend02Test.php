@@ -43,8 +43,59 @@ final class SpssFrontend02Test extends TestCase
             (string) $case['id'],
         );
 
+        foreach ($case['expected_output_metadata'] ?? [] as $name => $metadata) {
+            $variables = array_column($request->inputSchema->variables, null, 'name');
+            self::assertSame($metadata, [
+                'variable_label' => $variables[$name]->variableLabel,
+                'value_labels' => $variables[$name]->valueLabels,
+            ]);
+            // This inherited case promises RECODE leaves dictionary metadata alone.
+            self::assertSame([], array_values(array_filter(
+                $result->plan->canonicalArray()['operations'],
+                static fn(array $operation): bool => ($operation['variable'] ?? null) === $name,
+            )));
+        }
         if (isset($case['expected_plan_contract'])) {
             self::assertSame($case['expected_plan_contract'], $result->plan->contract->value, (string) $case['id']);
+        }
+    }
+
+    /** @param array<string, mixed> $case */
+    #[DataProvider('official03Cases')]
+    public function testOfficialFrontend03Case(array $case): void
+    {
+        $this->testOfficialFrontend02Case($case);
+    }
+
+    public function testOfficial03ManifestCoverage(): void
+    {
+        self::assertCount(35, SpecificationManifest::load('conformance/spss-syntax-frontend-0.3.json')['cases']);
+        self::assertCount(90, iterator_to_array(self::official03Cases()));
+    }
+
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function official03Cases(): iterable
+    {
+        $manifest = SpecificationManifest::load('conformance/spss-syntax-frontend-0.3.json');
+        foreach ($manifest['inherited_manifests'] as $inheritance) {
+            foreach (SpecificationManifest::load('conformance/' . $inheritance['manifest'])['cases'] as $case) {
+                if (isset($inheritance['superseded_cases'][$case['id']])) {
+                    continue;
+                }
+                if ($inheritance['manifest'] === 'spss-syntax-frontend-0.1.json' && isset($case['expected_plan_case'])) {
+                    foreach (SpecificationManifest::load('conformance/transformation-plan-0.1.json')['cases'] as $planCase) {
+                        if ($planCase['id'] === $case['expected_plan_case']) {
+                            $case['expected_plan'] = $planCase['plan'];
+                            $case['expected_plan_hash'] = $planCase['expected_plan_hash'];
+                        }
+                    }
+                }
+                $case['request']['contract'] = $inheritance['request_contract_override'];
+                yield $inheritance['manifest'] . '/' . $case['id'] => [$case];
+            }
+        }
+        foreach ($manifest['cases'] as $case) {
+            yield '0.3/' . $case['id'] => [$case];
         }
     }
 
@@ -65,6 +116,9 @@ final class SpssFrontend02Test extends TestCase
      */
     private function expectedPlan(array $case): array
     {
+        if (isset($case['expected_plan']) && is_array($case['expected_plan'])) {
+            return $case['expected_plan'];
+        }
         if (isset($case['expected_plan_case'])) {
             return $this->namedPlan('conformance/transformation-plan-0.2.json', (string) $case['expected_plan_case'], 'plan');
         }

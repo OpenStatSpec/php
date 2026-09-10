@@ -7,5 +7,5 @@ namespace OpenStatSpec\Frontend\Spss\Ast;
 final readonly class Program
 {
     /** @param list<Statement> $statements */
-    public function __construct(public array $statements) {}
+    public function __construct(public array $statements, public bool $officialV03 = false) {}
 }

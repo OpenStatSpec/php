@@ -141,8 +141,12 @@ Pass only loss codes consciously accepted for that conversion. `operation_catalo
 The adapter claims official Transformation Plan 0.1/0.2, SPSS Syntax Frontend
 0.2, and In-Place Transformation 0.1/0.2 conformance. Compile an alias-based
 frontend request, then bind that alias to the existing dataset at apply time.
-The specification pin does not claim support for optional Transformation Plan,
-SPSS Syntax Frontend, or In-Place Transformation 0.3.
+Unreleased opt-in SPSS Syntax Frontend 0.3 is implemented: explicitly set the
+request `contract` to `openstatspec-spss-syntax-frontend-v0.3` (or use
+`SpssFrontendRequest::CONTRACT_V03`). It emits only Plan 0.1/0.2; default 0.2
+syntax and APIs remain unchanged. All 90 effective fixtures and native SQLite
+apply are tested locally; service CI is pending, not a new runtime claim.
+Transformation Plan and In-Place Transformation 0.3 remain unimplemented.
 
 ```php
 use OpenStatSpec\Frontend\Spss\Request\SpssFrontendRequest;
@@ -182,7 +186,7 @@ supported operations, and atomicity guarantees.
 - `src/Sql` - PDO profiles, strict-wide DDL, import/export and catalogues.
 - `src/Spss` - SAV/ZSAV gating, typed V3 engine bridge and public adapter API.
 - `src/Transformation` - official plans, compact apply audit, and in-place execution.
-- `src/Frontend/Spss` - official SPSS Frontend 0.2 request compilation.
+- `src/Frontend/Spss` - SPSS Frontend 0.2 and explicitly selected 0.3 request compilation.
 
 See [docs/architecture.md](docs/architecture.md) for the complete relational contract.
 See [docs/transformations.md](docs/transformations.md) for frontend boundaries,

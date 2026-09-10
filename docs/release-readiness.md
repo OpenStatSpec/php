@@ -37,8 +37,11 @@ files. Unknown patches, including 2.2.4, fail before mutation. Read-only export
 still verifies server identity but does not require a write-version claim.
 
 Transformation claims remain Transformation Plan 0.1/0.2, SPSS Syntax Frontend
-0.2, and In-Place Transformation 0.1/0.2. The specification's optional 0.3
-contracts are not implemented or claimed. Existing target pre-provisioning and
+0.2, and In-Place Transformation 0.1/0.2 for the prepared patch.
+Separate Unreleased work implements opt-in SPSS Syntax Frontend 0.3 against
+this unchanged pin: 90 effective fixtures and native SQLite apply are locally
+covered; exact-commit service CI remains pending. Transformation Plan 0.3 and
+In-Place Transformation 0.3 remain unimplemented. Existing target pre-provisioning and
 caller-owned Dolt commit rules remain unchanged; see the
 [transformation migration notes](transformations.md#v060-migration).
 
