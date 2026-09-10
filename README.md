@@ -6,7 +6,7 @@ It imports an unencrypted SPSS `.sav` or `.zsav` dataset into a relational datab
 
 ## Status
 
-PHP v0.7.2 targets released OpenStatSpec specification `v0.5.0` at immutable
+PHP v0.8.0 targets released OpenStatSpec specification `v0.5.0` at immutable
 commit `864e84479f554b8ee250ffed44c4dfb963750d4a`
 (`specification_status: released`). Composer derives the package version from its
 Git tag; it is independent of the specification version.
@@ -139,13 +139,18 @@ Pass only loss codes consciously accepted for that conversion. `operation_catalo
 ## Transformation API
 
 The adapter claims official Transformation Plan 0.1/0.2, SPSS Syntax Frontend
-0.2, and In-Place Transformation 0.1/0.2 conformance. Compile an alias-based
+0.2/0.3, and In-Place Transformation 0.1/0.2 conformance. Compile an alias-based
 frontend request, then bind that alias to the existing dataset at apply time.
-Unreleased opt-in SPSS Syntax Frontend 0.3 is implemented: explicitly set the
+PHP v0.8.0 includes official opt-in SPSS Syntax Frontend 0.3: explicitly set the
 request `contract` to `openstatspec-spss-syntax-frontend-v0.3` (or use
 `SpssFrontendRequest::CONTRACT_V03`). It emits only Plan 0.1/0.2; default 0.2
-syntax and APIs remain unchanged. All 90 effective fixtures and native SQLite
-apply are tested locally; service CI is pending, not a new runtime claim.
+syntax and APIs remain unchanged. Compilation is pure over request metadata;
+callers supply the current ordered dictionary and typed value labels, without
+compiler database reads. All 90 effective official fixtures and native SQLite
+apply are tested locally; all 20 implementation CI jobs passed at
+`22e261842e538188aea281896c578c5f3d1e38b7`, including the service matrix
+([evidence and final release gates](docs/release-readiness.md#frontend-03-implementation-ci-evidence)).
+The final 0.8.0 release commit still requires its own full CI before tagging.
 Transformation Plan and In-Place Transformation 0.3 remain unimplemented.
 
 ```php

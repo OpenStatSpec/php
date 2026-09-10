@@ -54,7 +54,7 @@ final class CapabilityDeclarationTest extends TestCase
             $contracts['official_plan_contracts'],
         );
         self::assertSame(
-            ['openstatspec-spss-syntax-frontend-v0.2'],
+            ['openstatspec-spss-syntax-frontend-v0.2', 'openstatspec-spss-syntax-frontend-v0.3'],
             $contracts['official_frontend_contracts'],
         );
         self::assertSame(
@@ -62,7 +62,7 @@ final class CapabilityDeclarationTest extends TestCase
             $contracts['official_binding_contracts'],
         );
         self::assertSame([
-            'openstatspec-spss-syntax-frontend-v0.3' => 'implemented_service_ci_pending',
+            'openstatspec-spss-syntax-frontend-v0.3' => 'official_conformant',
         ], $contracts['opt_in_frontend_contracts']);
         self::assertArrayNotHasKey('legacy_plan_contracts', $contracts);
         self::assertFalse(class_exists(\OpenStatSpec\Transformation\Model\TransformationPlan::class));

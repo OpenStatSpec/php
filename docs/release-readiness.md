@@ -1,20 +1,23 @@
 # PHP adapter release readiness
 
-This page records the release contract for PHP adapter v0.7.2. It does not mean
+This page records the release contract for PHP adapter v0.8.0 (2026-09-10). It does not mean
 that a package tag or Packagist publication has happened. Composer derives the
 package version from the Git tag; `composer.json` has no `version` key.
 
-## Patch scope
+## Release scope
 
-Version 0.7.2 includes the merged import precision/error/transaction fixes,
-bounded server INSERT batching and grouped export metadata reads described in
+Version 0.8.0 consolidates the never-tagged, never-published 0.7.2 preparation
+with official opt-in SPSS Frontend 0.3 support. The last public release is 0.7.1;
+there was no 0.7.2 release. It includes the merged import precision/error/transaction
+fixes, bounded server INSERT batching and grouped export metadata reads described in
 [the release notes](../CHANGELOG.md). Dependencies, specification pin, SQL support
 and catalog schema are unchanged. Export still requires a ready, owned catalog;
 initialize or upgrade it with `SpssAdapter::migrateCatalog()` on a write-capable
-deployment connection before export when needed. This patch adds no migration
-or setup for an already prepared current catalog.
-Run the gates below on the exact selected patch release commit, not an earlier
-0.7.1 commit.
+deployment connection before export when needed. This release adds no migration
+or setup for an already prepared current catalog. The locked SPSS engine remains
+`openstatspec/spss-sav` 3.1.1; `composer.json` and `composer.lock` are unchanged.
+Run the gates below on the exact selected 0.8.0 release commit, not an earlier
+preparation commit.
 
 ## Specification pin and claims
 
@@ -23,7 +26,7 @@ released OpenStatSpec specification `v0.5.0` at exact commit
 `864e84479f554b8ee250ffed44c4dfb963750d4a`, with
 `specification_status: released`.
 
-Release v0.7.2 selects `database_io_policy: openstatspec-database-io-v1`.
+Release v0.8.0 selects `database_io_policy: openstatspec-database-io-v1`.
 SAV/ZSAV export is database-read-only, including failures, and no longer returns
 `SpssExportResult::operationId` or writes operation/fidelity audit records.
 Initialize or upgrade the catalogue with `SpssAdapter::migrateCatalog()` using a
@@ -36,33 +39,64 @@ Default Dolt writes support exactly 2.2.2 and 2.2.3 without external declaration
 files. Unknown patches, including 2.2.4, fail before mutation. Read-only export
 still verifies server identity but does not require a write-version claim.
 
-Transformation claims remain Transformation Plan 0.1/0.2, SPSS Syntax Frontend
-0.2, and In-Place Transformation 0.1/0.2 for the prepared patch.
-Separate Unreleased work implements opt-in SPSS Syntax Frontend 0.3 against
-this unchanged pin: 90 effective fixtures and native SQLite apply are locally
-covered; exact-commit service CI remains pending. Transformation Plan 0.3 and
+Transformation claims are Transformation Plan 0.1/0.2, SPSS Syntax Frontend
+0.2/0.3, and In-Place Transformation 0.1/0.2. Version 0.8.0 includes official
+opt-in SPSS Syntax Frontend 0.3 against this unchanged pin: exactly 90 effective
+fixtures and native SQLite apply are locally covered, and implementation service
+CI passed as recorded below. Frontend 0.3 is in `official_frontend_contracts`;
+the retained `opt_in_frontend_contracts` field reports `official_conformant`.
+Frontend 0.2 remains the default; Frontend 0.3
+emits only Plan 0.1/0.2. Compilation is pure over request metadata: callers supply
+the current ordered dictionary and typed value labels, without compiler database
+reads. Transformation Plan 0.3 and
 In-Place Transformation 0.3 remain unimplemented. Existing target pre-provisioning and
 caller-owned Dolt commit rules remain unchanged; see the
 [transformation migration notes](transformations.md#v060-migration).
 
-## 0.7.2 local preparation verification
+## Frontend 0.3 implementation CI evidence
+
+[GitHub Actions run 34483918942](https://github.com/OpenStatSpec/php/actions/runs/34483918942)
+completed successfully at exact implementation commit
+`22e261842e538188aea281896c578c5f3d1e38b7`. All 20 jobs passed: two PHP
+8.4/8.5 suite jobs and 18 service jobs covering PostgreSQL 17.10/18.4,
+MySQL 8.4.11/9.7.2, MariaDB 11.4.12/11.8.8/12.3.2 and Dolt 2.2.2/2.2.3
+on both PHP versions. This establishes implementation conformance and service
+support; it does not expand the existing database version policies.
+
+This is not CI evidence for the final 0.8.0 release commit. That exact commit
+still requires the full matrix before tagging; no tag-context CI or publication
+is claimed here.
+
+## 0.8.0 local preparation verification
 
 On PHP 8.5.9, PHPUnit 11.5.56 and the exact v0.5.0 specification checkout,
 without configured database services:
 
-- `composer check` passed strict validation, lint, style, PHPStan and PHPUnit:
-  **615 tests, 10,468 assertions, 112 skipped**.
+- Fresh `composer install --no-interaction --prefer-dist` installed from the
+  unchanged lock. `OPENSTATSPEC_SPECIFICATION_DIR=/tmp/openstatspec-alignment-spec
+  composer check` passed strict validation, lint, style, PHPStan and PHPUnit:
+  **759 tests, 11,032 assertions, 112 skipped**. Initial style checks rejected
+  CRLF checkout files from global `core.autocrlf=true`; `composer fix` restored
+  LF with no tracked source diff, matching the staged hook's LF normalization.
+- The exact Frontend 0.3 gate passed **91 tests / 456 assertions** (90 cases plus
+  manifest inventory); default/request-boundary checks passed **52 / 80**, and
+  native SQLite Frontend 0.3 apply passed **1 / 27**, all with `--fail-on-skipped`.
+  Plan and Frontend conformance suites passed **44 / 69** and **135 / 663**.
+  In-Place 0.1 passed **9 / 48, 6 skipped**; 0.2 passed **14 / 97, 11 skipped**.
+  Service skips are not network-service evidence.
 - `composer install --dry-run --no-dev` and a disposable ZIP archive inspection
   passed. Required source, lockfile and release notes were present; `.git` and
   `vendor` were absent.
 - A clean extraction installed production dependencies from the unchanged lock
   (including codec 3.1.1), and the adapter/batch classes autoloaded successfully.
+  The production-only install compiled explicit Frontend 0.3 and default 0.2
+  requests to the same inherited plan without a database connection.
   This checks the archive, not future Packagist version resolution.
 
 This is local candidate evidence, not final release-commit service CI or
-publication evidence. No v0.7.2 tag or registry publication was made.
+publication evidence. No tag or registry publication was made by this preparation.
 
-## Before tagging v0.7.2
+## Before tagging v0.8.0
 
 1. Verify `git rev-parse HEAD` in the specification checkout equals
    `864e84479f554b8ee250ffed44c4dfb963750d4a`, and the published `v0.5.0` tag
@@ -78,6 +112,16 @@ publication evidence. No v0.7.2 tag or registry publication was made.
    ```
    Confirm all 4 Plan 0.1, 26 Plan 0.2, 44 Frontend 0.2, 6 In-Place 0.1,
    and 11 In-Place 0.2 manifest cases run for their configured profiles.
+   Require exactly 90 effective official Frontend 0.3 cases (35 declared plus
+   inherited cases minus two comment supersessions), including exact inherited
+   Plan 0.1/0.2 objects and hashes, diagnostics and metadata preservation:
+   ```bash
+   vendor/bin/phpunit tests/Frontend/Spss/Conformance/SpssFrontend02Test.php --filter 'testOfficialFrontend03Case|testOfficial03ManifestCoverage' --fail-on-skipped
+   vendor/bin/phpunit tests/Frontend/Spss/SpssFrontend03Test.php --fail-on-skipped
+   vendor/bin/phpunit tests/Integration/OfficialInPlaceTransformation01Test.php --filter testOptInFrontend03 --fail-on-skipped
+   ```
+   Retain the default 0.2 and pure request-metadata boundary checks and the
+   native SQLite provenance/identity regression.
 3. Confirm successful applies preserve dataset/table identity and counts and
    create no copied, output, staging, snapshot, rollback, or version state.
 4. Confirm SQLite/PostgreSQL atomic numeric-target creation and preflight
@@ -91,24 +135,25 @@ publication evidence. No v0.7.2 tag or registry publication was made.
    `OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_PASSWORD=root`. It creates and removes only
    its own isolated database/user and proves SELECT-only SAV/ZSAV export,
    failure safety, and unchanged working/staged roots and history.
-6. Confirm GitHub Actions passes the full PHP 8.4/8.5 jobs plus every
+6. On the exact final 0.8.0 release commit (not just the proven implementation
+   commit above), confirm GitHub Actions passes the full PHP 8.4/8.5 jobs plus every
    PostgreSQL, MySQL, MariaDB, and Dolt matrix entry. Each service filter must
    include both official in-place test classes; the Dolt filter must also
    include `DoltReadOnlyExportTest`.
-7. Confirm README, changelog, and release notes agree on this patch's fixes,
-   unchanged specification pin, initialization requirement and Dolt defaults.
-   Finalize the 0.7.2 changelog date and comparison link before selecting the
-   final release commit. Run `composer install --dry-run --no-dev` and
-   `composer archive --format=zip --dir="$(mktemp -d /tmp/openstatspec-php-v072-package.XXXXXX)"`;
+7. Confirm README, changelog, and release notes agree on the consolidated
+   0.8.0 fixes and Frontend 0.3 scope, unchanged specification pin,
+   initialization requirement and Dolt defaults. Verify the 2026-09-10 date
+   and comparison from v0.7.1 to v0.8.0 before selecting the final release commit. Run `composer install --dry-run --no-dev` and
+   `composer archive --format=zip --dir="$(mktemp -d /tmp/openstatspec-php-v080-package.XXXXXX)"`;
    inspect the archive without publishing it. No separate build is required.
 8. Confirm the selected commit's full CI matrix, protected-tag controls and
    Packagist update access.
 
 ## Publication (separate maintainer action)
 
-1. Create and verify annotated tag `v0.7.2` on the reviewed `main` commit that
+1. Create and verify annotated tag `v0.8.0` on the reviewed `main` commit that
    passed the gates above. Do not move an existing tag.
 2. Wait for tag-context CI before publishing the GitHub release.
 3. Confirm Packagist lists the new version and a clean
-   `composer require openstatspec/php:0.7.2` resolves it to the intended commit.
+   `composer require openstatspec/php:0.8.0` resolves it to the intended commit.
    Do not infer publication from this checklist.
