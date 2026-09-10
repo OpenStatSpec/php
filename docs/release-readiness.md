@@ -1,8 +1,20 @@
 # PHP adapter release readiness
 
-This page records the release contract for PHP adapter v0.7.1. It does not mean
+This page records the release contract for PHP adapter v0.7.2. It does not mean
 that a package tag or Packagist publication has happened. Composer derives the
 package version from the Git tag; `composer.json` has no `version` key.
+
+## Patch scope
+
+Version 0.7.2 includes the merged import precision/error/transaction fixes,
+bounded server INSERT batching and grouped export metadata reads described in
+[the release notes](../CHANGELOG.md). Dependencies, specification pin, SQL support
+and catalog schema are unchanged. Export still requires a ready, owned catalog;
+initialize or upgrade it with `SpssAdapter::migrateCatalog()` on a write-capable
+deployment connection before export when needed. This patch adds no migration
+or setup for an already prepared current catalog.
+Run the gates below on the exact selected patch release commit, not an earlier
+0.7.1 commit.
 
 ## Specification pin and claims
 
@@ -11,7 +23,7 @@ released OpenStatSpec specification `v0.5.0` at exact commit
 `864e84479f554b8ee250ffed44c4dfb963750d4a`, with
 `specification_status: released`.
 
-Release v0.7.1 selects `database_io_policy: openstatspec-database-io-v1`.
+Release v0.7.2 selects `database_io_policy: openstatspec-database-io-v1`.
 SAV/ZSAV export is database-read-only, including failures, and no longer returns
 `SpssExportResult::operationId` or writes operation/fidelity audit records.
 Initialize or upgrade the catalogue with `SpssAdapter::migrateCatalog()` using a
@@ -30,9 +42,24 @@ contracts are not implemented or claimed. Existing target pre-provisioning and
 caller-owned Dolt commit rules remain unchanged; see the
 [transformation migration notes](transformations.md#v060-migration).
 
-## Required gates
+## 0.7.2 local preparation verification
 
-Before tagging v0.7.1:
+On PHP 8.5.9, PHPUnit 11.5.56 and the exact v0.5.0 specification checkout,
+without configured database services:
+
+- `composer check` passed strict validation, lint, style, PHPStan and PHPUnit:
+  **615 tests, 10,468 assertions, 112 skipped**.
+- `composer install --dry-run --no-dev` and a disposable ZIP archive inspection
+  passed. Required source, lockfile and release notes were present; `.git` and
+  `vendor` were absent.
+- A clean extraction installed production dependencies from the unchanged lock
+  (including codec 3.1.1), and the adapter/batch classes autoloaded successfully.
+  This checks the archive, not future Packagist version resolution.
+
+This is local candidate evidence, not final release-commit service CI or
+publication evidence. No v0.7.2 tag or registry publication was made.
+
+## Before tagging v0.7.2
 
 1. Verify `git rev-parse HEAD` in the specification checkout equals
    `864e84479f554b8ee250ffed44c4dfb963750d4a`, and the published `v0.5.0` tag
@@ -65,11 +92,20 @@ Before tagging v0.7.1:
    PostgreSQL, MySQL, MariaDB, and Dolt matrix entry. Each service filter must
    include both official in-place test classes; the Dolt filter must also
    include `DoltReadOnlyExportTest`.
-7. Confirm README, changelog, and release notes agree on the exact specification
-   pin, breaking export changes, initialization requirement, and Dolt defaults.
-   Run `composer install --dry-run --no-dev` and
-   `composer archive --format=zip --dir=/tmp/openstatspec-php-v071-package`;
+7. Confirm README, changelog, and release notes agree on this patch's fixes,
+   unchanged specification pin, initialization requirement and Dolt defaults.
+   Finalize the 0.7.2 changelog date and comparison link before selecting the
+   final release commit. Run `composer install --dry-run --no-dev` and
+   `composer archive --format=zip --dir="$(mktemp -d /tmp/openstatspec-php-v072-package.XXXXXX)"`;
    inspect the archive without publishing it. No separate build is required.
-8. Publication is a separate maintainer action: create and verify annotated
-   tag `v0.7.1` on the reviewed `main` commit, publish the GitHub release, and
-   confirm Packagist installation. Do not infer publication from this checklist.
+8. Confirm the selected commit's full CI matrix, protected-tag controls and
+   Packagist update access.
+
+## Publication (separate maintainer action)
+
+1. Create and verify annotated tag `v0.7.2` on the reviewed `main` commit that
+   passed the gates above. Do not move an existing tag.
+2. Wait for tag-context CI before publishing the GitHub release.
+3. Confirm Packagist lists the new version and a clean
+   `composer require openstatspec/php:0.7.2` resolves it to the intended commit.
+   Do not infer publication from this checklist.
