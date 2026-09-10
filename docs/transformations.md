@@ -6,15 +6,16 @@ The PHP adapter conforms to these pinned OpenStatSpec contracts:
 
 - `openstatspec-transformation-plan-v0.1` and
   `openstatspec-transformation-plan-v0.2`;
-- `openstatspec-spss-syntax-frontend-v0.2`; and
+- `openstatspec-spss-syntax-frontend-v0.2` and opt-in
+  `openstatspec-spss-syntax-frontend-v0.3`; and
 - `openstatspec-in-place-transformation-v0.1` and
   `openstatspec-in-place-transformation-v0.2`.
 
 PHP v0.8.0 includes official opt-in `openstatspec-spss-syntax-frontend-v0.3`,
-with local fixture/SQLite evidence and service CI pending. It is separately
-listed as `implemented_service_ci_pending` in the capability declaration, not
-added to its existing conformant contract lists. Plan 0.3 and In-Place 0.3 are
-not implemented.
+with local fixture/SQLite evidence and a passed implementation service CI matrix.
+It is included in `official_frontend_contracts`; the retained
+`opt_in_frontend_contracts` field reports `official_conformant` for 0.3.
+Frontend 0.2 remains the default. Plan 0.3 and In-Place 0.3 are not implemented.
 
 Plans are source-neutral, alias-based, and deterministic. The canonical plan
 contains only its contract, input alias, and ordered operations. Dataset UUIDs,
@@ -189,7 +190,9 @@ and declared metadata preservation. Use
 alignment checkout at unchanged commit `864e84479f554b8ee250ffed44c4dfb963750d4a`.
 The public Frontend 0.3 → native SQLite apply regression checks UNKNOWN,
 metadata, provenance and unchanged dataset/table identity without extra data
-artifacts or history. This change has no local network-service evidence; its
-service CI gate remains pending. SQLite runs locally. PostgreSQL, MySQL,
-MariaDB, and Dolt cases run when their `OPENSTATSPEC_*` service configuration
-is supplied; CI configures every service family.
+artifacts or history. All 20 jobs in the
+[implementation CI run](release-readiness.md#frontend-03-implementation-ci-evidence)
+passed, including PostgreSQL, MySQL, MariaDB and Dolt service coverage.
+Full CI on the final 0.8.0 release commit remains required before tagging.
+SQLite runs locally; network-service cases run when their `OPENSTATSPEC_*`
+configuration is supplied. Local skips are not additional service evidence.

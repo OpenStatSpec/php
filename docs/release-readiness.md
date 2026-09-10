@@ -39,18 +39,33 @@ Default Dolt writes support exactly 2.2.2 and 2.2.3 without external declaration
 files. Unknown patches, including 2.2.4, fail before mutation. Read-only export
 still verifies server identity but does not require a write-version claim.
 
-Transformation claims remain Transformation Plan 0.1/0.2, SPSS Syntax Frontend
-0.2, and In-Place Transformation 0.1/0.2. Version 0.8.0 also includes official
+Transformation claims are Transformation Plan 0.1/0.2, SPSS Syntax Frontend
+0.2/0.3, and In-Place Transformation 0.1/0.2. Version 0.8.0 includes official
 opt-in SPSS Syntax Frontend 0.3 against this unchanged pin: exactly 90 effective
-fixtures and native SQLite apply are locally covered; exact-commit service CI
-remains pending. Its capability status remains `implemented_service_ci_pending`,
-not a new network runtime claim. Frontend 0.2 remains the default; Frontend 0.3
+fixtures and native SQLite apply are locally covered, and implementation service
+CI passed as recorded below. Frontend 0.3 is in `official_frontend_contracts`;
+the retained `opt_in_frontend_contracts` field reports `official_conformant`.
+Frontend 0.2 remains the default; Frontend 0.3
 emits only Plan 0.1/0.2. Compilation is pure over request metadata: callers supply
 the current ordered dictionary and typed value labels, without compiler database
 reads. Transformation Plan 0.3 and
 In-Place Transformation 0.3 remain unimplemented. Existing target pre-provisioning and
 caller-owned Dolt commit rules remain unchanged; see the
 [transformation migration notes](transformations.md#v060-migration).
+
+## Frontend 0.3 implementation CI evidence
+
+[GitHub Actions run 34483918942](https://github.com/OpenStatSpec/php/actions/runs/34483918942)
+completed successfully at exact implementation commit
+`22e261842e538188aea281896c578c5f3d1e38b7`. All 20 jobs passed: two PHP
+8.4/8.5 suite jobs and 18 service jobs covering PostgreSQL 17.10/18.4,
+MySQL 8.4.11/9.7.2, MariaDB 11.4.12/11.8.8/12.3.2 and Dolt 2.2.2/2.2.3
+on both PHP versions. This establishes implementation conformance and service
+support; it does not expand the existing database version policies.
+
+This is not CI evidence for the final 0.8.0 release commit. That exact commit
+still requires the full matrix before tagging; no tag-context CI or publication
+is claimed here.
 
 ## 0.8.0 local preparation verification
 
@@ -120,7 +135,8 @@ publication evidence. No tag or registry publication was made by this preparatio
    `OPENSTATSPEC_DOLT_READ_ONLY_ADMIN_PASSWORD=root`. It creates and removes only
    its own isolated database/user and proves SELECT-only SAV/ZSAV export,
    failure safety, and unchanged working/staged roots and history.
-6. Confirm GitHub Actions passes the full PHP 8.4/8.5 jobs plus every
+6. On the exact final 0.8.0 release commit (not just the proven implementation
+   commit above), confirm GitHub Actions passes the full PHP 8.4/8.5 jobs plus every
    PostgreSQL, MySQL, MariaDB, and Dolt matrix entry. Each service filter must
    include both official in-place test classes; the Dolt filter must also
    include `DoltReadOnlyExportTest`.

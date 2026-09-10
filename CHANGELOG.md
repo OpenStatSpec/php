@@ -16,7 +16,11 @@ with official opt-in SPSS Frontend 0.3 support. The previous public release is
   aliases, finite open RECODE ranges, and ordered typed ADD VALUE LABELS.
 - Check all 90 effective official cases against the unchanged specification pin,
   inherited Plan 0.1/0.2 objects and hashes, and native SQLite in-place provenance
-  and identity. Service CI is pending; no new network runtime claim is made.
+  and identity. All 20 implementation CI jobs passed at
+  `22e261842e538188aea281896c578c5f3d1e38b7`, including the service matrix
+  ([run](https://github.com/OpenStatSpec/php/actions/runs/34483918942)). Declare
+  Frontend 0.3 officially conformant while retaining its opt-in capability field.
+  The final 0.8.0 release commit still requires full CI before tagging.
 - Use precedence comparisons, NOT, AND, OR; parentheses override. Compilation
   is pure over request metadata: callers supply the current ordered dictionary
   and typed value labels; the compiler does not read the database. No

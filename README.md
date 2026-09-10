@@ -139,7 +139,7 @@ Pass only loss codes consciously accepted for that conversion. `operation_catalo
 ## Transformation API
 
 The adapter claims official Transformation Plan 0.1/0.2, SPSS Syntax Frontend
-0.2, and In-Place Transformation 0.1/0.2 conformance. Compile an alias-based
+0.2/0.3, and In-Place Transformation 0.1/0.2 conformance. Compile an alias-based
 frontend request, then bind that alias to the existing dataset at apply time.
 PHP v0.8.0 includes official opt-in SPSS Syntax Frontend 0.3: explicitly set the
 request `contract` to `openstatspec-spss-syntax-frontend-v0.3` (or use
@@ -147,7 +147,10 @@ request `contract` to `openstatspec-spss-syntax-frontend-v0.3` (or use
 syntax and APIs remain unchanged. Compilation is pure over request metadata;
 callers supply the current ordered dictionary and typed value labels, without
 compiler database reads. All 90 effective official fixtures and native SQLite
-apply are tested locally; service CI is pending, not a new runtime claim.
+apply are tested locally; all 20 implementation CI jobs passed at
+`22e261842e538188aea281896c578c5f3d1e38b7`, including the service matrix
+([evidence and final release gates](docs/release-readiness.md#frontend-03-implementation-ci-evidence)).
+The final 0.8.0 release commit still requires its own full CI before tagging.
 Transformation Plan and In-Place Transformation 0.3 remain unimplemented.
 
 ```php

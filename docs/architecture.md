@@ -92,7 +92,10 @@ Encrypted files, Portable (`.por`) files and arbitrary external-engine formats a
 strict codec, validation, and deterministic plan identity.
 `src/Frontend/Spss` is the separate SPSS Frontend 0.2 boundary, with opt-in
 Frontend 0.3 using the same strict request validator, parser, binder and compiler.
-Frontend 0.3 emits only Plan 0.1/0.2; its service CI claim is pending.
+Frontend 0.3 emits only Plan 0.1/0.2 and is declared officially conformant based
+on the passed [implementation CI matrix](release-readiness.md#frontend-03-implementation-ci-evidence).
+Frontend 0.2 remains the default; full CI on the final 0.8.0 release commit is
+still required before tagging.
 `src/Transformation/Execution` binds an alias-based plan to one existing
 dataset and applies it through the active PDO profile; it never invokes the
 frontend. The Stata and SAS directories are placeholders only.
