@@ -302,16 +302,16 @@ final readonly class SqliteWideTableImporter
     {
         $columns = array_merge(['__case_ordinal'], array_column($variables, 'column'));
         $quoted = array_map(fn(string $column): string => $this->quote($column), $columns);
-        $params = array_map(static fn(string $column): string => ':' . $column, $columns);
-        $statement = $this->pdo->prepare('INSERT INTO ' . $this->quote($tableName) . ' (' . implode(', ', $quoted) . ') VALUES (' . implode(', ', $params) . ')');
+        // Positional placeholders: named ones cost a name lookup per bound cell.
+        $statement = $this->pdo->prepare('INSERT INTO ' . $this->quote($tableName) . ' (' . implode(', ', $quoted) . ') VALUES (' . implode(', ', array_fill(0, count($columns), '?')) . ')');
         foreach ($rows as $caseOrdinal => $row) {
-            $values = ['__case_ordinal' => $caseOrdinal + 1];
+            $values = [$caseOrdinal + 1];
             foreach ($variables as $position => $variable) {
                 $value = is_array($row) ? ($row[$variable['source']] ?? $row[$position] ?? null) : null;
                 if ($value === null && $variable['kind'] === 'string') {
                     throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'SPSS string values must not be represented as NULL.');
                 }
-                $values[$variable['column']] = is_float($value) ? Binary64::encode($value) : $value;
+                $values[] = is_float($value) ? Binary64::encode($value) : $value;
             }
             $statement->execute($values);
         }

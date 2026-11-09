@@ -14,6 +14,7 @@ use OpenStatSpec\Sql\SqliteProfile;
 use OpenStatSpec\Sql\OperationJournal;
 use PDO;
 use PDOStatement;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class PdoSqlProfileTest extends TestCase
@@ -120,6 +121,37 @@ final class PdoSqlProfileTest extends TestCase
             [[str_repeat('a', 40_000), str_repeat('b', 40_000)]],
             $pdo,
         );
+    }
+
+    /** @return iterable<string, array{list<list<mixed>>, DiagnosticCode, string}> */
+    public static function invalidCases(): iterable
+    {
+        yield 'bool in numeric column' => [[[true, 'a']], DiagnosticCode::InvalidSourceDataset, 'binary64 numbers or system-missing NULL'];
+        yield 'string in numeric column' => [[['1', 'a']], DiagnosticCode::InvalidSourceDataset, 'binary64 numbers or system-missing NULL'];
+        yield 'infinity' => [[[INF, 'a']], DiagnosticCode::TargetCapabilityExceeded, 'rejects non-finite'];
+        yield 'nan' => [[[NAN, 'a']], DiagnosticCode::TargetCapabilityExceeded, 'rejects non-finite'];
+        yield 'null string' => [[[1.0, null]], DiagnosticCode::InvalidSourceDataset, 'non-null strings'];
+        yield 'int in string column' => [[[1.0, 5]], DiagnosticCode::InvalidSourceDataset, 'non-null strings'];
+        yield 'case payload' => [[[1.0, str_repeat('a', 65_528)]], DiagnosticCode::TargetCapabilityExceeded, 'encoded case payload is 65536 bytes'];
+        yield 'first cell wins within a case' => [[[true, null]], DiagnosticCode::InvalidSourceDataset, 'binary64 numbers'];
+        yield 'first case wins' => [[[1.0, null], [INF, 'a']], DiagnosticCode::InvalidSourceDataset, 'non-null strings'];
+        yield 'cell rule before payload' => [[[NAN, str_repeat('a', 65_528)]], DiagnosticCode::TargetCapabilityExceeded, 'rejects non-finite'];
+    }
+
+    /** @param list<list<mixed>> $rows */
+    #[DataProvider('invalidCases')]
+    public function testPreflightRejectsInvalidCellsInSourceOrder(array $rows, DiagnosticCode $code, string $message): void
+    {
+        $variables = [['name' => 'n', 'type' => 'numeric'], ['name' => 's', 'type' => 'string', 'width' => 8]];
+        (new MySqlProfile())->assertDataset($variables, [[null, ''], [1, 'a'], [-1.5, str_repeat('b', 65_527)]]);
+
+        try {
+            (new MySqlProfile())->assertDataset($variables, $rows);
+            self::fail('Preflight accepted an invalid case.');
+        } catch (UnsupportedOperation $exception) {
+            self::assertSame($code, $exception->diagnosticCode);
+            self::assertStringContainsString($message, $exception->getMessage());
+        }
     }
 
     public function testPostgreSqlMapsLongCollidingSourceNamesWithinIdentifierLimit(): void

@@ -62,7 +62,7 @@ abstract class AbstractPdoSqlProfile implements PdoSqlProfile
 
     /**
      * @param list<array<string, mixed>>          $variables
-     * @param list<list<int|float|string|null>> $rows
+     * @param list<array<mixed>>                 $rows Untrusted cells; this is the type gate.
      */
     public function assertDataset(array $variables, array $rows, ?PDO $pdo = null): void
     {
@@ -93,37 +93,38 @@ abstract class AbstractPdoSqlProfile implements PdoSqlProfile
                 throw new UnsupportedOperation(DiagnosticCode::InvalidSourceDataset, 'Every source case must contain exactly one value per source variable.');
             }
             $encodedRowBytes = 0;
+            // Branch on the value type first: a numeric cell costs two type
+            // tests and one finiteness test. Rules, order and messages match
+            // the previous per-cell checks for list rows.
             foreach ($row as $index => $value) {
                 $kind = $storageKinds[$index];
-                if ($kind === 'string' && !is_string($value)) {
+                if (is_string($value)) {
+                    if ($kind === 'numeric') {
+                        $this->invalidNumericValue();
+                    }
+                    if (strlen($value) > $maximumValueBytes) {
+                        $this->capabilityExceeded('encoded string value', strlen($value), $maximumValueBytes);
+                    }
+                    $encodedRowBytes += strlen($value);
+                    continue;
+                }
+                if ($kind === 'string') {
                     throw new UnsupportedOperation(
                         DiagnosticCode::InvalidSourceDataset,
                         'SPSS string values must be non-null strings.',
                     );
                 }
-                if ($kind === 'numeric'
-                    && $value !== null
-                    && !is_int($value)
-                    && !is_float($value)
-                ) {
-                    throw new UnsupportedOperation(
-                        DiagnosticCode::InvalidSourceDataset,
-                        'SPSS numeric values must be binary64 numbers or system-missing NULL.',
-                    );
+                if (is_float($value)) {
+                    if (!is_finite($value)) {
+                        throw new UnsupportedOperation(
+                            DiagnosticCode::TargetCapabilityExceeded,
+                            $this->driverName() . ' rejects non-finite SPSS numeric values before mutation.',
+                        );
+                    }
+                } elseif ($value !== null && !is_int($value)) {
+                    $this->invalidNumericValue();
                 }
-                if ($kind === 'numeric'
-                    && (is_int($value) || is_float($value))
-                    && !is_finite((float) $value)
-                ) {
-                    throw new UnsupportedOperation(
-                        DiagnosticCode::TargetCapabilityExceeded,
-                        $this->driverName() . ' rejects non-finite SPSS numeric values before mutation.',
-                    );
-                }
-                if (is_string($value) && strlen($value) > $maximumValueBytes) {
-                    $this->capabilityExceeded('encoded string value', strlen($value), $maximumValueBytes);
-                }
-                $encodedRowBytes += is_string($value) ? strlen($value) : 8;
+                $encodedRowBytes += 8;
             }
             if ($encodedRowBytes > $maximumEncodedCaseBytes) {
                 $this->capabilityExceeded('encoded case payload', $encodedRowBytes, $maximumEncodedCaseBytes);
@@ -165,6 +166,14 @@ abstract class AbstractPdoSqlProfile implements PdoSqlProfile
     protected function rowStorageBytes(string $kind, int $declaredWidth): int
     {
         return $kind === 'string' ? $declaredWidth : 8;
+    }
+
+    private function invalidNumericValue(): never
+    {
+        throw new UnsupportedOperation(
+            DiagnosticCode::InvalidSourceDataset,
+            'SPSS numeric values must be binary64 numbers or system-missing NULL.',
+        );
     }
 
     private function capabilityExceeded(string $limit, int $actual, int $maximum): never
