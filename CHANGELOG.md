@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-09
+
+### Changed
+
+- Make the shared import preflight cheaper per cell (same rules, order and
+  messages) and bind SQLite case rows with positional placeholders. A 50,000
+  case by 201 variable SAV imports into SQLite in 12-13 s instead of 19-20 s.
+
 ## [0.8.0] - 2026-09-10
 
 This release consolidates the never-tagged, never-published 0.7.2 preparation
@@ -179,7 +187,8 @@ ownership checks are retained; this release requires no new migration.
 - Pinned active conformance fixtures and capabilities to released OpenStatSpec
   specification v0.1.0 at commit `d287c2cde9ade71f04e27dd012caec876901aed5`.
 
-[Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/OpenStatSpec/php/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/OpenStatSpec/php/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/OpenStatSpec/php/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/OpenStatSpec/php/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/OpenStatSpec/php/compare/v0.6.0...v0.7.0
