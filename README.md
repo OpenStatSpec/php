@@ -54,12 +54,12 @@ Only unencrypted SAV and ZSAV are supported. Encrypted files, Portable (`.por`) 
 
 ## Requirements
 
-- PHP 8.4.1 or later
+- PHP 8.3 or later
 - `ext-pdo`
 - Selected PDO driver: `pdo_sqlite`, `pdo_pgsql`, or `pdo_mysql`
 - `openstatspec/spss-sav` 3.x, installed by Composer. The php-spss V3 engine needs `ext-bcmath`, `ext-mbstring` and `ext-zlib`.
 
-Composer resolves dependencies against PHP 8.4.1, the package minimum.
+Composer resolves dependencies against PHP 8.3.0, the package minimum.
 
 ## API
 
@@ -272,7 +272,7 @@ bash tools/install-git-hooks.sh
 
 `composer check` validates Composer configuration, lints PHP, checks style, runs PHPStan and runs PHPUnit. Use `composer fix` for safe style fixes, then rerun `composer check`.
 
-GitHub Actions runs the regular suite on PHP 8.4 and 8.5. It also runs real
+GitHub Actions runs the regular suite on PHP 8.3, 8.4 and 8.5. It also runs real
 SAV and ZSAV integration round trips against exact PostgreSQL 17.10/18.4,
 MySQL 8.4.11/9.7.2, MariaDB 11.4.12/11.8.8/12.3.2, and Dolt
 2.2.2/2.2.3.

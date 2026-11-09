@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "722b02e08bdd232bd5b51c6da138a90d",
+    "content-hash": "bf5a0e31daabf051cf31dcd0b0a0080d",
     "packages": [
         {
             "name": "brick/math",
@@ -67,23 +67,23 @@
         },
         {
             "name": "openstatspec/spss-sav",
-            "version": "3.1.1",
+            "version": "3.2.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/OpenStatSpec/php-spss.git",
-                "reference": "249f8a0b3a46dc503cc24f42a5c8f629e421a60b"
+                "reference": "a8a6d744d424eb43182f5402ca669f1fd2c45ee9"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/OpenStatSpec/php-spss/zipball/249f8a0b3a46dc503cc24f42a5c8f629e421a60b",
-                "reference": "249f8a0b3a46dc503cc24f42a5c8f629e421a60b",
+                "url": "https://api.github.com/repos/OpenStatSpec/php-spss/zipball/a8a6d744d424eb43182f5402ca669f1fd2c45ee9",
+                "reference": "a8a6d744d424eb43182f5402ca669f1fd2c45ee9",
                 "shasum": ""
             },
             "require": {
                 "ext-bcmath": "*",
                 "ext-mbstring": "*",
                 "ext-zlib": "*",
-                "php": "^8.4.1"
+                "php": "^8.3"
             },
             "require-dev": {
                 "friendsofphp/php-cs-fixer": "^3.95",
@@ -213,7 +213,7 @@
                 "issues": "https://github.com/OpenStatSpec/php-spss/issues",
                 "source": "https://github.com/OpenStatSpec/php-spss"
             },
-            "time": "2026-09-07T18:47:21+00:00"
+            "time": "2026-11-09T16:44:14+00:00"
         }
     ],
     "packages-dev": [
@@ -4727,13 +4727,13 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.4.1",
+        "php": "^8.3",
         "ext-mbstring": "*",
         "ext-pdo": "*"
     },
     "platform-dev": {},
     "platform-overrides": {
-        "php": "8.4.1"
+        "php": "8.3.0"
     },
     "plugin-api-version": "2.9.0"
 }

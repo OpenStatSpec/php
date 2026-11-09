@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-09
+
+### Changed
+
+- Support PHP 8.3 again. The only PHP 8.4 functions in use were two
+  `array_any()` calls, now `array_filter()` checks with the same result.
+  The lock file resolves against PHP 8.3.0 and CI runs the regular suite on
+  PHP 8.3, 8.4 and 8.5.
+- Require `openstatspec/spss-sav` ^3.2, the first codec release that runs on
+  PHP 8.3 and writes very long string records that IBM SPSS recognises.
+  The engine capability declaration now lists 3.2.0 as the CI-tested codec.
+
 ## [0.8.1] - 2026-11-09
 
 ### Changed
