@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Make the shared import preflight cheaper per cell (same rules, order and
+  messages) and bind SQLite case rows with positional placeholders. A 50,000
+  case by 201 variable SAV imports into SQLite in 12-13 s instead of 19-20 s.
+
 ## [0.8.0] - 2026-09-10
 
 This release consolidates the never-tagged, never-published 0.7.2 preparation
