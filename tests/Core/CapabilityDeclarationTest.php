@@ -66,9 +66,9 @@ final class CapabilityDeclarationTest extends TestCase
         ], $contracts['opt_in_frontend_contracts']);
         self::assertArrayNotHasKey('legacy_plan_contracts', $contracts);
         self::assertFalse(class_exists(\OpenStatSpec\Transformation\Model\TransformationPlan::class));
-        self::assertSame('3.1.1', $declaration['engine']['active_version']);
+        self::assertSame('3.2.0', $declaration['engine']['active_version']);
         self::assertSame('>=3.0.0 <4.0.0', $declaration['engine']['claimed_version_range']);
-        self::assertSame(['3.1.1'], $declaration['engine']['ci_tested_versions']);
+        self::assertSame(['3.2.0'], $declaration['engine']['ci_tested_versions']);
         self::assertTrue($declaration['engine']['claimed_supported']);
         self::assertNotEmpty($declaration['required_capabilities']);
         foreach ($declaration['required_capabilities'] as $supported) {

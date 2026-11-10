@@ -76,10 +76,10 @@ final class Compiler
             };
         }
 
-        $contract = array_any(
+        $contract = array_filter(
             $operations,
             static fn(Operation $operation): bool => $operation->minimumContract() === PlanContract::V02,
-        ) ? PlanContract::V02 : PlanContract::V01;
+        ) !== [] ? PlanContract::V02 : PlanContract::V01;
 
         return new TransformationPlan($contract, $program->inputAlias, $operations);
     }

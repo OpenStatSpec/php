@@ -56,10 +56,10 @@ final class SpssAdapterTest extends TestCase
         self::assertTrue(class_exists(Dataset::class));
         self::assertSame([
             'package' => 'openstatspec/spss-sav',
-            'version' => '3.1.1',
-            'active_version' => '3.1.1',
+            'version' => '3.2.0',
+            'active_version' => '3.2.0',
             'claimed_version_range' => '>=3.0.0 <4.0.0',
-            'ci_tested_versions' => ['3.1.1'],
+            'ci_tested_versions' => ['3.2.0'],
             'claimed_supported' => true,
         ], (new PhpSpssEngine())->identity());
     }

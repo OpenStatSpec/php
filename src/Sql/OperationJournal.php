@@ -74,7 +74,7 @@ final readonly class OperationJournal
             $this->updateNormativeOperation($operationId, 'failed');
         }
 
-        if (!array_any($diagnostics, static fn(FidelityDiagnostic $diagnostic): bool => $diagnostic->code === $failureCode)) {
+        if (array_filter($diagnostics, static fn(FidelityDiagnostic $diagnostic): bool => $diagnostic->code === $failureCode) === []) {
             $diagnostics[] = new FidelityDiagnostic(
                 $failureCode,
                 $exception->getMessage(),
