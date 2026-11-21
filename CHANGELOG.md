@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-11-22
+
+### Fixed
+
+- Catalog identifiers are now RFC 4122 version 4 UUIDs. Before, they were 16
+  random bytes without version or variant bits, so about five of eight imported
+  datasets got an id that `InPlaceApplyRequest` rejects with
+  `invalid_dataset_id`, and in-place transformations could not be applied to
+  them. Datasets imported by earlier versions keep their ids; re-import one
+  whose id is rejected. Found by a three-way benchmark with Statscraft and the
+  Python adapter.
+
 ## [0.8.2] - 2026-11-09
 
 ### Changed
